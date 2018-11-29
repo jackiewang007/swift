@@ -1,4 +1,4 @@
-// RUN: %target-parse-verify-swift
+// RUN: %target-typecheck-verify-swift
 
 func f0(_ x: Float) -> Float {}
 func f1(_ x: Float) -> Float {}
@@ -36,7 +36,7 @@ var s: String = optFunc("hi")
 // <rdar://problem/17652759> Default arguments cause crash with tuple permutation
 func testArgumentShuffle(_ first: Int = 7, third: Int = 9) {
 }
-testArgumentShuffle(third: 1, 2) // expected-error {{unnamed argument #2 must precede argument 'third'}} {{21-29=2}} {{31-32=third: 1}}
+testArgumentShuffle(third: 1, 2) // expected-error {{unnamed argument #2 must precede argument 'third'}} {{21-21=2, }} {{29-32=}}
 
 
 
@@ -83,3 +83,26 @@ sr590() // expected-error {{missing argument for parameter #1 in call}}
 // Make sure calling with structural tuples still works.
 sr590(())
 sr590((1, 2))
+
+// SR-2657: Poor diagnostics when function arguments should be '@escaping'.
+private class SR2657BlockClass<T> {
+  let f: T
+  init(f: T) { self.f = f }
+}
+
+func takesAny(_: Any) {}
+
+func foo(block: () -> (), other: () -> Int) { // expected-note 2 {{parameter 'block' is implicitly non-escaping}}
+  let _ = SR2657BlockClass(f: block)
+  // expected-error@-1 {{converting non-escaping value to 'T' may allow it to escape}}
+  let _ = SR2657BlockClass<()->()>(f: block)
+  // expected-error@-1 {{passing non-escaping parameter 'block' to function expecting an @escaping closure}}
+  let _: SR2657BlockClass<()->()> = SR2657BlockClass(f: block)
+  // expected-error@-1 {{converting non-escaping value to 'T' may allow it to escape}}
+  let _: SR2657BlockClass<()->()> = SR2657BlockClass<()->()>(f: block)
+  // expected-error@-1 {{passing non-escaping parameter 'block' to function expecting an @escaping closure}}
+  _ = SR2657BlockClass<Any>(f: block)  // expected-error {{converting non-escaping value to 'Any' may allow it to escape}}
+  _ = SR2657BlockClass<Any>(f: other) // expected-error {{converting non-escaping value to 'Any' may allow it to escape}}
+  takesAny(block)  // expected-error {{converting non-escaping value to 'Any' may allow it to escape}}
+  takesAny(other) // expected-error {{converting non-escaping value to 'Any' may allow it to escape}}
+}

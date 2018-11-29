@@ -1,4 +1,4 @@
-// RUN: %target-swift-frontend %s -parse
+// RUN: %target-swift-frontend %s -typecheck
 
 //
 //  main.swift
@@ -13,7 +13,7 @@ let constante : String = "Hello World"
 
 let constante2 = "Hello World"
 
-let caractere : Character = Array(constante.characters)[0]
+let caractere : Character = Array(constante)[0]
 
 let caractere2 : Character = "A"
 

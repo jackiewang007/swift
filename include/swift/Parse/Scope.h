@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -33,11 +33,11 @@ namespace swift {
 class ScopeInfo {
   friend class Scope;
 public:
-  typedef std::pair<unsigned, ValueDecl*> ValueScopeEntry;
-  
-  typedef TreeScopedHashTable<DeclName, ValueScopeEntry> ScopedHTTy;
-  typedef ScopedHTTy::ScopeTy ScopedHTScopeTy;
-  typedef ScopedHTTy::DetachedScopeTy ScopedHTDetachedScopeTy;
+  using ValueScopeEntry = std::pair<unsigned, ValueDecl *>;
+
+  using ScopedHTTy = TreeScopedHashTable<DeclName, ValueScopeEntry>;
+  using ScopedHTScopeTy = ScopedHTTy::ScopeTy;
+  using ScopedHTDetachedScopeTy = ScopedHTTy::DetachedScopeTy;
 
 private:
   ScopedHTTy HT;
@@ -55,7 +55,7 @@ public:
   void addToScope(ValueDecl *D, Parser &TheParser);
 
   bool isInactiveConfigBlock() const;
-
+  
   SavedScope saveCurrentScope();
 };
 
@@ -67,12 +67,10 @@ enum class ScopeKind {
   StructBody,
   ClassBody,
   ProtocolBody,
-  ConstructorBody,
-  DestructorBody,
+  InheritanceClause,
 
   Brace,
   TopLevel,
-  ForVars,
   ForeachVars,
   CaseVars,
   CatchVars,
@@ -102,9 +100,9 @@ public:
   ~SavedScope() = default;
 
   SavedScope(ScopeInfo::ScopedHTDetachedScopeTy &&HTDetachedScope,
-             unsigned Depth, ScopeKind Kind, bool IsInactiveConfigBlock)
+             unsigned Depth, ScopeKind Kind, bool isInactiveConfigBlock)
     : HTDetachedScope(std::move(HTDetachedScope)), Depth(Depth), Kind(Kind),
-      IsInactiveConfigBlock(IsInactiveConfigBlock) {}
+      IsInactiveConfigBlock(isInactiveConfigBlock) {}
 };
 
 /// Scope - This class represents lexical scopes.  These objects are created
@@ -140,7 +138,7 @@ class Scope {
 
 public:
   /// \brief Create a lexical scope of the specified kind.
-  Scope(Parser *P, ScopeKind SC, bool IsInactiveConfigBlock = false);
+  Scope(Parser *P, ScopeKind SC, bool isInactiveConfigBlock = false);
 
   /// \brief Re-enter the specified scope, transferring the ownership of the
   /// scope frame to the new object.

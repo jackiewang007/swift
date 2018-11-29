@@ -1,8 +1,8 @@
-// RUN: rm -rf %t
-// RUN: mkdir -p %t
+// RUN: %empty-directory(%t)
 //
 // RUN: cp %s %t/main.swift
 // RUN: %target-build-swift %t/main.swift -I %S/Inputs/custom-modules/ -o %t/OS_objects -Xfrontend -disable-access-control
+// RUN: %target-codesign %t/OS_objects
 // RUN: %target-run %t/OS_objects 2>&1 | %FileCheck %s
 
 // REQUIRES: objc_interop

@@ -20,7 +20,7 @@ public class Derived: Base<Int> {
    }
 }
 
-// CHECK-LABEL: sil [noinline] @_TF41devirt_concrete_subclass_of_generic_class5test1FT_Vs5Int32
+// CHECK-LABEL: sil [noinline] @$s41devirt_concrete_subclass_of_generic_class5test1s5Int32VyF
 @inline(never)
 public func test1() -> Int32 {
   let o = Derived()

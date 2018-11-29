@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -18,7 +18,6 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Allocator.h"
-#include "llvm/Support/TimeValue.h"
 #include "llvm/Support/TrailingObjects.h"
 #include <functional>
 #include <memory>
@@ -63,7 +62,7 @@ class CodeCompletionStringChunk {
 
 public:
   enum class ChunkKind {
-    /// "public", "internal", "fileprivate", or "private".
+    /// "open", "public", "internal", "fileprivate", or "private".
     AccessControlKeyword,
 
     /// such as @"availability".
@@ -474,7 +473,7 @@ enum class CodeCompletionKeywordKind {
   None,
 #define KEYWORD(X) kw_##X,
 #define POUND_KEYWORD(X) pound_##X,
-#include "swift/Parse/Tokens.def"
+#include "swift/Syntax/TokenKinds.def"
 };
 
 enum class CompletionKind {
@@ -488,22 +487,29 @@ enum class CompletionKind {
   PostfixExprParen,
   SuperExpr,
   SuperExprDot,
-  KeyPathExpr,
-  KeyPathExprDot,
+  KeyPathExprObjC,
+  KeyPathExprSwift,
   TypeSimpleBeginning,
   TypeIdentifierWithDot,
   TypeIdentifierWithoutDot,
   CaseStmtBeginning,
   CaseStmtDotPrefix,
   NominalMemberBeginning,
+  AccessorBeginning,
   AttributeBegin,
   AttributeDeclParen,
   PoundAvailablePlatform,
   AssignmentRHS,
   CallArg,
   ReturnStmtExpr,
-  AfterPound,
+  YieldStmtExpr,
+  ForEachSequence,
+  AfterPoundExpr,
+  AfterPoundDirective,
+  PlatformConditon,
+  AfterIfStmtElse,
   GenericParams,
+  PrecedenceGroup,
 };
 
 /// \brief A single code completion result.
@@ -800,6 +806,10 @@ public:
   CompletionKind CodeCompletionKind = CompletionKind::None;
   bool HasExpectedTypeRelation = false;
 
+  /// Whether there may be members that can use implicit member syntax,
+  /// e.g. `x = .foo`.
+  bool MayUseImplicitMemberExpr = false;
+
   CodeCompletionContext(CodeCompletionCache &Cache)
       : Cache(Cache) {}
 
@@ -851,14 +861,17 @@ class PrintingCodeCompletionConsumer
     : public SimpleCachingCodeCompletionConsumer {
   llvm::raw_ostream &OS;
   bool IncludeKeywords;
+  bool IncludeComments;
 
 public:
-  PrintingCodeCompletionConsumer(llvm::raw_ostream &OS, bool IncludeKeywords = true)
-      : OS(OS), IncludeKeywords(IncludeKeywords) {
-  }
+ PrintingCodeCompletionConsumer(llvm::raw_ostream &OS,
+                                bool IncludeKeywords = true,
+                                bool IncludeComments = true)
+     : OS(OS),
+       IncludeKeywords(IncludeKeywords),
+       IncludeComments(IncludeComments) {}
 
-  void handleResults(
-      MutableArrayRef<CodeCompletionResult *> Results) override;
+ void handleResults(MutableArrayRef<CodeCompletionResult *> Results) override;
 };
 
 /// \brief Create a factory for code completion callbacks.
@@ -880,31 +893,34 @@ void lookupCodeCompletionResultsFromModule(CodeCompletionResultSink &targetSink,
 /// restricting by \p onlyTypes.
 void copyCodeCompletionResults(CodeCompletionResultSink &targetSink,
                                CodeCompletionResultSink &sourceSink,
-                               bool onlyTypes);
+                               bool onlyTypes,
+                               bool onlyPrecedenceGroups);
 
 } // end namespace ide
 } // end namespace swift
 
-template <> struct llvm::DenseMapInfo<swift::ide::CodeCompletionKeywordKind> {
+namespace llvm {
+template <> struct DenseMapInfo<swift::ide::CodeCompletionKeywordKind> {
   using Kind = swift::ide::CodeCompletionKeywordKind;
   static Kind getEmptyKey() { return Kind(~0u); }
   static Kind getTombstoneKey() { return Kind(~1u); }
   static unsigned getHashValue(const Kind &Val) { return unsigned(Val); }
   static bool isEqual(const Kind &LHS, const Kind &RHS) { return LHS == RHS; }
 };
-template <> struct llvm::DenseMapInfo<swift::ide::CodeCompletionLiteralKind> {
+template <> struct DenseMapInfo<swift::ide::CodeCompletionLiteralKind> {
   using Kind = swift::ide::CodeCompletionLiteralKind;
   static Kind getEmptyKey() { return Kind(~0u); }
   static Kind getTombstoneKey() { return Kind(~1u); }
   static unsigned getHashValue(const Kind &Val) { return unsigned(Val); }
   static bool isEqual(const Kind &LHS, const Kind &RHS) { return LHS == RHS; }
 };
-template <> struct llvm::DenseMapInfo<swift::ide::CodeCompletionDeclKind> {
+template <> struct DenseMapInfo<swift::ide::CodeCompletionDeclKind> {
   using Kind = swift::ide::CodeCompletionDeclKind;
   static Kind getEmptyKey() { return Kind(~0u); }
   static Kind getTombstoneKey() { return Kind(~1u); }
   static unsigned getHashValue(const Kind &Val) { return unsigned(Val); }
   static bool isEqual(const Kind &LHS, const Kind &RHS) { return LHS == RHS; }
 };
+}
 
 #endif // SWIFT_IDE_CODECOMPLETION_H

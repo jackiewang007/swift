@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -18,6 +18,7 @@
 #ifndef SWIFT_SEMA_CONSTRAINT_H
 #define SWIFT_SEMA_CONSTRAINT_H
 
+#include "CSFix.h"
 #include "OverloadChoice.h"
 #include "swift/AST/FunctionRefKind.h"
 #include "swift/AST/Identifier.h"
@@ -66,18 +67,12 @@ enum class ConstraintKind : char {
   Subtype,
   /// \brief The first type is convertible to the second type.
   Conversion,
-  /// \brief The first type is convertible to the second type using an 'as'
-  /// statement. This differs from 'Conversion' in that it also allows bridging.
-  ExplicitConversion,
+  /// \brief The first type can be bridged to the second type.
+  BridgingConversion,
   /// \brief The first type is the element of an argument tuple that is
   /// convertible to the second type (which represents the corresponding
   /// parameter type).
   ArgumentConversion,
-  /// \brief The first type is an argument type (or tuple) that is convertible
-  /// to the second type (which represents the parameter type/tuple).
-  ArgumentTupleConversion,
-  /// An argument tuple conversion for operators.
-  OperatorArgumentTupleConversion,
   /// \brief The first type is convertible to the second type, including inout.
   OperatorArgumentConversion,
   /// \brief The first type must conform to the second type (which is a
@@ -102,6 +97,12 @@ enum class ConstraintKind : char {
   /// function type is expected to become a function type. Note, we
   /// do not require the function type attributes to match.
   ApplicableFunction,
+  /// \brief The first type is a function type whose input is the value passed
+  /// to the function and whose output is a type variable describing the output.
+  /// The second type is either a `@dynamicCallable` nominal type or the
+  /// function type of a `dynamicallyCall` method defined on a
+  /// `@dynamicCallable` nominal type.
+  DynamicCallableApplicableFunction,
   /// \brief The first type is the type of the dynamicType member of the
   /// second type.
   DynamicTypeOf,
@@ -124,6 +125,28 @@ enum class ConstraintKind : char {
   /// \brief The first type is an optional type whose object type is the second
   /// type, preserving lvalue-ness.
   OptionalObject,
+  /// \brief The first type is the same function type as the second type, but
+  /// made @escaping.
+  EscapableFunctionOf,
+  /// \brief The first type is an opened type from the second type (which is
+  /// an existential).
+  OpenedExistentialOf,
+  /// \brief A relation between three types. The first is the key path type,
+  // the second is the root type, and the third is the projected value type.
+  // The second and third types can be lvalues depending on the kind of key
+  // path.
+  KeyPathApplication,
+  /// \brief A relation between three types. The first is the key path type,
+  // the second is its root type, and the third is the projected value type.
+  // The key path type is chosen based on the selection of overloads for the
+  // member references along the path.
+  KeyPath,
+  /// \brief The first type is a function type, the second is the function's
+  /// input type.
+  FunctionInput,
+  /// \brief The first type is a function type, the second is the function's
+  /// result type.
+  FunctionResult,
 };
 
 /// \brief Classification of the different kinds of constraints.
@@ -153,10 +176,6 @@ enum class ConstraintClassification : char {
 enum class ConversionRestrictionKind {
   /// Tuple-to-tuple conversion.
   TupleToTuple,
-  /// Scalar-to-tuple conversion.
-  ScalarToTuple,
-  /// Tuple-to-scalar conversion.
-  TupleToScalar,
   /// Deep equality comparison.
   DeepEquality,
   /// Subclass-to-superclass conversion.
@@ -181,16 +200,12 @@ enum class ConversionRestrictionKind {
   Existential,
   /// Metatype to existential metatype conversion.
   MetatypeToExistentialMetatype,
+  /// Existential metatype to metatype conversion.
+  ExistentialMetatypeToMetatype,
   /// T -> U? value to optional conversion (or to implicitly unwrapped optional).
   ValueToOptional,
   /// T? -> U? optional to optional conversion (or unchecked to unchecked).
   OptionalToOptional,
-  /// T! -> U? unchecked-optional to optional conversion
-  ImplicitlyUnwrappedOptionalToOptional,
-  /// T? -> U! optional to implicitly unwrapped optional conversion
-  OptionalToImplicitlyUnwrappedOptional,
-  /// Implicit forces of implicitly unwrapped optionals to their presumed values
-  ForceUnchecked,
   /// Implicit upcast conversion of array types.
   ArrayUpcast,
   /// Implicit upcast conversion of dictionary types, which includes
@@ -200,10 +215,6 @@ enum class ConversionRestrictionKind {
   SetUpcast,
   /// T:Hashable -> AnyHashable conversion.
   HashableToAnyHashable,
-  /// Implicit bridging from a value type to an Objective-C class.
-  BridgeToObjC,
-  /// Explicit bridging from an Objective-C class to a value type.
-  BridgeFromObjC,
   /// Implicit conversion from a CF type to its toll-free-bridged Objective-C
   /// class type.
   CFTollFreeBridgeToObjC,
@@ -222,67 +233,6 @@ enum RememberChoice_t : bool {
   RememberChoice = true
 };
 
-/// Describes the kind of fix to apply to the given constraint before
-/// visiting it.
-enum class FixKind : uint8_t {
-  /// No fix, which is used as a placeholder indicating that future processing
-  /// of this constraint should not attempt fixes.
-  None,
-
-  /// Introduce a '!' to force an optional unwrap.
-  ForceOptional,
-    
-  /// Introduce a '?.' to begin optional chaining.
-  OptionalChaining,
-
-  /// Append 'as! T' to force a downcast to the specified type.
-  ForceDowncast,
-
-  /// Introduce a '&' to take the address of an lvalue.
-  AddressOf,
-  
-  /// Replace a coercion ('as') with a forced checked cast ('as!').
-  CoerceToCheckedCast,
-};
-
-/// Describes a fix that can be applied to a constraint before visiting it.
-class Fix {
-  FixKind Kind;
-  uint16_t Data;
-
-  Fix(FixKind kind, uint16_t data) : Kind(kind), Data(data){ }
-
-  uint16_t getData() const { return Data; }
-
-  friend class Constraint;
-
-public:
-  Fix() : Kind(FixKind::None), Data(0) { }
-  
-  Fix(FixKind kind) : Kind(kind), Data(0) { 
-    assert(kind != FixKind::ForceDowncast && "Use getForceDowncast()");
-  }
-
-  /// Produce a new fix that performs a forced downcast to the given type.
-  static Fix getForcedDowncast(ConstraintSystem &cs, Type toType);
-
-  /// Retrieve the kind of fix.
-  FixKind getKind() const { return Kind; }
-
-  /// If this fix has a type argument, retrieve it.
-  Type getTypeArgument(ConstraintSystem &cs) const;
-
-  /// Return a string representation of a fix.
-  static llvm::StringRef getName(FixKind kind);
-
-  void print(llvm::raw_ostream &Out, ConstraintSystem *cs) const;
-
-  LLVM_ATTRIBUTE_DEPRECATED(void dump(ConstraintSystem *cs) const 
-                              LLVM_ATTRIBUTE_USED,
-                            "only for use within the debugger");
-};
-
-
 /// \brief A constraint between two type variables.
 class Constraint final : public llvm::ilist_node<Constraint>,
     private llvm::TrailingObjects<Constraint, TypeVariableType *> {
@@ -294,20 +244,18 @@ class Constraint final : public llvm::ilist_node<Constraint>,
   /// The kind of restriction placed on this constraint.
   ConversionRestrictionKind Restriction : 8;
 
-  /// Data associated with the fix.
-  uint16_t FixData;
-
-  /// The kind of fix to be applied to the constraint before visiting it.
-  FixKind TheFix;
+  /// The fix to be applied to the constraint before visiting it.
+  ConstraintFix *TheFix = nullptr;
 
   /// Whether the \c Restriction field is valid.
   unsigned HasRestriction : 1;
 
-  /// Whether the \c Fix field is valid.
-  unsigned HasFix : 1;
-
   /// Whether this constraint is currently active, i.e., stored in the worklist.
   unsigned IsActive : 1;
+
+  /// Was this constraint was determined to be inconsistent with the
+  /// constraint graph during constraint propagation?
+  unsigned IsDisabled : 1;
 
   /// Whether the choice of this disjunction should be recorded in the
   /// solver state.
@@ -334,10 +282,24 @@ class Constraint final : public llvm::ilist_node<Constraint>,
       /// \brief The second type.
       Type Second;
 
+      /// \brief The third type, if any.
+      Type Third;
+    } Types;
+
+    struct {
+      /// \brief The type of the base.
+      Type First;
+
+      /// \brief The type of the member.
+      Type Second;
+
       /// \brief If non-null, the name of a member of the first type is that
       /// being related to the second type.
       DeclName Member;
-    } Types;
+
+      /// \brief The DC in which the use appears.
+      DeclContext *UseDC;
+    } Member;
 
     /// The set of constraints for a disjunction.
     ArrayRef<Constraint *> Nested;
@@ -348,6 +310,9 @@ class Constraint final : public llvm::ilist_node<Constraint>,
 
       /// \brief The overload choice
       OverloadChoice Choice;
+
+      /// \brief The DC in which the use appears.
+      DeclContext *UseDC;
     } Overload;
   };
 
@@ -363,14 +328,24 @@ class Constraint final : public llvm::ilist_node<Constraint>,
              ConstraintLocator *locator, ArrayRef<TypeVariableType *> typeVars);
 
   /// Construct a new constraint.
+  Constraint(ConstraintKind kind, Type first, Type second,
+             ConstraintLocator *locator,
+             ArrayRef<TypeVariableType *> typeVars);
+
+  /// Construct a new constraint.
+  Constraint(ConstraintKind kind, Type first, Type second, Type third,
+             ConstraintLocator *locator,
+             ArrayRef<TypeVariableType *> typeVars);
+
+  /// Construct a new member constraint.
   Constraint(ConstraintKind kind, Type first, Type second, DeclName member,
-             FunctionRefKind functionRefKind,
+             DeclContext *useDC, FunctionRefKind functionRefKind,
              ConstraintLocator *locator,
              ArrayRef<TypeVariableType *> typeVars);
 
   /// Construct a new overload-binding constraint.
-  Constraint(Type type, OverloadChoice choice, ConstraintLocator *locator,
-             ArrayRef<TypeVariableType *> typeVars);
+  Constraint(Type type, OverloadChoice choice, DeclContext *useDC,
+             ConstraintLocator *locator, ArrayRef<TypeVariableType *> typeVars);
 
   /// Construct a restricted constraint.
   Constraint(ConstraintKind kind, ConversionRestrictionKind restriction,
@@ -378,9 +353,8 @@ class Constraint final : public llvm::ilist_node<Constraint>,
              ArrayRef<TypeVariableType *> typeVars);
   
   /// Construct a relational constraint with a fix.
-  Constraint(ConstraintKind kind, Fix fix,
-             Type first, Type second, ConstraintLocator *locator,
-             ArrayRef<TypeVariableType *> typeVars);
+  Constraint(ConstraintKind kind, ConstraintFix *fix, Type first, Type second,
+             ConstraintLocator *locator, ArrayRef<TypeVariableType *> typeVars);
 
   /// Retrieve the type variables buffer, for internal mutation.
   MutableArrayRef<TypeVariableType *> getTypeVariablesBuffer() {
@@ -390,13 +364,32 @@ class Constraint final : public llvm::ilist_node<Constraint>,
 public:
   /// Create a new constraint.
   static Constraint *create(ConstraintSystem &cs, ConstraintKind Kind, 
-                            Type First, Type Second, DeclName Member,
-                            FunctionRefKind functionRefKind,
+                            Type First, Type Second,
                             ConstraintLocator *locator);
+
+  /// Create a new constraint.
+  static Constraint *create(ConstraintSystem &cs, ConstraintKind Kind, 
+                            Type First, Type Second, Type Third,
+                            ConstraintLocator *locator);
+
+  /// Create a new member constraint, or a disjunction of that with the outer
+  /// alternatives.
+  static Constraint *createMemberOrOuterDisjunction(
+      ConstraintSystem &cs, ConstraintKind kind, Type first, Type second,
+      DeclName member, DeclContext *useDC, FunctionRefKind functionRefKind,
+      ArrayRef<OverloadChoice> outerAlternatives, ConstraintLocator *locator);
+
+  /// Create a new member constraint.
+  static Constraint *createMember(ConstraintSystem &cs, ConstraintKind kind,
+                                  Type first, Type second, DeclName member,
+                                  DeclContext *useDC,
+                                  FunctionRefKind functionRefKind,
+                                  ConstraintLocator *locator);
 
   /// Create an overload-binding constraint.
   static Constraint *createBindOverload(ConstraintSystem &cs, Type type, 
                                         OverloadChoice choice, 
+                                        DeclContext *useDC,
                                         ConstraintLocator *locator);
 
   /// Create a restricted relational constraint.
@@ -407,8 +400,7 @@ public:
 
   /// Create a relational constraint with a fix.
   static Constraint *createFixed(ConstraintSystem &cs, ConstraintKind kind,
-                                 Fix fix,
-                                 Type first, Type second,
+                                 ConstraintFix *fix, Type first, Type second,
                                  ConstraintLocator *locator);
 
   /// Create a new disjunction constraint.
@@ -430,19 +422,31 @@ public:
   }
 
   /// Retrieve the fix associated with this constraint.
-  Optional<Fix> getFix() const {
-    if (!HasFix)
-      return None;
-
-    return Fix(TheFix, FixData);
-  }
+  ConstraintFix *getFix() const { return TheFix; }
 
   /// Whether this constraint is active, i.e., in the worklist.
   bool isActive() const { return IsActive; }
 
   /// Set whether this constraint is active or not.
-  void setActive(bool active) { IsActive = active; }
-  
+  void setActive(bool active) {
+    assert(!isDisabled() && "Cannot activate a constraint that is disabled!");
+    IsActive = active;
+  }
+
+  /// Whether this constraint is active, i.e., in the worklist.
+  bool isDisabled() const { return IsDisabled; }
+
+  /// Set whether this constraint is active or not.
+  void setDisabled() {
+    assert(!isActive() && "Cannot disable constraint marked as active!");
+    IsDisabled = true;
+  }
+
+  void setEnabled() {
+    assert(isDisabled() && "Can't re-enable already active constraint!");
+    IsDisabled = false;
+  }
+
   /// Mark or retrieve whether this constraint should be favored in the system.
   void setFavored() { IsFavored = true; }
   bool isFavored() const { return IsFavored; }
@@ -466,16 +470,15 @@ public:
     case ConstraintKind::BindToPointerType:
     case ConstraintKind::Subtype:
     case ConstraintKind::Conversion:
-    case ConstraintKind::ExplicitConversion:
+    case ConstraintKind::BridgingConversion:
     case ConstraintKind::ArgumentConversion:
-    case ConstraintKind::ArgumentTupleConversion:
-    case ConstraintKind::OperatorArgumentTupleConversion:
     case ConstraintKind::OperatorArgumentConversion:
     case ConstraintKind::ConformsTo:
     case ConstraintKind::LiteralConformsTo:
     case ConstraintKind::CheckedCast:
     case ConstraintKind::SelfObjectOfProtocol:
     case ConstraintKind::ApplicableFunction:
+    case ConstraintKind::DynamicCallableApplicableFunction:
     case ConstraintKind::BindOverload:
     case ConstraintKind::OptionalObject:
       return ConstraintClassification::Relational;
@@ -485,28 +488,65 @@ public:
       return ConstraintClassification::Member;
 
     case ConstraintKind::DynamicTypeOf:
+    case ConstraintKind::EscapableFunctionOf:
+    case ConstraintKind::OpenedExistentialOf:
+    case ConstraintKind::KeyPath:
+    case ConstraintKind::KeyPathApplication:
     case ConstraintKind::Defaultable:
+    case ConstraintKind::FunctionInput:
+    case ConstraintKind::FunctionResult:
       return ConstraintClassification::TypeProperty;
 
     case ConstraintKind::Disjunction:
       return ConstraintClassification::Disjunction;
     }
+
+    llvm_unreachable("Unhandled ConstraintKind in switch.");
   }
 
   /// \brief Retrieve the first type in the constraint.
   Type getFirstType() const {
-    assert(getKind() != ConstraintKind::Disjunction);
+    switch (getKind()) {
+    case ConstraintKind::Disjunction:
+      llvm_unreachable("disjunction constraints have no type operands");
 
-    if (getKind() == ConstraintKind::BindOverload)
+    case ConstraintKind::BindOverload:
       return Overload.First;
 
-    return Types.First;
+    case ConstraintKind::ValueMember:
+    case ConstraintKind::UnresolvedValueMember:
+      return Member.First;
+
+    default:
+      return Types.First;
+    }
   }
 
   /// \brief Retrieve the second type in the constraint.
   Type getSecondType() const {
-    assert(getKind() != ConstraintKind::Disjunction);
-    return Types.Second;
+    switch (getKind()) {
+    case ConstraintKind::Disjunction:
+    case ConstraintKind::BindOverload:
+      llvm_unreachable("constraint has no second type");
+
+    case ConstraintKind::ValueMember:
+    case ConstraintKind::UnresolvedValueMember:
+      return Member.Second;
+
+    default:
+      return Types.Second;
+    }
+  }
+
+  /// \brief Retrieve the third type in the constraint.
+  Type getThirdType() const {
+    switch (getKind()) {
+    case ConstraintKind::KeyPath:
+    case ConstraintKind::KeyPathApplication:
+      return Types.Third;
+    default:
+      llvm_unreachable("no third type");
+    }
   }
 
   /// \brief Retrieve the protocol in a conformance constraint.
@@ -516,7 +556,7 @@ public:
   DeclName getMember() const {
     assert(Kind == ConstraintKind::ValueMember ||
            Kind == ConstraintKind::UnresolvedValueMember);
-    return Types.Member;
+    return Member.Member;
   }
 
   /// \brief Determine whether this constraint kind has a second type.
@@ -541,10 +581,36 @@ public:
     return Nested;
   }
 
+  unsigned countActiveNestedConstraints() const {
+    unsigned count = 0;
+    for (auto *constraint : Nested)
+      if (!constraint->isDisabled())
+        count++;
+
+    return count;
+  }
+
+  /// Determine if this constraint represents explicit conversion,
+  /// e.g. coercion constraint "as X" which forms a disjunction.
+  bool isExplicitConversion() const;
+
   /// Retrieve the overload choice for an overload-binding constraint.
   OverloadChoice getOverloadChoice() const {
     assert(Kind == ConstraintKind::BindOverload);
     return Overload.Choice;
+  }
+
+  /// Retrieve the DC in which the overload was used.
+  DeclContext *getOverloadUseDC() const {
+    assert(Kind == ConstraintKind::BindOverload);
+    return Overload.UseDC;
+  }
+
+  /// Retrieve the DC in which the member was used.
+  DeclContext *getMemberUseDC() const {
+    assert(Kind == ConstraintKind::ValueMember ||
+           Kind == ConstraintKind::UnresolvedValueMember);
+    return Member.UseDC;
   }
 
   /// \brief Retrieve the locator for this constraint.
@@ -572,28 +638,19 @@ public:
   void operator delete(void *mem) { }
 };
 
-} } // end namespace swift::constraints
+} // end namespace constraints
+} // end namespace swift
 
 namespace llvm {
 
 /// Specialization of \c ilist_traits for constraints.
 template<>
 struct ilist_traits<swift::constraints::Constraint>
-         : public ilist_default_traits<swift::constraints::Constraint> {
-  typedef swift::constraints::Constraint Element;
+         : public ilist_node_traits<swift::constraints::Constraint> {
+  using Element = swift::constraints::Constraint;
 
   static Element *createNode(const Element &V) = delete;
   static void deleteNode(Element *V) { /* never deleted */ }
-
-  Element *createSentinel() const { return static_cast<Element *>(&Sentinel); }
-  static void destroySentinel(Element *) {}
-
-  Element *provideInitialHead() const { return createSentinel(); }
-  Element *ensureHead(Element *) const { return createSentinel(); }
-  static void noteHead(Element *, Element *) {}
-
-private:
-  mutable ilist_half_node<Element> Sentinel;
 };
 
 } // end namespace llvm

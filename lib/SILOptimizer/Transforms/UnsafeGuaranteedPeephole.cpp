@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -44,12 +44,62 @@
 
 using namespace swift;
 
+/// Pattern match and remove "retain(self), apply(self), release(self)" calls
+/// inbetween unsafeGuaranteed pairs and remove the retain/release pairs.
+static void tryRemoveRetainReleasePairsBetween(
+    RCIdentityFunctionInfo &RCFI, SILInstruction *UnsafeGuaranteedI,
+    SILInstruction *Retain, SILInstruction *Release,
+    SILInstruction *UnsafeGuaranteedEndI) {
+  auto *BB = UnsafeGuaranteedI->getParent();
+  if (BB != UnsafeGuaranteedEndI->getParent() || BB != Retain->getParent() ||
+      BB != Release->getParent())
+    return;
+
+  SILInstruction *CandidateRetain = nullptr;
+  SmallVector<SILInstruction *, 8> InstsToDelete;
+
+  SILBasicBlock::iterator It(UnsafeGuaranteedI);
+  while (It != BB->end() && It != SILBasicBlock::iterator(Release) &&
+         It != SILBasicBlock::iterator(UnsafeGuaranteedEndI)) {
+    auto *CurInst = &*It++;
+    if (CurInst != Retain &&
+        (isa<StrongRetainInst>(CurInst) || isa<RetainValueInst>(CurInst)) &&
+        RCFI.getRCIdentityRoot(CurInst->getOperand(0))
+          ->getDefiningInstruction() == UnsafeGuaranteedI) {
+      CandidateRetain = CurInst;
+      continue;
+    }
+    if (!CurInst->mayHaveSideEffects())
+      continue;
+
+    if (isa<DebugValueInst>(CurInst) || isa<DebugValueAddrInst>(CurInst))
+      continue;
+
+    if (isa<ApplyInst>(CurInst) || isa<PartialApplyInst>(CurInst))
+      continue;
+
+    if (CandidateRetain != nullptr && CurInst != Release &&
+        (isa<StrongReleaseInst>(CurInst) || isa<ReleaseValueInst>(CurInst)) &&
+        RCFI.getRCIdentityRoot(CurInst->getOperand(0))
+          ->getDefiningInstruction() == UnsafeGuaranteedI) {
+      // Delete the retain/release pair.
+      InstsToDelete.push_back(CandidateRetain);
+      InstsToDelete.push_back(CurInst);
+    }
+
+    // Otherwise, reset our scan.
+    CandidateRetain = nullptr;
+  }
+  for (auto *Inst: InstsToDelete)
+    Inst->eraseFromParent();
+}
+
 /// Remove retain/release pairs around builtin "unsafeGuaranteed" instruction
 /// sequences.
 static bool removeGuaranteedRetainReleasePairs(SILFunction &F,
                                                RCIdentityFunctionInfo &RCIA,
                                                PostDominanceAnalysis *PDA) {
-  DEBUG(llvm::dbgs() << "Running on function " << F.getName() << "\n");
+  LLVM_DEBUG(llvm::dbgs() << "Running on function " << F.getName() << "\n");
   bool Changed = false;
 
   // Lazily compute post-dominance info only when we really need it.
@@ -78,7 +128,7 @@ static bool removeGuaranteedRetainReleasePairs(SILFunction &F,
       auto Opd = UnsafeGuaranteedI->getOperand(0);
       auto RCIdOpd = RCIA.getRCIdentityRoot(UnsafeGuaranteedI->getOperand(0));
       if (!LastRetain.count(RCIdOpd)) {
-        DEBUG(llvm::dbgs() << "LastRetain failed\n");
+        LLVM_DEBUG(llvm::dbgs() << "LastRetain failed\n");
         continue;
       }
 
@@ -94,24 +144,24 @@ static bool removeGuaranteedRetainReleasePairs(SILFunction &F,
               isa<DebugValueAddrInst>(*NextInstIter)))
        ++NextInstIter;
       if (&*NextInstIter != CurInst) {
-        DEBUG(llvm::dbgs() << "Last retain right before match failed\n");
+        LLVM_DEBUG(llvm::dbgs() << "Last retain right before match failed\n");
         continue;
       }
 
-      DEBUG(llvm::dbgs() << "Saw " << *UnsafeGuaranteedI);
-      DEBUG(llvm::dbgs() << "  with operand " << *Opd);
+      LLVM_DEBUG(llvm::dbgs() << "Saw " << *UnsafeGuaranteedI);
+      LLVM_DEBUG(llvm::dbgs() << "  with operand " << *Opd);
 
       // Match the reference and token result.
       //  %4 = builtin "unsafeGuaranteed"<Foo>(%0 : $Foo)
       //  %5 = tuple_extract %4 : $(Foo, Builtin.Int8), 0
       //  %6 = tuple_extract %4 : $(Foo, Builtin.Int8), 1
-      SILInstruction *UnsafeGuaranteedValue;
-      SILInstruction *UnsafeGuaranteedToken;
+      SingleValueInstruction *UnsafeGuaranteedValue;
+      SingleValueInstruction *UnsafeGuaranteedToken;
       std::tie(UnsafeGuaranteedValue, UnsafeGuaranteedToken) =
           getSingleUnsafeGuaranteedValueResult(UnsafeGuaranteedI);
 
       if (!UnsafeGuaranteedValue) {
-        DEBUG(llvm::dbgs() << "  no single unsafeGuaranteed value use\n");
+        LLVM_DEBUG(llvm::dbgs() << "  no single unsafeGuaranteed value use\n");
         continue;
       }
 
@@ -121,7 +171,7 @@ static bool removeGuaranteedRetainReleasePairs(SILFunction &F,
       auto *UnsafeGuaranteedEndI =
           getUnsafeGuaranteedEndUser(UnsafeGuaranteedToken);
       if (!UnsafeGuaranteedEndI) {
-        DEBUG(llvm::dbgs() << "  no single unsafeGuaranteedEnd use found\n");
+        LLVM_DEBUG(llvm::dbgs()<<"  no single unsafeGuaranteedEnd use found\n");
         continue;
       }
 
@@ -140,7 +190,8 @@ static bool removeGuaranteedRetainReleasePairs(SILFunction &F,
           UnsafeGuaranteedEndI, UnsafeGuaranteedI, UnsafeGuaranteedValue,
           UnsafeGuaranteedEndBB, RCIA);
       if (!LastRelease) {
-        DEBUG(llvm::dbgs() << "  no release before/after unsafeGuaranteedEnd found\n");
+        LLVM_DEBUG(llvm::dbgs() << "  no release before/after "
+                                   "unsafeGuaranteedEnd found\n");
         continue;
       }
 
@@ -154,6 +205,12 @@ static bool removeGuaranteedRetainReleasePairs(SILFunction &F,
       // Okay we found a post dominating release. Let's remove the
       // retain/unsafeGuaranteed/release combo.
       //
+      // Before we do this check whether there are any pairs of retain releases
+      // we can safely remove.
+      tryRemoveRetainReleasePairsBetween(RCIA, UnsafeGuaranteedI,
+                                         LastRetainInst, LastRelease,
+                                         UnsafeGuaranteedEndI);
+
       LastRetainInst->eraseFromParent();
       LastRelease->eraseFromParent();
       UnsafeGuaranteedEndI->eraseFromParent();
@@ -185,9 +242,8 @@ class UnsafeGuaranteedPeephole : public swift::SILFunctionTransform {
       invalidateAnalysis(SILAnalysis::InvalidationKind::Instructions);
   }
 
-  StringRef getName() override { return "UnsafeGuaranteed Peephole"; }
 };
-} // end anonymous namespace.
+} // end anonymous namespace
 
 SILTransform *swift::createUnsafeGuaranteedPeephole() {
   return new UnsafeGuaranteedPeephole();

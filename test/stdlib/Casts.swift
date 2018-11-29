@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2015 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 // -----------------------------------------------------------------------------
 ///
@@ -49,6 +49,26 @@ CastsTests.test("No overrelease of existential boxes in failed casts") {
 }
 
 extension Int : P {}
+
+// Test for SR-7664: Inconsistent optional casting behaviour with generics
+// Runtime failed to unwrap multiple levels of Optional when casting.
+CastsTests.test("Multi-level optionals can be casted") {
+  func testSuccess<From, To>(_ x: From, from: From.Type, to: To.Type) {
+    expectNotNil(x as? To)
+  }
+  func testFailure<From, To>(_ x: From, from: From.Type, to: To.Type) {
+    expectNil(x as? To)
+  }
+  testSuccess(42, from: Int?.self, to: Int.self)
+  testSuccess(42, from: Int??.self, to: Int.self)
+  testSuccess(42, from: Int???.self, to: Int.self)
+  testSuccess(42, from: Int???.self, to: Int?.self)
+  testSuccess(42, from: Int???.self, to: Int??.self)
+  testSuccess(42, from: Int???.self, to: Int???.self)
+  testFailure(42, from: Int?.self, to: String.self)
+  testFailure(42, from: Int??.self, to: String.self)
+  testFailure(42, from: Int???.self, to: String.self)
+}
 
 #if _runtime(_ObjC)
 extension CFBitVector : P {

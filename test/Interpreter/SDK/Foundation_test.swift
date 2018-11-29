@@ -140,6 +140,58 @@ FoundationTestSuite.test("NSRange") {
   expectEqual("{1, 4}", String(NSStringFromRange(nsRange)))
 }
 
+FoundationTestSuite.test("RangeConversion") {
+  let i: Int8 = 10
+  let j: Int8 = 20
+
+  let nsrFromInt8 = NSRange(i..<j)
+  expectEqual(nsrFromInt8, NSRange(location: 10, length: 10))
+
+  var r = Range(nsrFromInt8)
+  expectNotNil(r)
+  expectEqual(r!.lowerBound, 10)
+  expectEqual(r!.upperBound, 20)
+  expectType(Optional<Range<Int>>.self, &r)
+
+  var r8 = Range<Int8>(nsrFromInt8)
+  expectNotNil(r8 != nil)
+  expectEqual(r8?.lowerBound, 10)
+  expectEqual(r8?.upperBound, 20)
+  expectType(Optional<Range<Int8>>.self, &r8)
+  
+  var nsrFromPartial = NSRange(..<5)
+  expectEqual("{0, 5}", NSStringFromRange(nsrFromPartial))
+
+  let s = "Hello, 🌎!"
+  let b = s.firstIndex(of: ",")!
+  let e = s.firstIndex(of: "!")!
+  let nsr = NSRange(b..<e, in: s)
+  expectEqual(nsr.location, 5)
+  expectEqual(nsr.length, 4)
+  let rs = Range(nsr, in: s)!
+  expectEqual(s[rs], ", 🌎")
+
+  let nsrTo = NSRange(..<b, in: s)
+  expectEqual(nsrTo.location, 0)
+  expectEqual(nsrTo.length, 5)
+  let nsrFrom = NSRange(b..., in: s)
+  expectEqual(nsrFrom.location,5)
+  expectEqual(nsrFrom.length, 5)
+  
+  expectNil(Range(NSRange(location: 100, length: 0), in: s))
+  expectNil(Range(NSRange(location: 0, length: 100), in: s))
+  
+  let empty = ""
+  expectNil(Range(NSRange(location: 1, length: 0), in: empty))  
+  expectNil(Range(NSRange(location: 0, length: 1), in: empty))
+  expectNotNil(Range(NSRange(location: 0, length: 0), in: empty))
+
+  // FIXME: enable once indices conform to RangeExpression
+  // let nsrFull = NSRange(s.indices, in: s)
+  // expectEqual(nsrFull.location, 0)
+  // expectEqual(nsrFull.length, 10)
+}
+
 //===----------------------------------------------------------------------===//
 // URLs
 //===----------------------------------------------------------------------===//
@@ -200,7 +252,7 @@ FoundationTestSuite.test("DarwinBoolean smoke test") {
   let _: CFArrayEqualCallBack = { DarwinBoolean($0 == $1) }
 }
 
-#if os(OSX)
+#if os(macOS)
 FoundationTestSuite.test("NSRectEdge/constants") {
   // Check that the following constants have the correct type and value.
   //
@@ -356,7 +408,7 @@ if #available(OSX 10.11, iOS 9.0, *) {
 
     // confirm the that class function works
     do {
-      let decoded = try NSKeyedUnarchiver.unarchiveTopLevelObjectWithData(data) as? NSPredicate
+      let decoded = try NSKeyedUnarchiver.unarchiveTopLevelObjectWithData(data as Data) as? NSPredicate
       expectEqual(obj, decoded)
     }
     catch {

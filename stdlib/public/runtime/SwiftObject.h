@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -23,16 +23,26 @@
 #include <utility>
 #include "swift/Runtime/HeapObject.h"
 #if SWIFT_OBJC_INTEROP
+#include "llvm/Support/Compiler.h"
 #include <objc/NSObject.h>
 #endif
 
 
 #if SWIFT_OBJC_INTEROP
 
+#if SWIFT_DARWIN_ENABLE_STABLE_ABI_BIT
+// Source code: "SwiftObject"
+// Real class name: mangled "Swift._SwiftObject"
+#define SwiftObject _TtCs12_SwiftObject
+#else
+// Pre-stable ABI uses un-mangled name for SwiftObject
+#endif
+
 #if __has_attribute(objc_root_class)
 __attribute__((__objc_root_class__))
 #endif
 SWIFT_RUNTIME_EXPORT @interface SwiftObject<NSObject> {
+ @private
   Class isa;
   SWIFT_HEAPOBJECT_NON_OBJC_MEMBERS;
 }
@@ -57,6 +67,9 @@ SWIFT_RUNTIME_EXPORT @interface SwiftObject<NSObject> {
 - (BOOL)conformsToProtocol:(Protocol *)aProtocol;
 
 - (BOOL)respondsToSelector:(SEL)aSelector;
++ (BOOL)instancesRespondToSelector:(SEL)aSelector;
+- (IMP)methodForSelector:(SEL)aSelector;
++ (IMP)instanceMethodForSelector:(SEL)aSelector;
 
 - (instancetype)retain;
 - (oneway void)release;
@@ -69,17 +82,17 @@ SWIFT_RUNTIME_EXPORT @interface SwiftObject<NSObject> {
 
 namespace swift {
 
-struct String { void *x, *y, *z; };
-
-/// Helper from the standard library for stringizing an arbitrary object.
-extern "C" SWIFT_CC(swift)
-void swift_getSummary(String *out, OpaqueValue *value, const Metadata *T);
-
-// Convert a Swift String to an NSString.
-NSString *convertStringToNSString(String *swiftString);
+NSString *getDescription(OpaqueValue *value, const Metadata *type);
 
 }
 
 #endif
+
+namespace swift {
+
+SWIFT_CC(swift) SWIFT_RUNTIME_STDLIB_SPI
+HeapObject *_swift_reallocObject(HeapObject *obj, size_t size);
+
+}
 
 #endif

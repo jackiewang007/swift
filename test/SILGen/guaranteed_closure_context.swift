@@ -1,4 +1,4 @@
-// RUN: %target-swift-frontend -parse-as-library -emit-silgen -enable-guaranteed-closure-contexts %s | %FileCheck %s
+// RUN: %target-swift-emit-silgen -parse-as-library -enable-sil-ownership  %s | %FileCheck %s
 
 func use<T>(_: T) {}
 
@@ -8,13 +8,13 @@ protocol P {}
 class C: P {}
 struct S {}
 
-// CHECK-LABEL: sil hidden @_TF26guaranteed_closure_context19guaranteed_capturesFT_T_
+// CHECK-LABEL: sil hidden @$s26guaranteed_closure_context0A9_capturesyyF
 func guaranteed_captures() {
-  // CHECK: [[MUTABLE_TRIVIAL_BOX:%.*]] = alloc_box $@box S
+  // CHECK: [[MUTABLE_TRIVIAL_BOX:%.*]] = alloc_box ${ var S }
   var mutableTrivial = S()
-  // CHECK: [[MUTABLE_RETAINABLE_BOX:%.*]] = alloc_box $@box C
+  // CHECK: [[MUTABLE_RETAINABLE_BOX:%.*]] = alloc_box ${ var C }
   var mutableRetainable = C()
-  // CHECK: [[MUTABLE_ADDRESS_ONLY_BOX:%.*]] = alloc_box $@box P
+  // CHECK: [[MUTABLE_ADDRESS_ONLY_BOX:%.*]] = alloc_box ${ var P }
   var mutableAddressOnly: P = C()
 
   // CHECK: [[IMMUTABLE_TRIVIAL:%.*]] = apply {{.*}} -> S
@@ -33,10 +33,16 @@ func guaranteed_captures() {
   // CHECK-NOT: copy_value [[MUTABLE_RETAINABLE_BOX]]
   // CHECK-NOT: copy_value [[MUTABLE_ADDRESS_ONLY_BOX]]
   // CHECK-NOT: copy_value [[IMMUTABLE_RETAINABLE]]
-  // CHECK:     [[IMMUTABLE_AO_BOX:%.*]] = alloc_box $@box P
 
-  // CHECK: [[FN:%.*]] = function_ref [[FN_NAME:@_TFF26guaranteed_closure_context19guaranteed_capturesFT_T_L_17captureEverythingfT_T_]]
-  // CHECK: apply [[FN]]([[MUTABLE_TRIVIAL_BOX]], [[MUTABLE_RETAINABLE_BOX]], [[MUTABLE_ADDRESS_ONLY_BOX]], [[IMMUTABLE_TRIVIAL]], [[IMMUTABLE_RETAINABLE]], [[IMMUTABLE_AO_BOX]])
+  // CHECK:     [[B_MUTABLE_TRIVIAL_BOX:%.*]] = begin_borrow [[MUTABLE_TRIVIAL_BOX]] : ${ var S }
+  // CHECK:     [[B_MUTABLE_RETAINABLE_BOX:%.*]] = begin_borrow [[MUTABLE_RETAINABLE_BOX]] : ${ var C }
+  // CHECK:     [[B_MUTABLE_ADDRESS_ONLY_BOX:%.*]] = begin_borrow [[MUTABLE_ADDRESS_ONLY_BOX]] : ${ var P }
+  // CHECK:     [[B_IMMUTABLE_RETAINABLE:%.*]] = begin_borrow [[IMMUTABLE_RETAINABLE]] : $C
+  // CHECK:     [[IMMUTABLE_AO_BOX:%.*]] = alloc_box ${ var P }
+  // CHECK:     [[B_IMMUTABLE_AO_BOX:%.*]] = begin_borrow [[IMMUTABLE_AO_BOX]] : ${ var P }
+
+  // CHECK: [[FN:%.*]] = function_ref [[FN_NAME:@\$s26guaranteed_closure_context0A9_capturesyyF17captureEverythingL_yyF]]
+  // CHECK: apply [[FN]]([[B_MUTABLE_TRIVIAL_BOX]], [[B_MUTABLE_RETAINABLE_BOX]], [[B_MUTABLE_ADDRESS_ONLY_BOX]], [[IMMUTABLE_TRIVIAL]], [[B_IMMUTABLE_RETAINABLE]], [[B_IMMUTABLE_AO_BOX]])
   captureEverything()
 
   // CHECK: destroy_value [[IMMUTABLE_AO_BOX]]
@@ -52,9 +58,10 @@ func guaranteed_captures() {
   // CHECK: [[MUTABLE_RETAINABLE_BOX_COPY:%.*]] = copy_value [[MUTABLE_RETAINABLE_BOX]]
   // CHECK: [[MUTABLE_ADDRESS_ONLY_BOX_COPY:%.*]] = copy_value [[MUTABLE_ADDRESS_ONLY_BOX]]
   // CHECK: [[IMMUTABLE_RETAINABLE_COPY:%.*]] = copy_value [[IMMUTABLE_RETAINABLE]]
-  // CHECK: [[IMMUTABLE_AO_BOX:%.*]] = alloc_box $@box P
+  // CHECK: [[IMMUTABLE_AO_BOX:%.*]] = alloc_box ${ var P }
   // CHECK: [[CLOSURE:%.*]] = partial_apply {{.*}}([[MUTABLE_TRIVIAL_BOX_COPY]], [[MUTABLE_RETAINABLE_BOX_COPY]], [[MUTABLE_ADDRESS_ONLY_BOX_COPY]], [[IMMUTABLE_TRIVIAL]], [[IMMUTABLE_RETAINABLE_COPY]], [[IMMUTABLE_AO_BOX]])
-  // CHECK: apply {{.*}}[[CLOSURE]]
+  // CHECK: [[CONVERT:%.*]] = convert_escape_to_noescape [not_guaranteed] [[CLOSURE]]
+  // CHECK: apply {{.*}}[[CONVERT]]
 
   // CHECK-NOT: copy_value [[MUTABLE_TRIVIAL_BOX]]
   // CHECK-NOT: copy_value [[MUTABLE_RETAINABLE_BOX]]
@@ -63,7 +70,6 @@ func guaranteed_captures() {
   // CHECK-NOT: destroy_value [[IMMUTABLE_AO_BOX]]
 
   escape(captureEverything)
-
 }
 
-// CHECK: sil shared [[FN_NAME]] : $@convention(thin) (@guaranteed @box S, @guaranteed @box C, @guaranteed @box P, S, @guaranteed C, @guaranteed @box P)
+// CHECK: sil private [[FN_NAME]] : $@convention(thin) (@guaranteed { var S }, @guaranteed { var C }, @guaranteed { var P }, S, @guaranteed C, @guaranteed { var P })

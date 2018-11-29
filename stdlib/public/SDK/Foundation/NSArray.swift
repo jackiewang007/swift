@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -30,8 +30,8 @@ extension Array : _ObjectiveCBridgeable {
   ///
   /// The provided `NSArray` will be copied to ensure that the copy can
   /// not be mutated by other code.
-  internal init(_cocoaArray: NSArray) {
-    _sanityCheck(_isBridgedVerbatimToObjectiveC(Element.self),
+  internal init(_cocoaArray: __shared NSArray) {
+    assert(_isBridgedVerbatimToObjectiveC(Element.self),
       "Array can be backed by NSArray only when the element type can be bridged verbatim to Objective-C")
     // FIXME: We would like to call CFArrayCreateCopy() to avoid doing an
     // objc_msgSend() for instances of CoreFoundation types.  We can't do that
@@ -43,9 +43,7 @@ extension Array : _ObjectiveCBridgeable {
     //
     // The bug is fixed in: OS X 10.11.0, iOS 9.0, all versions of tvOS
     // and watchOS.
-    self = Array(
-      _immutableCocoaArray:
-        unsafeBitCast(_cocoaArray.copy() as AnyObject, to: _NSArrayCore.self))
+    self = Array(_immutableCocoaArray: _cocoaArray.copy() as AnyObject)
   }
 
   @_semantics("convertToObjectiveC")
@@ -84,6 +82,7 @@ extension Array : _ObjectiveCBridgeable {
     return result != nil
   }
 
+  @_effects(readonly)
   public static func _unconditionallyBridgeFromObjectiveC(
     _ source: NSArray?
   ) -> Array {
@@ -103,6 +102,14 @@ extension Array : _ObjectiveCBridgeable {
     }
 
     return _arrayForceCast([AnyObject](_cocoaArray: source!))
+  }
+}
+
+extension NSArray : _HasCustomAnyHashableRepresentation {
+  // Must be @nonobjc to avoid infinite recursion during bridging
+  @nonobjc
+  public func _toCustomAnyHashable() -> AnyHashable? {
+    return AnyHashable(self as! Array<AnyHashable>)
   }
 }
 
@@ -145,7 +152,7 @@ extension NSArray {
   /// Discussion: After an immutable array has been initialized in
   /// this way, it cannot be modified.
   @nonobjc
-  public convenience init(array anArray: NSArray) {
+  public convenience init(array anArray: __shared NSArray) {
     self.init(array: anArray as Array)
   }
 }

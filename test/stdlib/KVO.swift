@@ -16,7 +16,7 @@ struct Guts {
 
 class Target : NSString {
   // This dynamic property is observed by KVO
-  dynamic var objcValue: String
+  @objc dynamic var objcValue: String
 
   // This Swift-typed property causes vtable usage on this class.
   var swiftValue: Guts
@@ -31,6 +31,9 @@ class Target : NSString {
     self.swiftValue = Guts()
     self.objcValue = ""
     super.init(coder: aDecoder)
+  }
+  required init(itemProviderData data: Data, typeIdentifier: String) throws {
+    fatalError("don't call this initializer")
   }
 
   func print() { 

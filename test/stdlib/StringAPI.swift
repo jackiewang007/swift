@@ -92,7 +92,7 @@ let tests = [
   ComparisonTest(.eq, "\u{212b}", "A\u{30a}"),
   ComparisonTest(.eq, "\u{212b}", "\u{c5}"),
   ComparisonTest(.eq, "A\u{30a}", "\u{c5}"),
-  ComparisonTest(.lt, "A\u{30a}", "a"),
+  ComparisonTest(.gt, "A\u{30a}", "a"),
   ComparisonTest(.lt, "A", "A\u{30a}"),
 
   // U+2126 OHM SIGN
@@ -135,6 +135,9 @@ let tests = [
   ComparisonTest(.eq, "\u{0301}", "\u{0341}"),
   ComparisonTest(.lt, "\u{0301}", "\u{0954}"),
   ComparisonTest(.lt, "\u{0341}", "\u{0954}"),
+
+  // (U+212A KELVIN SIGN) normalizes to ASCII "K"
+  ComparisonTest(.eq, "K", "\u{212A}"),
 ]
 
 func checkStringComparison(
@@ -176,25 +179,7 @@ func checkStringComparison(
 
 // Mark the test cases that are expected to fail in checkStringComparison
 
-let comparisonTests = tests.map {
-  (test: ComparisonTest) -> ComparisonTest in
-  switch (test.expectedUnicodeCollation, test.lhs, test.rhs) {
-  case (.gt, "t", "Tt"), (.lt, "A\u{30a}", "a"):
-    return test.replacingPredicate(.nativeRuntime(
-      "Comparison reversed between ICU and CFString, https://bugs.swift.org/browse/SR-530"))
-
-  case (.gt, "\u{0}", ""), (.lt, "\u{0}", "\u{0}\u{0}"):
-    return test.replacingPredicate(.nativeRuntime(
-      "Null-related issue: https://bugs.swift.org/browse/SR-630"))
-
-  case (.lt, "\u{0301}", "\u{0954}"), (.lt, "\u{0341}", "\u{0954}"):
-    return test.replacingPredicate(.nativeRuntime(
-      "Compares as equal with ICU"))
-
-  default:
-    return test
-  }
-}
+let comparisonTests = tests
 
 for test in comparisonTests {
   StringTests.test("String.{Equatable,Hashable,Comparable}: line \(test.loc.line)")
@@ -228,7 +213,7 @@ func checkCharacterComparison(
 }
 
 for test in comparisonTests {
-  if test.lhs.characters.count == 1 && test.rhs.characters.count == 1 {
+  if test.lhs.count == 1 && test.rhs.count == 1 {
     StringTests.test("Character.{Equatable,Hashable,Comparable}: line \(test.loc.line)")
     .xfail(test.xfail)
     .code {
@@ -262,11 +247,11 @@ func checkHasPrefixHasSuffix(
   // To determine the expected results, compare grapheme clusters,
   // scalar-to-scalar, of the NFD form of the strings.
   let lhsNFDGraphemeClusters =
-    lhs.decomposedStringWithCanonicalMapping.characters.map {
+    lhs.decomposedStringWithCanonicalMapping.map {
       Array(String($0).unicodeScalars)
     }
   let rhsNFDGraphemeClusters =
-    rhs.decomposedStringWithCanonicalMapping.characters.map {
+    rhs.decomposedStringWithCanonicalMapping.map {
       Array(String($0).unicodeScalars)
     }
   let expectHasPrefix = lhsNFDGraphemeClusters.starts(
@@ -290,21 +275,10 @@ StringTests.test("LosslessStringConvertible") {
 let substringTests = tests.map {
   (test: ComparisonTest) -> ComparisonTest in
   switch (test.expectedUnicodeCollation, test.lhs, test.rhs) {
-  case (.eq, "\u{0}", "\u{0}"):
-    return test.replacingPredicate(.objCRuntime(
-      "https://bugs.swift.org/browse/SR-332"))
 
   case (.gt, "\r\n", "\n"):
     return test.replacingPredicate(.objCRuntime(
       "blocked on rdar://problem/19036555"))
-
-  case (.eq, "\u{0301}", "\u{0341}"):
-    return test.replacingPredicate(.objCRuntime(
-      "https://bugs.swift.org/browse/SR-243"))
-
-  case (.lt, "\u{1F1E7}", "\u{1F1E7}\u{1F1E7}"):
-    return test.replacingPredicate(.objCRuntime(
-      "https://bugs.swift.org/browse/SR-367"))
 
   default:
     return test
@@ -361,185 +335,140 @@ StringTests.test("CompareStringsWithUnpairedSurrogates")
   )
 }
 
-var CStringTests = TestSuite("CStringTests")
-
-func getNullUTF8() -> UnsafeMutablePointer<UInt8>? {
-  return nil
+StringTests.test("[String].joined() -> String") {
+  let s = ["hello", "world"].joined()
+  _ = s == "" // should compile without error
 }
 
-func getASCIIUTF8() -> (UnsafeMutablePointer<UInt8>, dealloc: () -> ()) {
-  let up = UnsafeMutablePointer<UInt8>.allocate(capacity: 100)
-  up[0] = 0x61
-  up[1] = 0x62
-  up[2] = 0
-  return (up, { up.deallocate(capacity: 100) })
-}
-
-func getNonASCIIUTF8() -> (UnsafeMutablePointer<UInt8>, dealloc: () -> ()) {
-  let up = UnsafeMutablePointer<UInt8>.allocate(capacity: 100)
-  up[0] = 0xd0
-  up[1] = 0xb0
-  up[2] = 0xd0
-  up[3] = 0xb1
-  up[4] = 0
-  return (UnsafeMutablePointer(up), { up.deallocate(capacity: 100) })
-}
-
-func getIllFormedUTF8String1(
-) -> (UnsafeMutablePointer<UInt8>, dealloc: () -> ()) {
-  let up = UnsafeMutablePointer<UInt8>.allocate(capacity: 100)
-  up[0] = 0x41
-  up[1] = 0xed
-  up[2] = 0xa0
-  up[3] = 0x80
-  up[4] = 0x41
-  up[5] = 0
-  return (UnsafeMutablePointer(up), { up.deallocate(capacity: 100) })
-}
-
-func getIllFormedUTF8String2(
-) -> (UnsafeMutablePointer<UInt8>, dealloc: () -> ()) {
-  let up = UnsafeMutablePointer<UInt8>.allocate(capacity: 100)
-  up[0] = 0x41
-  up[0] = 0x41
-  up[1] = 0xed
-  up[2] = 0xa0
-  up[3] = 0x81
-  up[4] = 0x41
-  up[5] = 0
-  return (UnsafeMutablePointer(up), { up.deallocate(capacity: 100) })
-}
-
-func asCCharArray(_ a: [UInt8]) -> [CChar] {
-  return a.map { CChar(bitPattern: $0) }
-}
-
-func getUTF8Length(_ cString: UnsafePointer<UInt8>) -> Int {
-  var length = 0
-  while cString[length] != 0 {
-    length += 1
-  }
-  return length
-}
-
-func bindAsCChar(_ utf8: UnsafePointer<UInt8>) -> UnsafePointer<CChar> {
-  return UnsafeRawPointer(utf8).bindMemory(to: CChar.self,
-    capacity: getUTF8Length(utf8))
-}
-
-func expectEqualCString(_ lhs: UnsafePointer<UInt8>,
-  _ rhs: UnsafePointer<UInt8>) {
-
-  var index = 0
-  while lhs[index] != 0 {
-    expectEqual(lhs[index], rhs[index])
-    index += 1
-  }
-  expectEqual(0, rhs[index])
-}
-
-func expectEqualCString(_ lhs: UnsafePointer<UInt8>,
-  _ rhs: ContiguousArray<UInt8>) {
-  rhs.withUnsafeBufferPointer {
-    expectEqualCString(lhs, $0.baseAddress!)
+StringTests.test("UnicodeScalarView.Iterator.Lifetime") {
+  // Tests that String.UnicodeScalarView.Iterator is maintaining the lifetime of
+  // an underlying String buffer. https://bugs.swift.org/browse/SR-5401
+  //
+  // WARNING: it is very easy to write this test so it produces false negatives
+  // (i.e. passes even when the code is broken).  The array, for example, seems
+  // to be a requirement.  So perturb this test with care!
+  let sources = ["𝓣his 𝓘s 𝓜uch 𝓛onger 𝓣han 𝓐ny 𝓢mall 𝓢tring 𝓑uffer"]
+  for s in sources {
+    // Append something to s so that it creates a dynamically-allocated buffer.
+    let i = (s + "X").unicodeScalars.makeIterator()
+    expectEqualSequence(s.unicodeScalars, IteratorSequence(i).dropLast(),
+      "Actual Contents: \(Array(IteratorSequence(i)))")
   }
 }
 
-func expectEqualCString(_ lhs: UnsafePointer<UInt8>,
-  _ rhs: ContiguousArray<CChar>) {
-  rhs.withUnsafeBufferPointer {
-    $0.baseAddress!.withMemoryRebound(
-      to: UInt8.self, capacity: rhs.count) {
-      expectEqualCString(lhs, $0)
+StringTests.test("Regression/rdar-33276845") {
+  // These two cases fail slightly differently when the code is broken
+  // See rdar://33276845
+  do {
+    let s = String(repeating: "x", count: 0xffff)
+    let a = Array(s.utf8)
+    expectNotEqual(0, a.count)
+  }
+  do {
+    let s = String(repeating: "x", count: 0x1_0010)
+    let a = Array(s.utf8)
+    expectNotEqual(0, a.count)
+  }
+}
+
+StringTests.test("Regression/corelibs-foundation") {
+  struct NSRange { var location, length: Int }
+
+  func NSFakeRange(_ location: Int, _ length: Int) -> NSRange {
+    return NSRange(location: location, length: length)
+  }
+
+  func substring(of _storage: String, with range: NSRange) -> String {
+    let start = _storage.utf16.startIndex
+    let min = _storage.utf16.index(start, offsetBy: range.location)
+    let max = _storage.utf16.index(
+      start, offsetBy: range.location + range.length)
+
+    if let substr = String(_storage.utf16[min..<max]) {
+      return substr
     }
-  }
-}
+    //If we come here, then the range has created unpaired surrogates on either end.
+    //An unpaired surrogate is replaced by OXFFFD - the Unicode Replacement Character.
+    //The CRLF ("\r\n") sequence is also treated like a surrogate pair, but its constinuent
+    //characters "\r" and "\n" can exist outside the pair!
 
-CStringTests.test("String.init(validatingUTF8:)") {
-  do {
-    let (s, dealloc) = getASCIIUTF8()
-    expectOptionalEqual("ab", String(validatingUTF8: bindAsCChar(s)))
-    dealloc()
-  }
-  do {
-    let (s, dealloc) = getNonASCIIUTF8()
-    expectOptionalEqual("аб", String(validatingUTF8: bindAsCChar(s)))
-    dealloc()
-  }
-  do {
-    let (s, dealloc) = getIllFormedUTF8String1()
-    expectNil(String(validatingUTF8: bindAsCChar(s)))
-    dealloc()
-  }
-}
+    let replacementCharacter = String(describing: UnicodeScalar(0xFFFD)!)
+    let CR: UInt16 = 13  //carriage return
+    let LF: UInt16 = 10  //new line
 
-CStringTests.test("String(cString:)") {
-  do {
-    let (s, dealloc) = getASCIIUTF8()
-    let result = String(cString: s)
-    expectEqual("ab", result)
-    let su = bindAsCChar(s)
-    expectEqual("ab", String(cString: su))
-    dealloc()
-  }
-  do {
-    let (s, dealloc) = getNonASCIIUTF8()
-    let result = String(cString: s)
-    expectEqual("аб", result)
-    let su = bindAsCChar(s)
-    expectEqual("аб", String(cString: su))
-    dealloc()
-  }
-  do {
-    let (s, dealloc) = getIllFormedUTF8String1()
-    let result = String(cString: s)
-    expectEqual("\u{41}\u{fffd}\u{fffd}\u{fffd}\u{41}", result)
-    let su = bindAsCChar(s)
-    expectEqual("\u{41}\u{fffd}\u{fffd}\u{fffd}\u{41}", String(cString: su))
-    dealloc()
-  }
-}
+    //make sure the range is of non-zero length
+    guard range.length > 0 else { return "" }
 
-CStringTests.test("String.decodeCString") {
-  do {
-    let s = getNullUTF8()
-    let result = String.decodeCString(s, as: UTF8.self)
-    expectNil(result)
-  }
-  do { // repairing
-    let (s, dealloc) = getIllFormedUTF8String1()
-    if let (result, repairsMade) = String.decodeCString(
-      s, as: UTF8.self, repairingInvalidCodeUnits: true) {
-      expectOptionalEqual("\u{41}\u{fffd}\u{fffd}\u{fffd}\u{41}", result)
-      expectTrue(repairsMade)
-    } else {
-      expectUnreachable("Expected .some()")
+    //if the range is pointing to a single unpaired surrogate
+    if range.length == 1 {
+      switch _storage.utf16[min] {
+      case CR: return "\r"
+      case LF: return "\n"
+      default: return replacementCharacter
+      }
     }
-    dealloc()
+
+    //set the prefix and suffix characters
+    let prefix = _storage.utf16[min] == LF ? "\n" : replacementCharacter
+    let suffix = _storage.utf16[_storage.utf16.index(before: max)] == CR
+      ? "\r" : replacementCharacter
+
+    let postMin = _storage.utf16.index(after: min)
+
+    //if the range breaks a surrogate pair at the beginning of the string
+    if let substrSuffix = String(
+      _storage.utf16[postMin..<max]) {
+      return prefix + substrSuffix
+    }
+
+    let preMax = _storage.utf16.index(before: max)
+    //if the range breaks a surrogate pair at the end of the string
+    if let substrPrefix = String(_storage.utf16[min..<preMax]) {
+      return substrPrefix + suffix
+    }
+
+    //the range probably breaks surrogate pairs at both the ends
+    guard postMin <= preMax else { return prefix + suffix }
+
+    let substr =  String(_storage.utf16[postMin..<preMax])!
+    return prefix + substr + suffix
   }
-  do { // non repairing
-    let (s, dealloc) = getIllFormedUTF8String1()
-    let result = String.decodeCString(
-      s, as: UTF8.self, repairingInvalidCodeUnits: false)
-    expectNil(result)
-    dealloc()
-  }
+
+  let trivial = "swift.org"
+  expectEqual(substring(of: trivial, with: NSFakeRange(0, 5)), "swift")
+
+  let surrogatePairSuffix = "Hurray🎉"
+  expectEqual(substring(of: surrogatePairSuffix, with: NSFakeRange(0, 7)), "Hurray�")
+
+  let surrogatePairPrefix = "🐱Cat"
+  expectEqual(substring(of: surrogatePairPrefix, with: NSFakeRange(1, 4)), "�Cat")
+
+  let singleChar = "😹"
+  expectEqual(substring(of: singleChar, with: NSFakeRange(0,1)), "�")
+
+  let crlf = "\r\n"
+  expectEqual(substring(of: crlf, with: NSFakeRange(0,1)), "\r")
+  expectEqual(substring(of: crlf, with: NSFakeRange(1,1)), "\n")
+  expectEqual(substring(of: crlf, with: NSFakeRange(1,0)), "")
+
+  let bothEnds1 = "😺😺"
+  expectEqual(substring(of: bothEnds1, with: NSFakeRange(1,2)), "��")
+
+  let s1 = "😺\r\n"
+  expectEqual(substring(of: s1, with: NSFakeRange(1,2)), "�\r")
+
+  let s2 = "\r\n😺"
+  expectEqual(substring(of: s2, with: NSFakeRange(1,2)), "\n�")
+
+  let s3 = "😺cats😺"
+  expectEqual(substring(of: s3, with: NSFakeRange(1,6)), "�cats�")
+
+  let s4 = "😺cats\r\n"
+  expectEqual(substring(of: s4, with: NSFakeRange(1,6)), "�cats\r")
+
+  let s5 = "\r\ncats😺"
+  expectEqual(substring(of: s5, with: NSFakeRange(1,6)), "\ncats�")
 }
 
-CStringTests.test("String.utf8CString") {
-  do {
-    let (cstr, dealloc) = getASCIIUTF8()
-    let str = String(cString: cstr)
-    expectEqualCString(cstr, str.utf8CString)
-    dealloc()
-  }
-  do {
-    let (cstr, dealloc) = getNonASCIIUTF8()
-    let str = String(cString: cstr)
-    expectEqualCString(cstr, str.utf8CString)
-    dealloc()
-  }
-}
 
 runAllTests()
-

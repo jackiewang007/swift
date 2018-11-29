@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -21,6 +21,12 @@ applying a jump-threading in combination with the speculative devirtualization.
 */
 
 import TestsUtils
+
+public var PolymorphicCalls = BenchmarkInfo(
+  name: "PolymorphicCalls",
+  runFunction: run_PolymorphicCalls,
+  tags: [.abstraction, .cpubench]
+)
 
 public class A {
     let b: B
@@ -247,7 +253,7 @@ public class F3 : B3 {
 func test(_ a:A, _ UPTO: Int) -> Int64 {
     var cnt: Int64 = 0
     for _ in 0..<UPTO {
-        cnt += a.run2()
+        cnt += Int64(a.run2())
     }
     return cnt
 }
@@ -258,7 +264,7 @@ func test(_ a:A, _ UPTO: Int) -> Int64 {
 func test(_ a:A1, _ UPTO: Int) -> Int64 {
     var cnt: Int64 = 0
     for _ in 0..<UPTO {
-        cnt += a.run2()
+        cnt += Int64(a.run2())
     }
     return cnt
 }
@@ -269,7 +275,7 @@ func test(_ a:A1, _ UPTO: Int) -> Int64 {
 func test(_ a:A2, _ UPTO: Int) -> Int64 {
     var cnt: Int64 = 0
     for _ in 0..<UPTO {
-        cnt += a.run2()
+        cnt += Int64(a.run2())
     }
     return cnt
 }
@@ -281,8 +287,8 @@ func test(_ a:A2, _ UPTO: Int) -> Int64 {
 func test(_ a2_c2:A2, _ a2_d2:A2,  _ UPTO: Int) -> Int64 {
     var cnt: Int64 = 0
     for _ in 0..<UPTO/2 {
-        cnt += a2_c2.run2()
-        cnt += a2_d2.run2()
+        cnt += Int64(a2_c2.run2())
+        cnt += Int64(a2_d2.run2())
     }
     return cnt
 }
@@ -294,40 +300,30 @@ func test(_ a2_c2:A2, _ a2_d2:A2,  _ UPTO: Int) -> Int64 {
 func test(_ a3_c3: A3, _ a3_d3: A3, _ a3_e3: A3, _ a3_f3: A3, _ UPTO: Int) -> Int64 {
     var cnt: Int64  = 0
     for _ in 0..<UPTO/4 {
-        cnt += a3_c3.run2()
-        cnt += a3_d3.run2()
-        cnt += a3_e3.run2()
-        cnt += a3_f3.run2()
+        cnt += Int64(a3_c3.run2())
+        cnt += Int64(a3_d3.run2())
+        cnt += Int64(a3_e3.run2())
+        cnt += Int64(a3_f3.run2())
     }
     return cnt
 }
 
-
+let a = A(b:B(x:1))
+let a1 = A1(b:C1(x:1))
+let a2 = A2(b:C2(x:1))
+let a2_c2 = A2(b:C2(x:1))
+let a2_d2 = A2(b:D2(x:1))
+let a3_c3 = A3(b:C3(x:1))
+let a3_d3 = A3(b:D3(x:1))
+let a3_e3 = A3(b:E3(x:1))
+let a3_f3 = A3(b:F3(x:1))
 
 @inline(never)
 public func run_PolymorphicCalls(_ N:Int) {
-    let UPTO = 10000 * N
-
-    let a = A(b:B(x:1))
+    let UPTO = 10_000 * N
     _ = test(a, UPTO)
-
-    let a1 = A1(b:C1(x:1))
-
     _ = test(a1, UPTO)
-
-    let a2 = A2(b:C2(x:1))
-
     _ = test(a2, UPTO)
-
-    let a2_c2 = A2(b:C2(x:1))
-    let a2_d2 = A2(b:D2(x:1))
-
     _ = test(a2_c2, a2_d2, UPTO)
-
-    let a3_c3 = A3(b:C3(x:1))
-    let a3_d3 = A3(b:D3(x:1))
-    let a3_e3 = A3(b:E3(x:1))
-    let a3_f3 = A3(b:F3(x:1))
-
     _ = test(a3_c3, a3_d3, a3_e3, a3_f3, UPTO)
 }

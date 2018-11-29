@@ -2,18 +2,18 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
 import StdlibUnittest
 
 struct CollationTableEntry {
-  let scalars: [UnicodeScalar]
+  let scalars: [Unicode.Scalar]
   let collationElements: [UInt64]
   let comment: String
 
@@ -22,7 +22,7 @@ struct CollationTableEntry {
     _ collationElements: [UInt64],
     _ comment: String
   ) {
-    self.scalars = scalars.map { UnicodeScalar($0)! }
+    self.scalars = scalars.map { Unicode.Scalar($0)! }
     self.collationElements = collationElements
     self.comment = comment
   }
@@ -212,9 +212,9 @@ extension HashableArray : ExpressibleByArrayLiteral {
   }
 }
 
-let ducetExtract: [HashableArray<UnicodeScalar> : CollationTableEntry] = {
+let ducetExtract: [HashableArray<Unicode.Scalar> : CollationTableEntry] = {
   () in
-  var result: [HashableArray<UnicodeScalar> : CollationTableEntry] = [:]
+  var result: [HashableArray<Unicode.Scalar> : CollationTableEntry] = [:]
   for entry in ducetExtractData {
     result[HashableArray(entry.scalars)] = entry
   }
@@ -232,7 +232,7 @@ extension String {
   internal var _collationElements: [UInt64] {
     var result: [UInt64] = []
     for us in self.unicodeScalars {
-      let scalars: HashableArray<UnicodeScalar> = [us]
+      let scalars: HashableArray<Unicode.Scalar> = [us]
       let collationElements = ducetExtract[scalars]!.collationElements
       if collationElements[0] != 0 {
         result += collationElements
@@ -338,13 +338,13 @@ public struct StringComparisonTest {
 
 public func sortKey(forCollationElements ces: [UInt64]) -> ([UInt16], [UInt16], [UInt16]) {
   func L1(_ ce: UInt64) -> UInt16 {
-    return UInt16(truncatingBitPattern: ce >> 32)
+    return UInt16(truncatingIfNeeded: ce &>> 32)
   }
   func L2(_ ce: UInt64) -> UInt16 {
-    return UInt16(truncatingBitPattern: ce >> 16)
+    return UInt16(truncatingIfNeeded: ce &>> 16)
   }
   func L3(_ ce: UInt64) -> UInt16 {
-    return UInt16(truncatingBitPattern: ce)
+    return UInt16(truncatingIfNeeded: ce)
   }
 
   var result1: [UInt16] = []

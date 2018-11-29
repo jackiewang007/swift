@@ -17,7 +17,7 @@ public class C1 : Prot {
 public func genfoo<T1 : Prot, T2 : C1>(x ix: T1, y iy: T2) where T1.Element == Int, T2.Element == T1.Element {}
 
 public extension Prot where Self.Element == Int {
-  final func extfoo() {}
+  func extfoo() {}
 }
 
 public enum MyEnum : Int {
@@ -74,3 +74,26 @@ public class C2 : C1 {
 public extension Prot {
   subscript(index: Int) -> Int { return 0 }
 }
+
+public protocol P4 {}
+
+extension C1 : P4 {
+  public func C1foo() {}
+  public struct C1S1{
+    public func C1S1foo(a : P4) {}
+  }
+}
+
+// rdar://problem/36553066
+
+public protocol P5 {
+    associatedtype Element
+}
+public protocol P6: P5 {}
+extension P6 {
+    public var null: Element? { return nil }
+}
+public struct S3<Wrapped: P5>: P5 {
+    public typealias Element = Wrapped.Element
+}
+extension S3: P6 where Wrapped: P6 {}

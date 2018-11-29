@@ -2,16 +2,17 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: %empty-directory(%t)
 //   note: building with -Onone to test debug-mode-only safety checks
 // RUN: %target-build-swift %s -parse-stdlib -Xfrontend -disable-access-control -Onone -o %t/Builtins
+// RUN: %target-codesign %t/Builtins
 // RUN: %target-run %t/Builtins
 // REQUIRES: executable_test
 
@@ -28,11 +29,40 @@ var tests = TestSuite("Builtins")
 
 class X {}
 
+struct W {
+    weak var weakX: X?
+}
+
 tests.test("_isUnique/NativeObject") {
   var a: Builtin.NativeObject = Builtin.castToNativeObject(X())
   expectNotEqual(false, _isUnique_native(&a))
   var b = a
   expectFalse(_isUnique_native(&a))
+  expectFalse(_isUnique_native(&b))
+}
+
+tests.test("_isUnique/NativeObjectWithPreviousStrongRef") {
+  var a: Builtin.NativeObject = Builtin.castToNativeObject(X())
+  expectTrue(_isUnique_native(&a))
+  var b: Builtin.NativeObject? = a
+  expectFalse(_isUnique_native(&a))
+  b = nil
+  expectTrue(_isUnique_native(&a))
+}
+
+tests.test("_isUnique/NativeObjectWithWeakRef") {
+  var a: Builtin.NativeObject = Builtin.castToNativeObject(X())
+  expectTrue(_isUnique_native(&a))
+  weak var b = a
+  expectTrue(_isUnique_native(&a))
+  expectFalse(_isUnique_native(&b))
+}
+
+tests.test("_isUnique/NativeObjectWithUnownedRef") {
+  var a: Builtin.NativeObject = Builtin.castToNativeObject(X())
+  expectTrue(_isUnique_native(&a))
+  unowned var b = a
+  expectTrue(_isUnique_native(&a))
   expectFalse(_isUnique_native(&b))
 }
 
@@ -60,17 +90,6 @@ tests.test("_isUnique_native/SpareBitTrap")
   _ = _isUnique_native(&b)
 }
 
-tests.test("_isUniqueOrPinned_native/SpareBitTrap")
-  .skip(.custom(
-    { !_isStdlibInternalChecksEnabled() },
-    reason: "sanity checks are disabled in this build of stdlib"))
-  .code {
-  // Fake an ObjC pointer.
-  var b = _makeObjCBridgeObject(X())
-  expectCrashLater()
-  _ = _isUniqueOrPinned_native(&b)
-}
-
 tests.test("_isUnique_native/NonNativeTrap")
   .skip(.custom(
     { !_isStdlibInternalChecksEnabled() },
@@ -79,16 +98,6 @@ tests.test("_isUnique_native/NonNativeTrap")
   var x = XObjC()
   expectCrashLater()
   _ = _isUnique_native(&x)
-}
-
-tests.test("_isUniqueOrPinned_native/NonNativeTrap")
-  .skip(.custom(
-    { !_isStdlibInternalChecksEnabled() },
-    reason: "sanity checks are disabled in this build of stdlib"))
-  .code {
-  var x = XObjC()
-  expectCrashLater()
-  _ = _isUniqueOrPinned_native(&x)
 }
 #endif // _ObjC
 
@@ -138,7 +147,7 @@ func exerciseArrayValueWitnesses<T>(_ value: T) {
   Builtin.takeArrayFrontToBack(T.self, buf._rawValue, (buf + 1)._rawValue, 4._builtinWordValue)
   Builtin.destroyArray(T.self, buf._rawValue, 4._builtinWordValue)
 
-  buf.deallocate(capacity: 5)
+  buf.deallocate()
 }
 
 tests.test("array value witnesses") {
@@ -268,11 +277,17 @@ tests.test("_isPOD") {
   expectFalse(_isPOD(P.self))
 }
 
+tests.test("_isBitwiseTakable") {
+  expectTrue(_isBitwiseTakable(Int.self))
+  expectTrue(_isBitwiseTakable(X.self))
+  expectTrue(_isBitwiseTakable(P.self))
+  expectFalse(_isBitwiseTakable(W.self))
+}
+
 tests.test("_isOptional") {
   expectTrue(_isOptional(Optional<Int>.self))
   expectTrue(_isOptional(Optional<X>.self))
   expectTrue(_isOptional(Optional<P>.self))
-  expectTrue(_isOptional(ImplicitlyUnwrappedOptional<P>.self))
   expectFalse(_isOptional(Int.self))
   expectFalse(_isOptional(X.self))
   expectFalse(_isOptional(P.self))

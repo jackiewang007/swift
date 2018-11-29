@@ -319,13 +319,13 @@ class LazyProperties {
 // CHECK-EXPANDED-NEXT: {{^}}                              `-BraceStmt {{.*}} [94:5 - 94:10] expanded
 // CHECK-EXPANDED-NEXT: {{^}}                            `-CaseStmt {{.*}} [97:5 - 97:10] expanded
 // CHECK-EXPANDED-NEXT: {{^}}                              `-BraceStmt {{.*}} [97:5 - 97:10] expanded
-// CHECK-EXPANDED-NEXT: {{^}}                          `-ForStmt {{.*}} [99:3 - 99:38] expanded
-// CHECK-EXPANDED-NEXT: {{^}}                            `-ForStmtInitializer {{.*}} [99:17 - 99:38] expanded
+// CHECK-EXPANDED-NEXT: {{^}}                          `-ForEachStmt {{.*}} [99:3 - 99:38] expanded
+// CHECK-EXPANDED-NEXT: {{^}}                            `-ForEachPattern {{.*}} [99:36 - 99:38] expanded
 // CHECK-EXPANDED-NEXT: {{^}}                              `-BraceStmt {{.*}} [99:36 - 99:38] expanded
 
 // CHECK-EXPANDED:        TypeDecl {{.*}} StructContainsAbstractStorageDecls [114:1 - 130:1] expanded
 // CHECK-EXPANDED-NEXT: `-TypeOrExtensionBody {{.*}} 'StructContainsAbstractStorageDecls' [114:43 - 130:1] expanded
-// CHECK-EXPANDED-NEXT: {{^}}  |-Accessors {{.*}} scope_map.(file).StructContainsAbstractStorageDecls.subscript@{{.*}}scope_map.swift:115:3 [115:37 - 121:3] expanded
+// CHECK-EXPANDED-NEXT: {{^}}  |-Accessors {{.*}} scope_map.(file).StructContainsAbstractStorageDecls.subscript(_:_:)@{{.*}}scope_map.swift:115:3 [115:37 - 121:3] expanded
 // CHECK-EXPANDED-NEXT: {{^}}  |-AbstractFunctionDecl {{.*}} _ [116:5 - 117:5] expanded
 // CHECK-EXPANDED-NEXT: {{^}}    `-AbstractFunctionParams {{.*}} _ param 0:0 [116:5 - 117:5] expanded
 // CHECK-EXPANDED-NEXT: {{^}}      `-AbstractFunctionParams {{.*}} _ param 1:0 [116:5 - 117:5] expanded
@@ -368,17 +368,18 @@ class LazyProperties {
 // CHECK-EXPANDED: {{^}}  `-BraceStmt {{.*}} [142:41 - 155:1] expanded
 // CHECK-EXPANDED-NEXT: {{^}} `-PatternBinding {{.*}} entry 0 [143:7 - 155:1] expanded
 // CHECK-EXPANDED-NEXT: {{^}}    `-AfterPatternBinding {{.*}} entry 0 [143:17 - 155:1] expanded
-// CHECK-EXPANDED-NEXT: {{^}}      |-Accessors {{.*}} scope_map.(file).func decl.computed@{{.*}}scope_map.swift:143:7 [143:21 - 149:3] expanded
+// CHECK-EXPANDED-NEXT: {{^}}      |-Accessors {{.*}} scope_map.(file).funcWithComputedProperties(i:).computed@{{.*}}scope_map.swift:143:7 [143:21 - 149:3] expanded
 // CHECK-EXPANDED-NEXT: {{^}}       |-AbstractFunctionDecl {{.*}} _ [144:5 - 145:5] expanded
 // CHECK-EXPANDED-NEXT: {{^}}        `-AbstractFunctionParams {{.*}} _ param 0:0 [144:5 - 145:5] expanded
 // CHECK-EXPANDED: {{^}}          `-BraceStmt {{.*}} [144:9 - 145:5] expanded
 // CHECK-EXPANDED-NEXT: {{^}}    `-AbstractFunctionDecl {{.*}} _ [146:5 - 148:5] expanded
 // CHECK-EXPANDED: {{^}}        `-BraceStmt {{.*}} [146:9 - 148:5] expanded
 // CHECK-EXPANDED: {{^}}      `-AfterPatternBinding {{.*}} entry 1 [149:36 - 155:1] expanded
-// CHECK-EXPANDED: {{^}}        `-AfterPatternBinding {{.*}} entry 2 [150:21 - 155:1] expanded
-// CHECK-EXPANDED-NEXT: {{^}}           |-AbstractFunctionDecl {{.*}} _ [150:25 - 152:3] expanded
-// CHECK-EXPANDED: {{^}}            `-BraceStmt {{.*}} [150:25 - 152:3] expanded
-// CHECK-EXPANDED-NEXT: {{^}}              `-BraceStmt {{.*}} [154:6 - 154:8] expanded
+// CHECK-EXPANDED:      {{^}}        `-AfterPatternBinding {{.*}} entry 2 [150:21 - 155:1] expanded
+// CHECK-EXPANDED-NEXT: {{^}}           |-Accessors {{.*}} [150:25 - 152:3] expanded
+// CHECK-EXPANDED-NEXT: {{^}}             `-AbstractFunctionDecl {{.*}} _ [150:25 - 152:3] expanded
+// CHECK-EXPANDED:      {{^}}                `-BraceStmt {{.*}} [150:25 - 152:3] expanded
+// CHECK-EXPANDED-NEXT: {{^}}           `-BraceStmt {{.*}} [154:6 - 154:8] expanded
 
 // CHECK-EXPANDED: |-AbstractFunctionDecl {{.*}} closures() [157:1 - 162:1] expanded
 // CHECK-EXPANDED: {{^}}  `-BraceStmt {{.*}} [157:17 - 162:1] expanded
@@ -403,7 +404,7 @@ class LazyProperties {
 // CHECK-EXPANDED-NEXT: {{^}}            `-BraceStmt {{.*}} [167:32 - 167:42] expanded
 // CHECK-EXPANDED-NEXT: {{^}}        `-AbstractFunctionParams {{.*}} defaultArguments(i:j:) param 0:1 [167:48 - 175:1] expanded
 
-// CHECK-EXPANDED: -Accessors {{.*}} scope_map.(file).ProtoWithSubscript.subscript@{{.*}}scope_map.swift:183:3 [183:33 - 183:43] expanded
+// CHECK-EXPANDED: -Accessors {{.*}} scope_map.(file).ProtoWithSubscript.subscript(_:)@{{.*}}scope_map.swift:183:3 [183:33 - 183:43] expanded
 // CHECK-EXPANDED-NEXT:     |-AbstractFunctionDecl {{.*}} _ [183:35 - 183:35] expanded
 // CHECK-EXPANDED-NEXT:       `-AbstractFunctionParams {{.*}} _ param 0:0 [183:35 - 183:35] expanded
 // CHECK-EXPANDED-NEXT:         `-AbstractFunctionParams {{.*}} _ param 1:0 [183:35 - 183:35] expanded
@@ -443,7 +444,7 @@ class LazyProperties {
 // CHECK-SEARCHES-NEXT: DefaultArgument {{.*}} [166:32 - 166:32] expanded
 // CHECK-SEARCHES-NEXT: Module name=scope_map
 // CHECK-SEARCHES-NEXT:   FileUnit file="{{.*}}scope_map.swift"
-// CHECK-SEARCHES-NEXT:     AbstractFunctionDecl name=defaultArguments : (Int, Int) -> ()
+// CHECK-SEARCHES-NEXT:     AbstractFunctionDecl name=defaultArguments(i:j:) : (Int, Int) -> ()
 // CHECK-SEARCHES-NEXT:       {{.*}} Initializer DefaultArgument index=0
 
 // CHECK-SEARCHES-LABEL: ***Scope at 179:18***
@@ -460,8 +461,7 @@ class LazyProperties {
 // CHECK-SEARCHES-NEXT:     ClassDecl name=LazyProperties
 // CHECK-SEARCHES-NEXT:       Initializer PatternBinding {{.*}} #0
 
-// FIXME: Re-enable the binding below
-// CHECK-SEARCHES-NOT: Local bindings: self
+// CHECK-SEARCHES-NEXT: Local bindings: self
 
 // CHECK-SEARCHES-LABEL: ***Complete scope map***
 // CHECK-SEARCHES-NEXT: SourceFile {{.*}} '{{.*}}scope_map.swift' [1:1 - [[EOF:[0-9]+:[0-9]+]]] unexpanded

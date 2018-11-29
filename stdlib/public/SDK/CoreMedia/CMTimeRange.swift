@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -29,7 +29,9 @@ extension CMTimeRange {
 
   public var isValid: Bool {
     return self.start.isValid &&
-      self.duration.isValid && (self.duration.epoch == 0)
+      self.duration.isValid &&
+      (self.duration.epoch == 0) &&
+      (self.duration.value >= 0)
   }
 
   public var isIndefinite: Bool {
@@ -72,14 +74,13 @@ public func CMTIMERANGE_IS_EMPTY (_ range: CMTimeRange) -> Bool {
   return range.isEmpty
 }
 
-extension CMTimeRange : Equatable {}
-
 // CMTimeRangeEqual
-public func == (range1: CMTimeRange, range2: CMTimeRange) -> Bool {
-  return CMTimeRangeEqual(range1, range2)
+extension CMTimeRange : Equatable {
+  public static func == (range1: CMTimeRange, range2: CMTimeRange) -> Bool {
+    return CMTimeRangeEqual(range1, range2)
+  }
+  
+  public static func != (range1: CMTimeRange, range2: CMTimeRange) -> Bool {
+    return !CMTimeRangeEqual(range1, range2)
+  }  
 }
-
-public func != (range1: CMTimeRange, range2: CMTimeRange) -> Bool {
-  return !CMTimeRangeEqual(range1, range2)
-}
-

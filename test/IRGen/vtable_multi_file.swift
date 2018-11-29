@@ -4,11 +4,12 @@
 
 func markUsed<T>(_ t: T) {}
 
-// CHECK-LABEL: define hidden void @_TF17vtable_multi_file36baseClassVtablesIncludeImplicitInitsFT_T_() {{.*}} {
+// CHECK-LABEL: define hidden swiftcc void @"$s17vtable_multi_file36baseClassVtablesIncludeImplicitInitsyyF"() {{.*}} {
 func baseClassVtablesIncludeImplicitInits() {
-  // CHECK: [[T0:%.*]] = call %swift.type* @_TMaC17vtable_multi_file8Subclass()
-  // CHECK: [[T1:%.*]] = bitcast %swift.type* [[T0]] to { i64, i64, i64 } (%swift.type*)**
-  // CHECK: [[T2:%.*]] = getelementptr inbounds { i64, i64, i64 } (%swift.type*)*, { i64, i64, i64 } (%swift.type*)** [[T1]], i64 11
-  // CHECK: load { i64, i64, i64 } (%swift.type*)*, { i64, i64, i64 } (%swift.type*)** [[T2]]
+  // CHECK: [[TMP:%.*]] = call swiftcc %swift.metadata_response @"$s17vtable_multi_file8SubclassCMa"(i64 0)
+  // CHECK: [[T0:%.*]] = extractvalue %swift.metadata_response [[TMP]], 0
+  // CHECK: [[T1:%.*]] = bitcast %swift.type* [[T0]] to { i64, %swift.bridge* } (%swift.type*)**
+  // CHECK: [[T2:%.*]] = getelementptr inbounds { i64, %swift.bridge* } (%swift.type*)*, { i64, %swift.bridge* } (%swift.type*)** [[T1]], i64 11
+  // CHECK: load { i64, %swift.bridge* } (%swift.type*)*, { i64, %swift.bridge* } (%swift.type*)** [[T2]]
   markUsed(Subclass.classProp)
 }

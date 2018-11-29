@@ -2,15 +2,16 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
 @_exported import Foundation // Clang module
+import _SwiftFoundationOverlayShims
 
 //===----------------------------------------------------------------------===//
 // Dictionaries
@@ -33,8 +34,8 @@ extension Dictionary {
   ///
   /// The provided `NSDictionary` will be copied to ensure that the copy can
   /// not be mutated by other code.
-  public init(_cocoaDictionary: _NSDictionary) {
-    _sanityCheck(
+  fileprivate init(_cocoaDictionary: __shared AnyObject) {
+    assert(
       _isBridgedVerbatimToObjectiveC(Key.self) &&
       _isBridgedVerbatimToObjectiveC(Value.self),
       "Dictionary can be backed by NSDictionary storage only when both key and value are bridged verbatim to Objective-C")
@@ -48,9 +49,7 @@ extension Dictionary {
     // The bug is fixed in: OS X 10.11.0, iOS 9.0, all versions of tvOS
     // and watchOS.
     self = Dictionary(
-      _immutableCocoaDictionary:
-        unsafeBitCast(_cocoaDictionary.copy(with: nil) as AnyObject,
-                      to: _NSDictionary.self))
+      _immutableCocoaDictionary: _cocoaDictionary.copy(with: nil) as AnyObject)
   }
 }
 
@@ -74,17 +73,31 @@ extension Dictionary : _ObjectiveCBridgeable {
 
     if _isBridgedVerbatimToObjectiveC(Key.self) &&
        _isBridgedVerbatimToObjectiveC(Value.self) {
-      result = [Key : Value](
-        _cocoaDictionary: unsafeBitCast(d as AnyObject, to: _NSDictionary.self))
+      result = [Key : Value](_cocoaDictionary: d)
+      return
+    }
+
+    if Key.self == String.self {
+      // String and NSString have different concepts of equality, so
+      // string-keyed NSDictionaries may generate key collisions when bridged
+      // over to Swift. See rdar://problem/35995647
+      var dict = Dictionary(minimumCapacity: d.count)
+      d.enumerateKeysAndObjects({ (anyKey: Any, anyValue: Any, _) in
+        let key = Swift._forceBridgeFromObjectiveC(
+          anyKey as AnyObject, Key.self)
+        let value = Swift._forceBridgeFromObjectiveC(
+          anyValue as AnyObject, Value.self)
+        // FIXME: Log a warning if `dict` already had a value for `key`
+        dict[key] = value
+      })
+      result = dict
       return
     }
 
     // `Dictionary<Key, Value>` where either `Key` or `Value` is a value type
     // may not be backed by an NSDictionary.
     var builder = _DictionaryBuilder<Key, Value>(count: d.count)
-    d.enumerateKeysAndObjects({
-      (anyKey: Any, anyValue: Any,
-       stop: UnsafeMutablePointer<ObjCBool>) in
+    d.enumerateKeysAndObjects({ (anyKey: Any, anyValue: Any, _) in
       let anyObjectKey = anyKey as AnyObject
       let anyObjectValue = anyValue as AnyObject
       builder.add(
@@ -105,10 +118,11 @@ extension Dictionary : _ObjectiveCBridgeable {
       return result != nil
     }
 
-    result = Swift._dictionaryBridgeFromObjectiveCConditional(anyDict)
+    result = anyDict as? Dictionary
     return result != nil
   }
 
+  @_effects(readonly)
   public static func _unconditionallyBridgeFromObjectiveC(
     _ d: NSDictionary?
   ) -> Dictionary {
@@ -116,28 +130,17 @@ extension Dictionary : _ObjectiveCBridgeable {
     // dictionary; map it to an empty dictionary.
     if _slowPath(d == nil) { return Dictionary() }
 
-    if let native = [Key : Value]._bridgeFromObjectiveCAdoptingNativeStorageOf(
-        d! as AnyObject) {
-      return native
-    }
+    var result: Dictionary? = nil
+    _forceBridgeFromObjectiveC(d!, result: &result)
+    return result!
+  }
+}
 
-    if _isBridgedVerbatimToObjectiveC(Key.self) &&
-       _isBridgedVerbatimToObjectiveC(Value.self) {
-      return [Key : Value](
-        _cocoaDictionary: unsafeBitCast(d! as AnyObject, to: _NSDictionary.self))
-    }
-
-    // `Dictionary<Key, Value>` where either `Key` or `Value` is a value type
-    // may not be backed by an NSDictionary.
-    var builder = _DictionaryBuilder<Key, Value>(count: d!.count)
-    d!.enumerateKeysAndObjects({
-      (anyKey: Any, anyValue: Any,
-       stop: UnsafeMutablePointer<ObjCBool>) in
-      builder.add(
-          key: Swift._forceBridgeFromObjectiveC(anyKey as AnyObject, Key.self),
-          value: Swift._forceBridgeFromObjectiveC(anyValue as AnyObject, Value.self))
-    })
-    return builder.take()
+extension NSDictionary : _HasCustomAnyHashableRepresentation {
+  // Must be @nonobjc to avoid infinite recursion during bridging
+  @nonobjc
+  public func _toCustomAnyHashable() -> AnyHashable? {
+    return AnyHashable(self as! Dictionary<AnyHashable, AnyHashable>)
   }
 }
 
@@ -160,7 +163,7 @@ extension NSDictionary : Sequence {
       return nil
     }
 
-    internal init(_ _dict: NSDictionary) {
+    internal init(_ _dict: __shared NSDictionary) {
       _fastIterator = NSFastEnumerationIterator(_dict)
     }
   }
@@ -168,7 +171,7 @@ extension NSDictionary : Sequence {
   // Bridging subscript.
   @objc
   public subscript(key: Any) -> Any? {
-    @objc(_swift_objectForKeyedSubscript:)
+    @objc(__swift_objectForKeyedSubscript:)
     get {
       // Deliberately avoid the subscript operator in case the dictionary
       // contains non-copyable keys. This is rare since NSMutableDictionary
@@ -187,11 +190,12 @@ extension NSDictionary : Sequence {
 
 extension NSMutableDictionary {
   // Bridging subscript.
-  override public subscript(key: Any) -> Any? {
+  @objc override public subscript(key: Any) -> Any? {
+    @objc(__swift_objectForKeyedSubscript:)
     get {
       return self.object(forKey: key)
     }
-    @objc(_swift_setObject:forKeyedSubscript:)
+    @objc(__swift_setObject:forKeyedSubscript:)
     set {
       // FIXME: Unfortunate that the `NSCopying` check has to be done at
       // runtime.
@@ -209,11 +213,11 @@ extension NSDictionary {
   /// Initializes a newly allocated dictionary and adds to it objects from
   /// another given dictionary.
   ///
-  /// - Returns: An initialized dictionary—which might be different
-  ///   than the original receiver—containing the keys and values
+  /// - Returns: An initialized dictionary--which might be different
+  ///   than the original receiver--containing the keys and values
   ///   found in `otherDictionary`.
-  @objc(_swiftInitWithDictionary_NSDictionary:)
-  public convenience init(dictionary otherDictionary: NSDictionary) {
+  @objc(__swiftInitWithDictionary_NSDictionary:)
+  public convenience init(dictionary otherDictionary: __shared NSDictionary) {
     // FIXME(performance)(compiler limitation): we actually want to do just
     // `self = otherDictionary.copy()`, but Swift does not have factory
     // initializers right now.
@@ -222,37 +226,26 @@ extension NSDictionary {
     let alignment = MemoryLayout<AnyObject>.alignment
     let singleSize = stride * numElems
     let totalSize = singleSize * 2
-    _sanityCheck(stride == MemoryLayout<NSCopying>.stride)
-    _sanityCheck(alignment == MemoryLayout<NSCopying>.alignment)
+    assert(stride == MemoryLayout<NSCopying>.stride)
+    assert(alignment == MemoryLayout<NSCopying>.alignment)
 
     // Allocate a buffer containing both the keys and values.
     let buffer = UnsafeMutableRawPointer.allocate(
-      bytes: totalSize, alignedTo: alignment)
+      byteCount: totalSize, alignment: alignment)
     defer {
-      buffer.deallocate(bytes: totalSize, alignedTo: alignment)
+      buffer.deallocate()
       _fixLifetime(otherDictionary)
     }
 
     let valueBuffer = buffer.bindMemory(to: AnyObject.self, capacity: numElems)
     let buffer2 = buffer + singleSize
-    let keyBuffer = buffer2.bindMemory(to: AnyObject.self, capacity: numElems)
 
-    _stdlib_NSDictionary_getObjects(
-      nsDictionary: otherDictionary,
-      objects: valueBuffer,
-      andKeys: keyBuffer)
+    __NSDictionaryGetObjects(otherDictionary, buffer, buffer2, numElems)
 
     let keyBufferCopying = buffer2.assumingMemoryBound(to: NSCopying.self)
     self.init(objects: valueBuffer, forKeys: keyBufferCopying, count: numElems)
   }
 }
-
-@_silgen_name("__NSDictionaryGetObjects")
-func _stdlib_NSDictionary_getObjects(
-  nsDictionary: NSDictionary,
-  objects: UnsafeMutablePointer<AnyObject>?,
-  andKeys keys: UnsafeMutablePointer<AnyObject>?
-)
 
 extension NSDictionary : CustomReflectable {
   public var customMirror: Mirror {

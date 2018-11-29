@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -20,10 +20,21 @@
 #include "llvm/Support/ConvertUTF.h"
 using namespace swift;
 
+void *DeclBaseName::SubscriptIdentifierData =
+    &DeclBaseName::SubscriptIdentifierData;
+void *DeclBaseName::ConstructorIdentifierData =
+    &DeclBaseName::ConstructorIdentifierData;
+void *DeclBaseName::DestructorIdentifierData =
+    &DeclBaseName::DestructorIdentifierData;
 
 raw_ostream &llvm::operator<<(raw_ostream &OS, Identifier I) {
-  if (I.get() == 0) return OS << "_";
+  if (I.get() == nullptr)
+    return OS << "_";
   return OS << I.get();
+}
+
+raw_ostream &llvm::operator<<(raw_ostream &OS, DeclBaseName D) {
+  return OS << D.userFacingName();
 }
 
 raw_ostream &llvm::operator<<(raw_ostream &OS, DeclName I) {
@@ -55,12 +66,12 @@ raw_ostream &llvm::operator<<(raw_ostream &OS, swift::ObjCSelector S) {
 
 bool Identifier::isOperatorSlow() const {
   StringRef data = str();
-  auto *s = reinterpret_cast<UTF8 const *>(data.begin()),
-  *end = reinterpret_cast<UTF8 const *>(data.end());
-  UTF32 codePoint;
-  ConversionResult res = llvm::convertUTF8Sequence(&s, end, &codePoint,
-                                                   strictConversion);
-  assert(res == conversionOK && "invalid UTF-8 in identifier?!");
+  auto *s = reinterpret_cast<llvm::UTF8 const *>(data.begin()),
+  *end = reinterpret_cast<llvm::UTF8 const *>(data.end());
+  llvm::UTF32 codePoint;
+  llvm::ConversionResult res =
+    llvm::convertUTF8Sequence(&s, end, &codePoint, llvm::strictConversion);
+  assert(res == llvm::conversionOK && "invalid UTF-8 in identifier?!");
   (void)res;
   return !empty() && isOperatorStartCodePoint(codePoint);
 }
@@ -98,6 +109,30 @@ int DeclName::compare(DeclName other) const {
   return argNames.size() < otherArgNames.size() ? -1 : 1;
 }
 
+static bool equals(ArrayRef<Identifier> idents, ArrayRef<StringRef> strings) {
+  if (idents.size() != strings.size())
+    return false;
+  for (size_t i = 0, e = idents.size(); i != e; ++i) {
+    if (!idents[i].is(strings[i]))
+      return false;
+  }
+  return true;
+}
+
+bool DeclName::isCompoundName(DeclBaseName baseName,
+                              ArrayRef<StringRef> argNames) const {
+  return (isCompoundName() &&
+          getBaseName() == baseName &&
+          equals(getArgumentNames(), argNames));
+}
+
+bool DeclName::isCompoundName(StringRef baseName,
+                              ArrayRef<StringRef> argNames) const {
+  return (isCompoundName() &&
+          getBaseName() == baseName &&
+          equals(getArgumentNames(), argNames));
+}
+
 void DeclName::dump() const {
   llvm::errs() << *this << "\n";
 }
@@ -124,7 +159,7 @@ llvm::raw_ostream &DeclName::print(llvm::raw_ostream &os,
   if (skipEmptyArgumentNames) {
     // If there is more than one argument yet none of them have names,
     // we're done.
-    if (getArgumentNames().size() > 0) {
+    if (!getArgumentNames().empty()) {
       bool anyNonEmptyNames = false;
       for (auto c : getArgumentNames()) {
         if (!c.empty()) {
@@ -149,7 +184,7 @@ llvm::raw_ostream &DeclName::print(llvm::raw_ostream &os,
 }
 
 llvm::raw_ostream &DeclName::printPretty(llvm::raw_ostream &os) const {
-  return print(os, /*skipEmptyArgumentNames=*/true);
+  return print(os, /*skipEmptyArgumentNames=*/!isSpecial());
 }
 
 ObjCSelector::ObjCSelector(ASTContext &ctx, unsigned numArgs,

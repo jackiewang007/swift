@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -27,6 +27,7 @@
 #include "swift/Basic/LLVM.h"
 #include "swift/Basic/LLVMContext.h"
 #include "swift/Frontend/Frontend.h"
+#include "swift/IRGen/IRGenPublic.h"
 #include "swift/SILOptimizer/PassManager/Passes.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Config/config.h"
@@ -39,8 +40,10 @@
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 #include "llvm/Support/Path.h"
 
-#if defined(_MSC_VER)
-#include "Windows.h"
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
 #else
 #include <dlfcn.h>
 #endif
@@ -49,8 +52,8 @@ using namespace swift;
 using namespace swift::immediate;
 
 static void *loadRuntimeLib(StringRef runtimeLibPathWithName) {
-#if defined(_MSC_VER)
-  return LoadLibrary(runtimeLibPathWithName.str().c_str());
+#if defined(_WIN32)
+  return LoadLibraryA(runtimeLibPathWithName.str().c_str());
 #else
   return dlopen(runtimeLibPathWithName.str().c_str(), RTLD_LAZY | RTLD_GLOBAL);
 #endif
@@ -117,7 +120,7 @@ static bool tryLoadLibrary(LinkLibrary linkLib,
     // Try user-provided framework search paths first; frameworks contain
     // binaries as well as modules.
     for (auto &frameworkDir : searchPathOpts.FrameworkSearchPaths) {
-      path = frameworkDir;
+      path = frameworkDir.Path;
       llvm::sys::path::append(path, frameworkPart.str());
       success = loadRuntimeLib(path);
       if (success)
@@ -193,101 +196,27 @@ bool swift::immediate::linkLLVMModules(llvm::Module *Module,
                             /*, llvm::Linker::LinkerMode LinkerMode */)
 {
   llvm::LLVMContext &Ctx = SubModule->getContext();
-  auto OldHandler = Ctx.getDiagnosticHandler();
+  auto OldHandler = Ctx.getDiagnosticHandlerCallBack();
   void *OldDiagnosticContext = Ctx.getDiagnosticContext();
-  Ctx.setDiagnosticHandler(linkerDiagnosticHandler, nullptr);
+  Ctx.setDiagnosticHandlerCallBack(linkerDiagnosticHandler, nullptr);
   bool Failed = llvm::Linker::linkModules(*Module, std::move(SubModule));
-  Ctx.setDiagnosticHandler(OldHandler, OldDiagnosticContext);
-
+  Ctx.setDiagnosticHandlerCallBack(OldHandler, OldDiagnosticContext);
   return !Failed;
 }
 
-bool swift::immediate::IRGenImportedModules(
-    CompilerInstance &CI,
-    llvm::Module &Module,
-    llvm::SmallPtrSet<swift::Module *, 8> &ImportedModules,
-    SmallVectorImpl<llvm::Function*> &InitFns,
-    IRGenOptions &IRGenOpts,
-    const SILOptions &SILOpts) {
-  swift::Module *M = CI.getMainModule();
-
+bool swift::immediate::autolinkImportedModules(ModuleDecl *M,
+                                               IRGenOptions &IRGenOpts) {
   // Perform autolinking.
   SmallVector<LinkLibrary, 4> AllLinkLibraries(IRGenOpts.LinkLibraries);
   auto addLinkLibrary = [&](LinkLibrary linkLib) {
     AllLinkLibraries.push_back(linkLib);
   };
 
-  M->forAllVisibleModules({}, /*includePrivateTopLevel=*/true,
-                          [&](Module::ImportedModule import) {
-    import.second->collectLinkLibraries(addLinkLibrary);
-  });
+  M->collectLinkLibraries(addLinkLibrary);
 
-  // Hack to handle thunks eagerly synthesized by the Clang importer.
-  swift::Module *prev = nullptr;
-  for (auto external : CI.getASTContext().ExternalDefinitions) {
-    swift::Module *next = external->getModuleContext();
-    if (next == prev)
-      continue;
-    next->collectLinkLibraries(addLinkLibrary);
-    prev = next;
-  }
-
-  tryLoadLibraries(AllLinkLibraries, CI.getASTContext().SearchPathOpts,
-                   CI.getDiags());
-
-  ImportedModules.insert(M);
-  if (!CI.hasSourceImport())
-    return false;
-
-  // IRGen the modules this module depends on. This is only really necessary
-  // for imported source, but that's a very convenient thing to do in -i mode.
-  // FIXME: Crawling all loaded modules is a hack.
-  // FIXME: And re-doing SILGen, SIL-linking, SIL diagnostics, and IRGen is
-  // expensive, because it's not properly being limited to new things right now.
-  bool hadError = false;
-  for (auto &entry : CI.getASTContext().LoadedModules) {
-    swift::Module *import = entry.second;
-    if (!ImportedModules.insert(import).second)
-      continue;
-
-    std::unique_ptr<SILModule> SILMod = performSILGeneration(import,
-                                                             CI.getSILOptions());
-    performSILLinking(SILMod.get());
-    if (runSILDiagnosticPasses(*SILMod)) {
-      hadError = true;
-      break;
-    }
-
-    // FIXME: We shouldn't need to use the global context here, but
-    // something is persisting across calls to performIRGeneration.
-    auto SubModule =
-        performIRGeneration(IRGenOpts, import, SILMod.get(),
-                            import->getName().str(), getGlobalLLVMContext());
-
-    if (CI.getASTContext().hadError()) {
-      hadError = true;
-      break;
-    }
-
-    if (!linkLLVMModules(&Module, std::move(SubModule)
-                         // TODO: reactivate the linker mode if it is
-                         // supported in llvm again. Otherwise remove the
-                         // commented code completely.
-                         /*, llvm::Linker::DestroySource */)) {
-      hadError = true;
-      break;
-    }
-
-    // FIXME: This is an ugly hack; need to figure out how this should
-    // actually work.
-    SmallVector<char, 20> NameBuf;
-    StringRef InitFnName = (import->getName().str() + ".init").toStringRef(NameBuf);
-    llvm::Function *InitFn = Module.getFunction(InitFnName);
-    if (InitFn)
-      InitFns.push_back(InitFn);
-  }
-
-  return hadError;
+  tryLoadLibraries(AllLinkLibraries, M->getASTContext().SearchPathOpts,
+                   M->getASTContext().Diags);
+  return false;
 }
 
 int swift::RunImmediately(CompilerInstance &CI, const ProcessCmdLine &CmdLine,
@@ -296,11 +225,12 @@ int swift::RunImmediately(CompilerInstance &CI, const ProcessCmdLine &CmdLine,
   
   // IRGen the main module.
   auto *swiftModule = CI.getMainModule();
+  const auto PSPs = CI.getPrimarySpecificPathsForAtMostOnePrimary();
   // FIXME: We shouldn't need to use the global context here, but
   // something is persisting across calls to performIRGeneration.
-  auto ModuleOwner =
-      performIRGeneration(IRGenOpts, swiftModule, CI.getSILModule(),
-                          swiftModule->getName().str(), getGlobalLLVMContext());
+  auto ModuleOwner = performIRGeneration(
+      IRGenOpts, swiftModule, CI.takeSILModule(), swiftModule->getName().str(),
+      PSPs, getGlobalLLVMContext(), ArrayRef<std::string>());
   auto *Module = ModuleOwner.get();
 
   if (Context.hadError())
@@ -319,10 +249,18 @@ int swift::RunImmediately(CompilerInstance &CI, const ProcessCmdLine &CmdLine,
 
   // Setup interpreted process arguments.
   using ArgOverride = void (*)(const char **, int);
+#if defined(_WIN32)
+  auto module = static_cast<HMODULE>(stdlib);
+  auto emplaceProcessArgs = reinterpret_cast<ArgOverride>(
+    GetProcAddress(module, "_swift_stdlib_overrideUnsafeArgvArgc"));
+  if (emplaceProcessArgs == nullptr)
+    return -1;
+#else
   auto emplaceProcessArgs
           = (ArgOverride)dlsym(stdlib, "_swift_stdlib_overrideUnsafeArgvArgc");
   if (dlerror())
     return -1;
+#endif
 
   SmallVector<const char *, 32> argBuf;
   for (size_t i = 0; i < CmdLine.size(); ++i) {
@@ -333,9 +271,7 @@ int swift::RunImmediately(CompilerInstance &CI, const ProcessCmdLine &CmdLine,
   (*emplaceProcessArgs)(argBuf.data(), CmdLine.size());
 
   SmallVector<llvm::Function*, 8> InitFns;
-  llvm::SmallPtrSet<swift::Module *, 8> ImportedModules;
-  if (IRGenImportedModules(CI, *Module, ImportedModules, InitFns,
-                           IRGenOpts, SILOpts))
+  if (autolinkImportedModules(swiftModule, IRGenOpts))
     return -1;
 
   llvm::PassManagerBuilder PMBuilder;
@@ -347,8 +283,9 @@ int swift::RunImmediately(CompilerInstance &CI, const ProcessCmdLine &CmdLine,
   std::string ErrorMsg;
   llvm::TargetOptions TargetOpt;
   std::string CPU;
+  std::string Triple;
   std::vector<std::string> Features;
-  std::tie(TargetOpt, CPU, Features)
+  std::tie(TargetOpt, CPU, Features, Triple)
     = getIRTargetOptions(IRGenOpts, swiftModule->getASTContext());
   builder.setRelocationModel(llvm::Reloc::PIC_);
   builder.setTargetOptions(TargetOpt);
@@ -362,21 +299,21 @@ int swift::RunImmediately(CompilerInstance &CI, const ProcessCmdLine &CmdLine,
     return -1;
   }
 
-  DEBUG(llvm::dbgs() << "Module to be executed:\n";
-        Module->dump());
+  LLVM_DEBUG(llvm::dbgs() << "Module to be executed:\n";
+             Module->dump());
 
   EE->finalizeObject();
   
   // Run the generated program.
   for (auto InitFn : InitFns) {
-    DEBUG(llvm::dbgs() << "Running initialization function "
-            << InitFn->getName() << '\n');
-    EE->runFunctionAsMain(InitFn, CmdLine, 0);
+    LLVM_DEBUG(llvm::dbgs() << "Running initialization function "
+                            << InitFn->getName() << '\n');
+    EE->runFunctionAsMain(InitFn, CmdLine, nullptr);
   }
 
-  DEBUG(llvm::dbgs() << "Running static constructors\n");
+  LLVM_DEBUG(llvm::dbgs() << "Running static constructors\n");
   EE->runStaticConstructorsDestructors(false);
-  DEBUG(llvm::dbgs() << "Running main\n");
+  LLVM_DEBUG(llvm::dbgs() << "Running main\n");
   llvm::Function *EntryFn = Module->getFunction("main");
-  return EE->runFunctionAsMain(EntryFn, CmdLine, 0);
+  return EE->runFunctionAsMain(EntryFn, CmdLine, nullptr);
 }

@@ -1,4 +1,4 @@
-// RUN: %target-parse-verify-swift
+// RUN: %target-typecheck-verify-swift -swift-version 5 -enable-objc-interop
 
 // ----------------------------------------------------------------------------
 // DynamicSelf is only allowed on the return type of class and
@@ -10,13 +10,13 @@ func inFunction() {
 }
 
 struct S0 {
-  func f() -> Self { } // expected-error{{struct method cannot return 'Self'; did you mean to use the struct type 'S0'?}}{{15-19=S0}}
+  func f() -> Self { } // expected-error{{'Self' is only available in a protocol or as the result of a method in a class; did you mean 'S0'?}}{{15-19=S0}}
 
   func g(_ ds: Self) { } // expected-error{{'Self' is only available in a protocol or as the result of a method in a class; did you mean 'S0'?}}{{16-20=S0}}
 }
 
 enum E0 {
-  func f() -> Self { } // expected-error{{enum method cannot return 'Self'; did you mean to use the enum type 'E0'?}}{{15-19=E0}}
+  func f() -> Self { } // expected-error{{'Self' is only available in a protocol or as the result of a method in a class; did you mean 'E0'?}}{{15-19=E0}}
 
   func g(_ ds: Self) { } // expected-error{{'Self' is only available in a protocol or as the result of a method in a class; did you mean 'E0'?}}{{16-20=E0}}
 }
@@ -89,7 +89,14 @@ class C1 {
 
     if b { return self.init(int: 5) }
 
-    return Self() // expected-error{{use of unresolved identifier 'Self'}} expected-note {{did you mean 'self'?}}
+    return Self() // expected-error{{use of unresolved identifier 'Self'; did you mean 'self'?}}
+  }
+
+  // This used to crash because metatype construction went down a
+  // different code path that didn't handle DynamicSelfType.
+  class func badFactory() -> Self {
+    return self(int: 0)
+    // expected-error@-1 {{initializing from a metatype value must reference 'init' explicitly}}
   }
 }
 
@@ -280,6 +287,7 @@ extension Y {
 
 extension X {
   func tryToClone() -> Self? { return nil }
+  func tryHarderToClone() -> Self! { return nil }
   func cloneOrFail() -> Self { return self }
   func cloneAsObjectSlice() -> X? { return self }
 }
@@ -301,5 +309,87 @@ func testOptionalSelf(_ y : Y) {
   // isn't coincidental.
   if let clone = y.cloneAsObjectSlice() {
     clone.operationThatOnlyExistsOnY() // expected-error {{value of type 'X' has no member 'operationThatOnlyExistsOnY'}}
+  }
+
+  if let clone = y.tryHarderToClone().tryToClone() {
+    clone.operationThatOnlyExistsOnY();
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Conformance lookup on Self
+
+protocol Runcible {
+}
+
+extension Runcible {
+  func runce() {}
+}
+
+func wantsRuncible<T : Runcible>(_: T) {}
+
+class Runce : Runcible {
+  func getRunced() -> Self {
+    runce()
+    wantsRuncible(self)
+    return self
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Forming a type with 'Self' in invariant position
+
+struct Generic<T> { init(_: T) {} }
+
+class InvariantSelf {
+  func me() -> Self {
+    let a = Generic(self)
+    let _: Generic<InvariantSelf> = a
+    // expected-error@-1 {{cannot convert value of type 'Generic<Self>' to specified type 'Generic<InvariantSelf>'}}
+
+    return self
+  }
+}
+
+// FIXME: This should be allowed
+
+final class FinalInvariantSelf {
+  func me() -> Self {
+    let a = Generic(self)
+    let _: Generic<FinalInvariantSelf> = a
+    // expected-error@-1 {{cannot convert value of type 'Generic<Self>' to specified type 'Generic<FinalInvariantSelf>'}}
+
+    return self
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Semi-bogus factory init pattern
+
+protocol FactoryPattern {
+  init(factory: @autoclosure () -> Self)
+}
+
+extension  FactoryPattern {
+  init(factory: @autoclosure () -> Self) { self = factory() }
+}
+
+class Factory : FactoryPattern {
+  init(_string: String) {}
+
+  convenience init(string: String) {
+    self.init(factory: Factory(_string: string))
+    // expected-error@-1 {{incorrect argument label in call (have 'factory:', expected '_string:')}}
+    // FIXME: Bogus diagnostic
+  }
+}
+
+// Final classes are OK
+
+final class FinalFactory : FactoryPattern {
+  init(_string: String) {}
+
+  convenience init(string: String) {
+    self.init(factory: FinalFactory(_string: string))
   }
 }

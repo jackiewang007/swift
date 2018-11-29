@@ -1,4 +1,4 @@
-// RUN: %swift -parse -primary-file %s %S/Inputs/availability_multi_other.swift -verify
+// RUN: %swift -typecheck -primary-file %s %S/Inputs/availability_multi_other.swift -verify
 // REQUIRES: OS=macosx
 
 func callToEnsureNotInScriptMode() { }
@@ -35,14 +35,16 @@ func useFromOtherOn10_51() {
   _ = o10_51.returns10_52Introduced10_52() // expected-error {{'returns10_52Introduced10_52()' is only available on OS X 10.52 or newer}}
       // expected-note@-1 {{add 'if #available' version check}}
 
-  _ = OtherIntroduced10_52() // expected-error {{'OtherIntroduced10_52' is only available on OS X 10.52 or newer}}
-      // expected-note@-1 {{add 'if #available' version check}}
+  _ = OtherIntroduced10_52()
+      // expected-error@-1 {{'OtherIntroduced10_52' is only available on OS X 10.52 or newer}}
+      // expected-note@-2 {{add 'if #available' version check}}
 
   o10_51.extensionMethodOnOtherIntroduced10_51AvailableOn10_52() // expected-error {{'extensionMethodOnOtherIntroduced10_51AvailableOn10_52()' is only available on OS X 10.52 or newer}}
       // expected-note@-1 {{add 'if #available' version check}}
 
-  _ = OtherIntroduced10_51.NestedIntroduced10_52() // expected-error {{'NestedIntroduced10_52' is only available on OS X 10.52 or newer}}
-      // expected-note@-1 {{add 'if #available' version check}}
+  _ = OtherIntroduced10_51.NestedIntroduced10_52()
+      // expected-error@-1 {{'NestedIntroduced10_52' is only available on OS X 10.52 or newer}}
+      // expected-note@-2 {{add 'if #available' version check}}
 }
 
 @available(OSX, introduced: 10.52)

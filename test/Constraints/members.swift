@@ -1,6 +1,4 @@
-// RUN: %target-parse-verify-swift
-
-import Swift
+// RUN: %target-typecheck-verify-swift -swift-version 5
 
 ////
 // Members of structs
@@ -29,7 +27,9 @@ func g0(_: (inout X) -> (Float) -> ()) {}
 
 _ = x.f0(i)
 x.f0(i).f1(i)
-g0(X.f1)
+
+g0(X.f1) // expected-error{{partial application of 'mutating' method}}
+
 _ = x.f0(x.f2(1))
 _ = x.f0(1).f2(i)
 _ = yf.f0(1)
@@ -58,10 +58,10 @@ struct GZ<T> {
   var i : T
   func getI() -> T { return i }
 
-  func f1<U>(_ a: T, b: U) -> (T, U) { 
+  func f1<U>(_ a: T, b: U) -> (T, U) {
     return (a, b)
   }
-  
+
   func f2() {
     var f : Float
     var t = f1(i, b: f)
@@ -86,9 +86,6 @@ var zcurriedFull = z.curried(0)(1)
 
 // Module
 Swift.print(3, terminator: "")
-
-var format : String
-_ = format._splitFirstIf({ $0.isASCII })
 
 ////
 // Unqualified references
@@ -122,7 +119,7 @@ var wcurriedFull : () = w.curried(0)(1)
 
 // Member of enum type
 func enumMetatypeMember(_ opt: Int?) {
-  opt.none // expected-error{{enum element 'none' cannot be referenced as an instance member}}
+  opt.none // expected-error{{enum case 'none' cannot be used as an instance member}}
 }
 
 ////
@@ -138,243 +135,6 @@ class G<T> {
 
 func goo() {
   G<Int>.In.foo()
-}
-
-////
-// Members of archetypes
-////
-
-func id<T>(_ t: T) -> T { return t }
-
-protocol P {
-  init()
-  func bar(_ x: Int)
-  mutating func mut(_ x: Int)
-  static func tum()
-}
-
-extension P {
-  func returnSelfInstance() -> Self {
-    return self
-  }
-
-  func returnSelfOptionalInstance(_ b: Bool) -> Self? {
-    return b ? self : nil
-  }
-
-  func returnSelfIUOInstance(_ b: Bool) -> Self! {
-    return b ? self : nil
-  }
-
-  static func returnSelfStatic() -> Self {
-    return Self()
-  }
-
-  static func returnSelfOptionalStatic(_ b: Bool) -> Self? {
-    return b ? Self() : nil
-  }
-
-  static func returnSelfIUOStatic(_ b: Bool) -> Self! {
-    return b ? Self() : nil
-  }
-}
-
-protocol ClassP : class {
-  func bas(_ x: Int)
-  func quux(_ x: Int)
-}
-
-class ClassC : ClassP {
-  func bas(_ x: Int) {}
-}
-
-extension ClassP {
-  func quux(_ x: Int) {}
-  func bing(_ x: Int) {}
-}
-
-func generic<T: P>(_ t: T) {
-  var t = t
-  // Instance member of archetype
-  let _: (Int) -> () = id(t.bar)
-  let _: () = id(t.bar(0))
-
-  // Static member of archetype metatype
-  let _: () -> () = id(T.tum)
-
-  // Instance member of archetype metatype
-  let _: (T) -> (Int) -> () = id(T.bar)
-  let _: (Int) -> () = id(T.bar(t))
-
-  _ = t.mut // expected-error{{partial application of 'mutating' method is not allowed}}
-  _ = t.tum // expected-error{{static member 'tum' cannot be used on instance of type 'T'}}
-
-  // Instance member of extension returning Self)
-  let _: (T) -> () -> T = id(T.returnSelfInstance)
-  let _: () -> T = id(T.returnSelfInstance(t))
-  let _: T = id(T.returnSelfInstance(t)())
-
-  let _: () -> T = id(t.returnSelfInstance)
-  let _: T = id(t.returnSelfInstance())
-
-  let _: (T) -> (Bool) -> T? = id(T.returnSelfOptionalInstance)
-  let _: (Bool) -> T? = id(T.returnSelfOptionalInstance(t))
-  let _: T? = id(T.returnSelfOptionalInstance(t)(false))
-
-  let _: (Bool) -> T? = id(t.returnSelfOptionalInstance)
-  let _: T? = id(t.returnSelfOptionalInstance(true))
-
-  let _: (T) -> (Bool) -> T! = id(T.returnSelfIUOInstance)
-  let _: (Bool) -> T! = id(T.returnSelfIUOInstance(t))
-  let _: T! = id(T.returnSelfIUOInstance(t)(true))
-
-  let _: (Bool) -> T! = id(t.returnSelfIUOInstance)
-  let _: T! = id(t.returnSelfIUOInstance(true))
-
-  // Static member of extension returning Self)
-  let _: () -> T = id(T.returnSelfStatic)
-  let _: T = id(T.returnSelfStatic())
-
-  let _: (Bool) -> T? = id(T.returnSelfOptionalStatic)
-  let _: T? = id(T.returnSelfOptionalStatic(false))
-
-  let _: (Bool) -> T! = id(T.returnSelfIUOStatic)
-  let _: T! = id(T.returnSelfIUOStatic(true))
-}
-
-func genericClassP<T: ClassP>(_ t: T) {
-  // Instance member of archetype)
-  let _: (Int) -> () = id(t.bas)
-  let _: () = id(t.bas(0))
-
-  // Instance member of archetype metatype)
-  let _: (T) -> (Int) -> () = id(T.bas)
-  let _: (Int) -> () = id(T.bas(t))
-  let _: () = id(T.bas(t)(1))
-}
-
-func genericClassC<C : ClassC>(_ c: C) {
-  // Make sure that we can find members of protocol extensions
-  // on a class-bound archetype
-  let _ = c.bas(123)
-  let _ = c.quux(123)
-  let _ = c.bing(123)
-}
-
-////
-// Members of existentials
-////
-
-func existential(_ p: P) {
-  var p = p
-  // Fully applied mutating method
-  p.mut(1)
-  _ = p.mut // expected-error{{partial application of 'mutating' method is not allowed}}
-
-  // Instance member of existential)
-  let _: (Int) -> () = id(p.bar)
-  let _: () = id(p.bar(0))
-
-  // Static member of existential metatype)
-  let _: () -> () = id(type(of: p).tum)
-
-  // Instance member of extension returning Self
-  let _: () -> P = id(p.returnSelfInstance)
-  let _: P = id(p.returnSelfInstance())
-  let _: P? = id(p.returnSelfOptionalInstance(true))
-  let _: P! = id(p.returnSelfIUOInstance(true))
-}
-
-func staticExistential(_ p: P.Type, pp: P.Protocol) {
-  let ppp: P = p.init()
-  _ = pp.init() // expected-error{{value of type 'P.Protocol' is a protocol; it cannot be instantiated}}
-  _ = P() // expected-error{{protocol type 'P' cannot be instantiated}}
-
-  // Instance member of metatype
-  let _: (P) -> (Int) -> () = P.bar
-  let _: (Int) -> () = P.bar(ppp)
-  P.bar(ppp)(5)
-
-  // Instance member of metatype value
-  let _: (P) -> (Int) -> () = pp.bar
-  let _: (Int) -> () = pp.bar(ppp)
-  pp.bar(ppp)(5)
-
-  // Static member of existential metatype value
-  let _: () -> () = p.tum
-
-  // Instance member of existential metatype -- not allowed
-  _ = p.bar // expected-error{{instance member 'bar' cannot be used on type 'P'}}
-  _ = p.mut // expected-error{{instance member 'mut' cannot be used on type 'P'}}
-
-  // Static member of metatype -- not allowed
-  _ = pp.tum // expected-error{{static member 'tum' cannot be used on protocol metatype 'P.Protocol'}}
-  _ = P.tum // expected-error{{static member 'tum' cannot be used on protocol metatype 'P.Protocol'}}
-
-  // Static member of extension returning Self)
-  let _: () -> P = id(p.returnSelfStatic)
-  let _: P = id(p.returnSelfStatic())
-
-  let _: (Bool) -> P? = id(p.returnSelfOptionalStatic)
-  let _: P? = id(p.returnSelfOptionalStatic(false))
-
-  let _: (Bool) -> P! = id(p.returnSelfIUOStatic)
-  let _: P! = id(p.returnSelfIUOStatic(true))
-}
-
-protocol StaticP {
-  static func foo(a: Int)
-}
-extension StaticP {
-  func bar() {
-    _ = StaticP.foo(a:) // expected-error{{static member 'foo(a:)' cannot be used on protocol metatype 'StaticP.Protocol'}} {{9-16=Self}}
-
-    func nested() {
-      _ = StaticP.foo(a:) // expected-error{{static member 'foo(a:)' cannot be used on protocol metatype 'StaticP.Protocol'}} {{11-18=Self}}
-    }
-  }
-}
-
-func existentialClassP(_ p: ClassP) {
-  // Instance member of existential)
-  let _: (Int) -> () = id(p.bas)
-  let _: () = id(p.bas(0))
-
-  // Instance member of existential metatype)
-  let _: (ClassP) -> (Int) -> () = id(ClassP.bas)
-  let _: (Int) -> () = id(ClassP.bas(p))
-  let _: () = id(ClassP.bas(p)(1))
-}
-
-// Partial application of curried protocol methods
-protocol Scalar {}
-protocol Vector {
-  func scale(_ c: Scalar) -> Self
-}
-protocol Functional {
-  func apply(_ v: Vector) -> Scalar
-}
-protocol Coalgebra {
-  func coproduct(_ f: Functional) -> (_ v1: Vector, _ v2: Vector) -> Scalar
-}
-
-// Make sure existential is closed early when we partially apply
-func wrap<T>(_ t: T) -> T {
-  return t
-}
-
-func exercise(_ c: Coalgebra, f: Functional, v: Vector) {
-  let _: (Vector, Vector) -> Scalar = wrap(c.coproduct(f))
-  let _: (Scalar) -> Vector = v.scale
-}
-
-// Make sure existential isn't closed too late
-protocol Copyable {
-  func copy() -> Self
-}
-
-func copyTwice(_ c: Copyable) -> Copyable {
-  return c.copy().copy()
 }
 
 ////
@@ -555,7 +315,7 @@ struct S22490787 {
 
 func f22490787() {
   var path: S22490787 = S22490787()
-  
+
   for p in path {  // expected-error {{type 'S22490787' does not conform to protocol 'Sequence'}}
   }
 }
@@ -588,5 +348,121 @@ enum SR_2193_Error: Error {
 
 do {
   throw SR_2193_Error.Boom
-} catch let e as SR_2193_Error.Boom { // expected-error {{enum element 'Boom' is not a member type of 'SR_2193_Error'}}
+} catch let e as SR_2193_Error.Boom { // expected-error {{enum case 'Boom' is not a member type of 'SR_2193_Error'}}
 }
+
+// rdar://problem/25341015
+extension Sequence {
+  func r25341015_1() -> Int {
+    return max(1, 2) // expected-error {{use of 'max' refers to instance method 'max(by:)' rather than global function 'max' in module 'Swift'}} expected-note {{use 'Swift.' to reference the global function in module 'Swift'}}
+  }
+}
+
+class C_25341015 {
+  static func baz(_ x: Int, _ y: Int) {} // expected-note {{'baz' declared here}}
+  func baz() {}
+  func qux() {
+    baz(1, 2) // expected-error {{use of 'baz' refers to instance method 'baz()' rather than static method 'baz' in class 'C_25341015'}} expected-note {{use 'C_25341015.' to reference the static method}}
+  }
+}
+
+struct S_25341015 {
+  static func foo(_ x: Int, y: Int) {} // expected-note {{'foo(_:y:)' declared here}}
+
+  func foo(z: Int) {}
+  func bar() {
+    foo(1, y: 2) // expected-error {{use of 'foo' refers to instance method 'foo(z:)' rather than static method 'foo(_:y:)' in struct 'S_25341015'}} expected-note {{use 'S_25341015.' to reference the static method}}
+  }
+}
+
+func r25341015() {
+  func baz(_ x: Int, _ y: Int) {}
+  class Bar {
+    func baz() {}
+    func qux() {
+      baz(1, 2) // expected-error {{argument passed to call that takes no arguments}}
+    }
+  }
+}
+
+func r25341015_local(x: Int, y: Int) {}
+func r25341015_inner() {
+  func r25341015_local() {}
+  r25341015_local(x: 1, y: 2) // expected-error {{argument passed to call that takes no arguments}}
+}
+
+// rdar://problem/32854314 - Emit shadowing diagnostics even if argument types do not much completely
+
+func foo_32854314() -> Double {
+  return 42
+}
+
+func bar_32854314() -> Int {
+  return 0
+}
+
+extension Array where Element == Int {
+  func foo() {
+    let _ = min(foo_32854314(), bar_32854314()) // expected-note {{use 'Swift.' to reference the global function in module 'Swift'}} {{13-13=Swift.}}
+    // expected-error@-1 {{use of 'min' nearly matches global function 'min' in module 'Swift' rather than instance method 'min()'}}
+  }
+
+  func foo(_ x: Int, _ y: Double) {
+    let _ = min(x, y) // expected-note {{use 'Swift.' to reference the global function in module 'Swift'}} {{13-13=Swift.}}
+    // expected-error@-1 {{use of 'min' nearly matches global function 'min' in module 'Swift' rather than instance method 'min()'}}
+  }
+
+  func bar() {
+    let _ = min(1.0, 2) // expected-note {{use 'Swift.' to reference the global function in module 'Swift'}} {{13-13=Swift.}}
+    // expected-error@-1 {{use of 'min' nearly matches global function 'min' in module 'Swift' rather than instance method 'min()'}}
+  }
+}
+
+// Crash in diagnoseImplicitSelfErrors()
+
+struct Aardvark {
+  var snout: Int
+
+  mutating func burrow() {
+    dig(&snout, .y) // expected-error {{type 'Int' has no member 'y'}}
+  }
+
+  func dig(_: inout Int, _: Int) {}
+}
+
+func rdar33914444() {
+  struct A {
+    enum R<E: Error> {
+      case e(E) // expected-note {{'e' declared here}}
+    }
+
+    struct S {
+      enum E: Error {
+        case e1
+      }
+
+      let e: R<E>
+    }
+  }
+
+  _ = A.S(e: .e1)
+  // expected-error@-1 {{type 'A.R<A.S.E>' has no member 'e1'; did you mean 'e'?}}
+}
+
+// SR-5324: Better diagnostic when instance member of outer type is referenced from nested type
+
+struct Outer {
+  var outer: Int
+
+  struct Inner {
+    var inner: Int
+
+    func sum() -> Int {
+      return inner + outer
+      // expected-error@-1 {{instance member 'outer' of type 'Outer' cannot be used on instance of nested type 'Outer.Inner'}}
+    }
+  }
+}
+
+// rdar://problem/39514009 - don't crash when trying to diagnose members with special names
+print("hello")[0] // expected-error {{value of tuple type '()' has no member 'subscript'}}

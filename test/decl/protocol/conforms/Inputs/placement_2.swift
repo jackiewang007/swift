@@ -27,18 +27,16 @@ class MFExplicitSub1 : ImplicitSuper1 { } // expected-note{{'MFExplicitSub1' inh
 // ---------------------------------------------------------------------------
 // Suppression of synthesized conformances
 // ---------------------------------------------------------------------------
-extension MFSynthesizedClass1 : AnyObject { }
-
 class MFSynthesizedClass2 { }
 
 class MFSynthesizedClass3 : AnyObjectRefinement { }
 
-class MFSynthesizedSubClass2 : MFSynthesizedClass2 { } // expected-note{{'MFSynthesizedSubClass2' inherits conformance to protocol 'AnyObject' from superclass here}}
+class MFSynthesizedSubClass2 : MFSynthesizedClass2 { }
 
 class MFSynthesizedSubClass3 : MFSynthesizedClass1 { }
 
 extension MFSynthesizedSubClass4 : AnyObjectRefinement { }
 
-enum MFSynthesizedEnum1 : Int { case a } // expected-note {{'MFSynthesizedEnum1' declares raw type 'Int', which implies RawRepresentable}}
+enum MFSynthesizedEnum1 : Int { case a }
 extension MFSynthesizedEnum2 : RawRepresentable { }
 

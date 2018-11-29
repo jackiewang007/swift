@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 #ifndef SWIFT_SILOPTIMIZER_PASSMANAGER_TRANSFORMS_H
@@ -66,8 +66,19 @@ namespace swift {
     /// Inject the pass manager running this pass.
     void injectPassManager(SILPassManager *PMM) { PM = PMM; }
 
-    /// Get the name of the transform.
-    virtual llvm::StringRef getName() = 0;
+    SILPassManager *getPassManager() const { return PM; }
+
+    irgen::IRGenModule *getIRGenModule() {
+      auto *Mod = PM->getIRGenModule();
+      assert(Mod && "Expecting a valid module");
+      return Mod;
+    }
+
+    /// Get the transform's (command-line) tag.
+    llvm::StringRef getTag() { return PassKindTag(getPassKind()); }
+
+    /// Get the transform's name as a C++ identifier.
+    llvm::StringRef getID() { return PassKindID(getPassKind()); }
 
   protected:
     /// \brief Searches for an analysis of type T in the list of registered
@@ -104,16 +115,15 @@ namespace swift {
     /// derived from a common base function, e.g. due to specialization.
     /// The number should be small anyway, but bugs in optimizations could cause
     /// an infinite loop in the passmanager.
-    void notifyPassManagerOfFunction(SILFunction *F, SILFunction *DerivedFrom) {
+    void addFunctionToPassManagerWorklist(SILFunction *F,
+                                          SILFunction *DerivedFrom) {
       PM->addFunctionToWorklist(F, DerivedFrom);
-      PM->notifyAnalysisOfFunction(F);
     }
 
     /// \brief Reoptimize the current function by restarting the pass
     /// pipeline on it.
     void restartPassPipeline() { PM->restartWithCurrentFunction(this); }
 
-  protected:
     SILFunction *getFunction() { return F; }
 
     void invalidateAnalysis(SILAnalysis::InvalidationKind K) {
@@ -140,10 +150,9 @@ namespace swift {
 
     SILModule *getModule() { return M; }
 
-    /// Invalidate all of functions in the module, using invalidation
-    /// information \p K.
-    void invalidateAnalysis(SILAnalysis::InvalidationKind K) {
-      PM->invalidateAnalysis(K);
+    /// Invalidate all analysis data for the whole module.
+    void invalidateAll() {
+      PM->invalidateAllAnalysis();
     }
 
     /// Invalidate only the function \p F, using invalidation information \p K.
@@ -151,11 +160,14 @@ namespace swift {
       PM->invalidateAnalysis(F, K);
     }
 
-    /// Invalidate only the function \p F, using invalidation information \p K.
-    /// But we also know this function is going to be dead.
-    void invalidateAnalysisForDeadFunction(SILFunction *F,
-                                           SILAnalysis::InvalidationKind K) {
-      PM->invalidateAnalysisForDeadFunction(F, K);
+    /// Invalidate the analysis data for witness- and vtables.
+    void invalidateFunctionTables() {
+      PM->invalidateFunctionTables();
+    }
+
+    /// Inform the pass manager that we are going to delete a function.
+    void notifyWillDeleteFunction(SILFunction *F) {
+      PM->notifyWillDeleteFunction(F);
     }
   };
 } // end namespace swift

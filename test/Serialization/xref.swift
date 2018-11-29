@@ -1,5 +1,4 @@
-// RUN: rm -rf %t
-// RUN: mkdir -p %t
+// RUN: %empty-directory(%t)
 // RUN: %target-swift-frontend -emit-module -o %t %S/Inputs/struct_with_operators.swift
 // RUN: %target-swift-frontend -emit-module -o %t %S/Inputs/alias.swift -module-name has_alias
 // RUN: %target-swift-frontend -emit-module -o %t %S/Inputs/xref_distraction.swift
@@ -14,6 +13,7 @@ import has_xref
 
 numeric(42)
 conditional(true)
+conditional2(true)
 longInt(42)
 numericArray([42])
 

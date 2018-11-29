@@ -1,3 +1,5 @@
+// Manual PrintAsObjC for testing purposes.
+
 struct PureClangType {
   int x;
   int y;
@@ -16,7 +18,7 @@ struct PureClangType {
 #  define SWIFT_PROTOCOL(SWIFT_NAME) SWIFT_PROTOCOL_EXTRA
 #endif
 
-#ifndef SWIFT_EXTENSION(X)
+#ifndef SWIFT_EXTENSION
 #  define SWIFT_EXTENSION(X) X##__LINE__
 #endif
 
@@ -60,9 +62,8 @@ SWIFT_PROTOCOL("SwiftProto")
 @property (nonatomic) long protoProperty;
 @end
 
-
-id <SwiftProtoWithCustomName> __nonnull convertToProto(SwiftClassWithCustomName * __nonnull obj);
-
+id<SwiftProtoWithCustomName> _Nonnull
+convertToProto(SwiftClassWithCustomName *_Nonnull obj);
 
 SWIFT_CLASS("BOGUS")
 @interface BogusClass

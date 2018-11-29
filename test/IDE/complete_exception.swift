@@ -8,9 +8,8 @@
 // RUN: %target-swift-ide-test(mock-sdk: %clang-importer-sdk) -code-completion -source-filename %s -code-completion-token=TOP_LEVEL_CATCH1 | %FileCheck %s -check-prefix=CATCH1
 // RUN: %target-swift-ide-test(mock-sdk: %clang-importer-sdk) -code-completion -source-filename %s -code-completion-token=TOP_LEVEL_THROW1 | %FileCheck %s -check-prefix=THROW1
 
-// FIXME: <rdar://problem/21001526> No dot code completion results in switch case or catch stmt at top-level
-// RUNdisabled: %target-swift-ide-test(mock-sdk: %clang-importer-sdk) -code-completion -source-filename %s -code-completion-token=TOP_LEVEL_CATCH2 | %FileCheck %s -check-prefix=CATCH2
-// RUNdisabled: %target-swift-ide-test(mock-sdk: %clang-importer-sdk) -code-completion -source-filename %s -code-completion-token=TOP_LEVEL_THROW2 | %FileCheck %s -check-prefix=THROW2
+// RUN: %target-swift-ide-test(mock-sdk: %clang-importer-sdk) -code-completion -source-filename %s -code-completion-token=TOP_LEVEL_CATCH2 | %FileCheck %s -check-prefix=CATCH2
+// RUN: %target-swift-ide-test(mock-sdk: %clang-importer-sdk) -code-completion -source-filename %s -code-completion-token=TOP_LEVEL_THROW2 | %FileCheck %s -check-prefix=THROW2
 
 // RUN: %target-swift-ide-test(mock-sdk: %clang-importer-sdk) -code-completion -source-filename %s -code-completion-token=INSIDE_CATCH1 > %t.inside_catch1
 // RUN: %FileCheck %s -check-prefix=STMT < %t.inside_catch1
@@ -123,7 +122,7 @@ func test004() {
 func test005() {
   do {} catch Error4.E2#^CATCH3^#
 // CATCH3: Begin completions
-// CATCH3: Pattern/ExprSpecific:               ({#Int32#})[#Error4#]{{; name=.+$}}
+// CATCH3: Pattern/CurrModule:               ({#Int32#})[#Error4#]{{; name=.+$}}
 // CATCH3: End completions
 }
 
@@ -196,8 +195,9 @@ func test012() {
   } catch {
     error.#^INSIDE_CATCH_ERR_DOT1^#
   }
-// ERROR_DOT-NOT: Begin completions
 }
+// ERROR_DOT: Begin completions
+// ERROR_DOT: Keyword[self]/CurrNominal: self[#Error#]; name=self
 func test013() {
   do {
   } catch let e {
@@ -227,8 +227,8 @@ func test015() {
 }
 // Check that we can complete on the bound value; Not exhaustive..
 // INT_DOT: Begin completions
-// INT_DOT-DAG: Decl[InstanceVar]/CurrNominal:      bigEndian[#Int32#]; name=bigEndian
-// INT_DOT-DAG: Decl[InstanceVar]/CurrNominal:      littleEndian[#Int32#]; name=littleEndian
+// INT_DOT-DAG: Decl[InstanceVar]/Super:            bigEndian[#(Int32)#]; name=bigEndian
+// INT_DOT-DAG: Decl[InstanceVar]/Super:            littleEndian[#(Int32)#]; name=littleEndian
 // INT_DOT: End completions
 
 //===--- Inside catch body top-level

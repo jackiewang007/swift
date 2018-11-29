@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -29,8 +29,7 @@ func _isDebugAssertConfiguration() -> Bool {
   return Int32(Builtin.assert_configuration()) == 0
 }
 
-@_versioned
-@_transparent
+@usableFromInline @_transparent
 internal func _isReleaseAssertConfiguration() -> Bool {
   // The values for the assert_configuration call are:
   // 0: Debug
@@ -59,10 +58,8 @@ func _isStdlibInternalChecksEnabled() -> Bool {
 #endif
 }
 
-@_versioned
-@_transparent
-internal
-func _fatalErrorFlags() -> UInt32 {
+@usableFromInline @_transparent
+internal func _fatalErrorFlags() -> UInt32 {
   // The current flags are:
   // (1 << 0): Report backtrace on fatal error
 #if os(iOS) || os(tvOS) || os(watchOS)
@@ -77,13 +74,12 @@ func _fatalErrorFlags() -> UInt32 {
 ///
 /// This function should not be inlined because it is cold and inlining just
 /// bloats code.
-@_versioned
+@usableFromInline
 @inline(never)
-@_semantics("stdlib_binary_only")
-func _assertionFailed(
-  // FIXME(ABI)#18 : add argument labels to conform to API guidelines.
+@_semantics("programtermination_point")
+internal func _assertionFailure(
   _ prefix: StaticString, _ message: StaticString,
-  _ file: StaticString, _ line: UInt,
+  file: StaticString, line: UInt,
   flags: UInt32
 ) -> Never {
   prefix.withUTF8Buffer {
@@ -109,13 +105,12 @@ func _assertionFailed(
 ///
 /// This function should not be inlined because it is cold and inlining just
 /// bloats code.
-@_versioned
+@usableFromInline
 @inline(never)
-@_semantics("stdlib_binary_only")
-func _assertionFailed(
-  // FIXME(ABI)#19 : add argument labels to conform to API guidelines.
+@_semantics("programtermination_point")
+internal func _assertionFailure(
   _ prefix: StaticString, _ message: String,
-  _ file: StaticString, _ line: UInt,
+  file: StaticString, line: UInt,
   flags: UInt32
 ) -> Never {
   prefix.withUTF8Buffer {
@@ -136,27 +131,51 @@ func _assertionFailed(
   Builtin.int_trap()
 }
 
+/// This function should be used only in the implementation of user-level
+/// assertions.
+///
+/// This function should not be inlined because it is cold and inlining just
+/// bloats code.
+@usableFromInline
+@inline(never)
+@_semantics("programtermination_point")
+internal func _assertionFailure(
+  _ prefix: StaticString, _ message: String,
+  flags: UInt32
+) -> Never {
+  prefix.withUTF8Buffer {
+    (prefix) -> Void in
+    message._withUnsafeBufferPointerToUTF8 {
+      (messageUTF8) -> Void in
+      _swift_stdlib_reportFatalError(
+        prefix.baseAddress!, CInt(prefix.count),
+        messageUTF8.baseAddress!, CInt(messageUTF8.count),
+        flags)
+    }
+  }
+
+  Builtin.int_trap()
+}
+
 /// This function should be used only in the implementation of stdlib
 /// assertions.
 ///
 /// This function should not be inlined because it is cold and it inlining just
 /// bloats code.
-@_versioned
+@usableFromInline
 @inline(never)
-@_semantics("stdlib_binary_only")
-@_semantics("arc.programtermination_point")
-func _fatalErrorMessage(
-  // FIXME(ABI)#20 : add argument labels to conform to API guidelines.
+@_semantics("programtermination_point")
+internal func _fatalErrorMessage(
   _ prefix: StaticString, _ message: StaticString,
-  _ file: StaticString, _ line: UInt,
+  file: StaticString, line: UInt,
   flags: UInt32
 ) -> Never {
 #if INTERNAL_CHECKS_ENABLED
-  prefix.withUTF8Buffer {
+  prefix.withUTF8Buffer() {
     (prefix) in
-    message.withUTF8Buffer {
+    message.withUTF8Buffer() {
       (message) in
-      file.withUTF8Buffer {
+      file.withUTF8Buffer() {
         (file) in
         _swift_stdlib_reportFatalErrorInFile(
           prefix.baseAddress!, CInt(prefix.count),
@@ -167,9 +186,9 @@ func _fatalErrorMessage(
     }
   }
 #else
-  prefix.withUTF8Buffer {
+  prefix.withUTF8Buffer() {
     (prefix) in
-    message.withUTF8Buffer {
+    message.withUTF8Buffer() {
       (message) in
       _swift_stdlib_reportFatalError(
         prefix.baseAddress!, CInt(prefix.count),
@@ -229,11 +248,44 @@ func _unimplementedInitializer(className: StaticString,
   Builtin.int_trap()
 }
 
-// FIXME(ABI)#21 (Type Checker): rename to something descriptive.
 public // COMPILER_INTRINSIC
 func _undefined<T>(
   _ message: @autoclosure () -> String = String(),
   file: StaticString = #file, line: UInt = #line
 ) -> T {
-  _assertionFailed("fatal error", message(), file, line, flags: 0)
+  _assertionFailure("Fatal error", message(), file: file, line: line, flags: 0)
+}
+
+/// Called when falling off the end of a switch and the type can be represented
+/// as a raw value.
+///
+/// This function should not be inlined because it is cold and inlining just
+/// bloats code. It doesn't take a source location because it's most important
+/// in release builds anyway (old apps that are run on new OSs).
+@inline(never)
+@usableFromInline // COMPILER_INTRINSIC
+internal func _diagnoseUnexpectedEnumCaseValue<SwitchedValue, RawValue>(
+  type: SwitchedValue.Type,
+  rawValue: RawValue
+) -> Never {
+  _assertionFailure("Fatal error",
+                    "unexpected enum case '\(type)(rawValue: \(rawValue))'",
+                    flags: _fatalErrorFlags())
+}
+
+/// Called when falling off the end of a switch and the value is not safe to
+/// print.
+///
+/// This function should not be inlined because it is cold and inlining just
+/// bloats code. It doesn't take a source location because it's most important
+/// in release builds anyway (old apps that are run on new OSs).
+@inline(never)
+@usableFromInline // COMPILER_INTRINSIC
+internal func _diagnoseUnexpectedEnumCase<SwitchedValue>(
+  type: SwitchedValue.Type
+) -> Never {
+  _assertionFailure(
+    "Fatal error",
+    "unexpected enum case while switching on value of type '\(type)'",
+    flags: _fatalErrorFlags())
 }

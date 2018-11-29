@@ -2,19 +2,19 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
 import SwiftPrivate
 import SwiftPrivateLibcExtras
-#if os(OSX) || os(iOS)
+#if os(macOS) || os(iOS)
 import Darwin
-#elseif os(Linux) || os(FreeBSD) || os(PS4) || os(Android)
+#elseif os(Linux) || os(FreeBSD) || os(PS4) || os(Android) || os(Cygwin) || os(Haiku)
 import Glibc
 #endif
 
@@ -26,6 +26,10 @@ import Foundation
 // These APIs don't really belong in a unit testing library, but they are
 // useful in tests, and stdlib does not have such facilities yet.
 //
+
+func findSubstring(_ haystack: Substring, _ needle: String) -> String.Index? {
+  return findSubstring(haystack._ephemeralString, needle)
+}
 
 func findSubstring(_ string: String, _ substring: String) -> String.Index? {
   if substring.isEmpty {
@@ -48,7 +52,7 @@ func findSubstring(_ string: String, _ substring: String) -> String.Index? {
     while true {
       if needleIndex == needle.endIndex {
         // if we hit the end of the search string, we found the needle
-        return matchStartIndex.samePosition(in: string)
+        return matchStartIndex
       }
       if matchIndex == haystack.endIndex {
         // if we hit the end of the string before finding the end of the needle,
@@ -149,7 +153,7 @@ extension MutableCollection
     var f = subrange.lowerBound
     var l = index(before: subrange.upperBound)
     while f < l {
-      swap(&self[f], &self[l])
+      swapAt(f, l)
       formIndex(after: &f)
       formIndex(before: &l)
     }
@@ -195,7 +199,7 @@ extension MutableCollection
         repeat {
           formIndex(before: &j)
         } while !(elementAtBeforeI < self[j])
-        swap(&self[beforeI], &self[j])
+        swapAt(beforeI, j)
         _reverseSubrange(i..<endIndex)
         return .success
       }
@@ -223,7 +227,7 @@ public func forAllPermutations(_ size: Int, _ body: ([Int]) -> Void) {
 
 /// Generate all permutations.
 public func forAllPermutations<S : Sequence>(
-  _ sequence: S, _ body: ([S.Iterator.Element]) -> Void
+  _ sequence: S, _ body: ([S.Element]) -> Void
 ) {
   let data = Array(sequence)
   forAllPermutations(data.count) {
@@ -235,8 +239,8 @@ public func forAllPermutations<S : Sequence>(
 
 public func cartesianProduct<C1 : Collection, C2 : Collection>(
   _ c1: C1, _ c2: C2
-) -> [(C1.Iterator.Element, C2.Iterator.Element)] {
-  var result: [(C1.Iterator.Element, C2.Iterator.Element)] = []
+) -> [(C1.Element, C2.Element)] {
+  var result: [(C1.Element, C2.Element)] = []
   for e1 in c1 {
     for e2 in c2 {
       result.append((e1, e2))
@@ -245,3 +249,30 @@ public func cartesianProduct<C1 : Collection, C2 : Collection>(
   return result
 }
 
+/// Return true if the standard library was compiled in a debug configuration.
+public func _isStdlibDebugConfiguration() -> Bool {
+#if SWIFT_STDLIB_DEBUG
+  return true
+#else
+  return false
+#endif
+}
+
+@_fixed_layout
+public struct LinearCongruentialGenerator: RandomNumberGenerator {
+
+  @usableFromInline
+  internal var _state: UInt64
+
+  @inlinable
+  public init(seed: UInt64) {
+    _state = seed
+    for _ in 0 ..< 10 { _ = next() }
+  }
+
+  @inlinable
+  public mutating func next() -> UInt64 {
+    _state = 2862933555777941757 &* _state &+ 3037000493
+    return _state
+  }
+}

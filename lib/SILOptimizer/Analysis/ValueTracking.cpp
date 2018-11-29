@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -25,12 +25,12 @@ using namespace swift::PatternMatch;
 
 bool swift::isNotAliasingArgument(SILValue V,
                                   InoutAliasingAssumption isInoutAliasing) {
-  auto *Arg = dyn_cast<SILArgument>(V);
-  if (!Arg || !Arg->isFunctionArg())
+  auto *Arg = dyn_cast<SILFunctionArgument>(V);
+  if (!Arg)
     return false;
 
-  return isNotAliasedIndirectParameter(Arg->getArgumentConvention(),
-                                       isInoutAliasing);
+  SILArgumentConvention Conv = Arg->getArgumentConvention();
+  return Conv.isNotAliasedIndirectParameter(isInoutAliasing);
 }
 
 /// Check if the parameter \V is based on a local object, e.g. it is an
@@ -53,29 +53,21 @@ static bool isLocalObject(SILValue Obj) {
     Processed.insert(V);
     // It should be a local object.
     V = getUnderlyingObject(V);
-    if (auto I = dyn_cast<SILInstruction>(V)) {
-      if (isa<AllocationInst>(V))
-        continue;
-      if (isa<StrongPinInst>(I)) {
-        WorkList.push_back(I->getOperand(0));
-        continue;
+    if (isa<AllocationInst>(V))
+      continue;
+    if (isa<StructInst>(V) || isa<TupleInst>(V) || isa<EnumInst>(V)) {
+      // A compound value is local, if all of its components are local.
+      for (auto &Op : cast<SingleValueInstruction>(V)->getAllOperands()) {
+        WorkList.push_back(Op.get());
       }
-      if (isa<StructInst>(I) || isa<TupleInst>(I) || isa<EnumInst>(I)) {
-        // A compound value is local, if all of its components are local.
-        for (auto &Op : I->getAllOperands()) {
-          WorkList.push_back(Op.get());
-        }
-        continue;
-      }
+      continue;
     }
 
-    if (auto Arg = dyn_cast<SILArgument>(V)) {
+    if (auto *Arg = dyn_cast<SILPhiArgument>(V)) {
       // A BB argument is local if all of its
       // incoming values are local.
-      if (Arg->isFunctionArg())
-        return false;
       SmallVector<SILValue, 4> IncomingValues;
-      if (Arg->getIncomingValues(IncomingValues)) {
+      if (Arg->getSingleTerminatorOperands(IncomingValues)) {
         for (auto InValue : IncomingValues) {
           WorkList.push_back(InValue);
         }
@@ -110,7 +102,7 @@ IsZeroKind swift::isZeroValue(SILValue Value) {
     case ValueKind::UncheckedTrivialBitCastInst:
     // Extracting from a zero class returns a zero.
     case ValueKind::StructExtractInst:
-      return isZeroValue(cast<SILInstruction>(Value)->getOperand(0));
+      return isZeroValue(cast<SingleValueInstruction>(Value)->getOperand(0));
     default:
       break;
   }
@@ -150,7 +142,7 @@ IsZeroKind swift::isZeroValue(SILValue Value) {
     if (T->getFieldNo() != 0)
       return IsZeroKind::Unknown;
 
-    BuiltinInst *BI = dyn_cast<BuiltinInst>(T->getOperand());
+    auto *BI = dyn_cast<BuiltinInst>(T->getOperand());
     if (!BI)
       return IsZeroKind::Unknown;
 
@@ -182,7 +174,7 @@ Optional<bool> swift::computeSignBit(SILValue V) {
     switch (Def->getKind()) {
     // Bitcast of non-negative is non-negative
     case ValueKind::UncheckedTrivialBitCastInst:
-      Value = cast<SILInstruction>(Def)->getOperand(0);
+      Value = cast<UncheckedTrivialBitCastInst>(Def)->getOperand();
       continue;
     default:
       break;

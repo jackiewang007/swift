@@ -1,7 +1,7 @@
-// RUN: rm -rf %t && mkdir -p %t
-// RUN: %target-swift-ide-test -skip-deinit=false -print-ast-typechecked -print-accessibility -source-filename=%s | %FileCheck %s -check-prefix=CHECK -check-prefix=CHECK-SRC
+// RUN: %empty-directory(%t)
+// RUN: %target-swift-ide-test -skip-deinit=false -print-ast-typechecked -print-access -source-filename=%s | %FileCheck %s -check-prefix=CHECK -check-prefix=CHECK-SRC
 // RUN: %target-swift-frontend -emit-module-path %t/accessibility_print.swiftmodule %s
-// RUN: %target-swift-ide-test -skip-deinit=false -print-module -print-accessibility -module-to-print=accessibility_print -I %t -source-filename=%s | %FileCheck %s
+// RUN: %target-swift-ide-test -skip-deinit=false -print-module -print-access -module-to-print=accessibility_print -I %t -source-filename=%s | %FileCheck %s
 
 // This file uses alphabetic prefixes on its declarations because swift-ide-test
 // sorts decls in a module before printing them.
@@ -94,7 +94,7 @@ private enum DA_PrivateEnum {
   case Foo, Bar
   // CHECK: internal init()
   init() { self = .Foo }
-  // CHECK: internal var hashValue
+  // CHECK: private var hashValue
 } // CHECK: {{^[}]}}
 
 // CHECK-LABEL: internal{{(\*/)?}} enum DB_InternalEnum {
@@ -122,9 +122,9 @@ public enum DC_PublicEnum {
 private protocol EA_PrivateProtocol {
   // CHECK: {{^}} associatedtype Foo
   associatedtype Foo
-  // CHECK: fileprivate var Bar
+  // CHECK: {{^}} var Bar
   var Bar: Int { get }
-  // CHECK: fileprivate func baz()
+  // CHECK: {{^}} func baz()
   func baz()
 } // CHECK: {{^[}]}}
 
@@ -132,9 +132,9 @@ private protocol EA_PrivateProtocol {
 public protocol EB_PublicProtocol {
   // CHECK: {{^}} associatedtype Foo
   associatedtype Foo
-  // CHECK: public var Bar
+  // CHECK: {{^}} var Bar
   var Bar: Int { get }
-  // CHECK: public func baz()
+  // CHECK: {{^}} func baz()
   func baz()
 } // CHECK: {{^[}]}}
 
@@ -345,8 +345,8 @@ public class IC_PublicAssocTypeImpl: IA_PublicAssocTypeProto, IB_FilePrivateAsso
 private class ID_PrivateAssocTypeImpl: IA_PublicAssocTypeProto, IB_FilePrivateAssocTypeProto {
   public var publicValue: Int = 0
   public var filePrivateValue: Int = 0
-  // CHECK-DAG: {{^}} internal typealias PublicValue
-  // CHECK-DAG: {{^}} internal typealias FilePrivateValue
+  // CHECK-DAG: {{^}} fileprivate typealias PublicValue
+  // CHECK-DAG: {{^}} fileprivate typealias FilePrivateValue
 } // CHECK: {{^[}]}}
 
 // CHECK-LABEL: class MultipleAttributes {
@@ -365,12 +365,12 @@ public class PublicInitBase {
 
 // CHECK-LABEL: public{{(\*/)?}} class PublicInitInheritor : PublicInitBase {
 public class PublicInitInheritor : PublicInitBase {
-  // CHECK: {{^}} public init()
-  // CHECK: {{^}} fileprivate init(other: PublicInitBase)
+  // CHECK: {{^}} override public init()
+  // CHECK: {{^}} override fileprivate init(other: PublicInitBase)
 } // CHECK: {{^[}]}}
 
 // CHECK-LABEL: {{(/\*)?private(\*/)?}} class PublicInitPrivateInheritor : PublicInitBase {
 private class PublicInitPrivateInheritor : PublicInitBase {
-  // CHECK: {{^}} internal init()
-  // CHECK: {{^}} fileprivate init(other: PublicInitBase)
+  // CHECK: {{^}} override internal init()
+  // CHECK: {{^}} override fileprivate init(other: PublicInitBase)
 } // CHECK: {{^[}]}}

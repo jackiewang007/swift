@@ -1,4 +1,4 @@
-// RUN: %target-parse-verify-swift
+// RUN: %target-typecheck-verify-swift
 
 // SR-139:
 // Infinite recursion parsing bitwise operators
@@ -97,3 +97,44 @@ let v4 = [1 + 2 + 3, 4] as [UInt32] + [2 * 3] as [UInt32]
 let v5 = ([1 + 2 + 3, 4] as [UInt32]) + ([2 * 3] as [UInt32])
 let v6 = [1 + 2 + 3, 4] as Set<UInt32>
 let v7: [UInt32] = [55 * 8, 0]
+
+// SR-3668
+// "Expression was too complex" errors for short dictionary literals
+// of simple closure expressions
+
+let sr3668Dict1: Dictionary<Int, (Int, Int) -> Bool> =
+  [  0: { $0 == $1 },  1: { $0 == $1 },  2: { $0 == $1 },  3: { $0 == $1 },
+     4: { $0 == $1 },  5: { $0 == $1 },  6: { $0 == $1 },  7: { $0 == $1 },
+     8: { $0 == $1 },  9: { $0 == $1 }, 10: { $0 == $1 }, 11: { $0 == $1 },
+    12: { $0 == $1 }, 13: { $0 == $1 }, 14: { $0 == $1 }, 15: { $0 == $1 },
+    16: { $0 == $1 }, 17: { $0 == $1 }, 18: { $0 == $1 }, 19: { $0 == $1 } ]
+
+let sr3668Dict2: [Int: (Int, Int) -> Bool] =
+  [  0: { $0 != $1 },  1: { $0 != $1 },  2: { $0 != $1 },  3: { $0 != $1 },
+     4: { $0 != $1 },  5: { $0 != $1 },  6: { $0 != $1 },  7: { $0 != $1 },
+     8: { $0 != $1 },  9: { $0 != $1 }, 10: { $0 != $1 }, 11: { $0 != $1 },
+    12: { $0 != $1 }, 13: { $0 != $1 }, 14: { $0 != $1 }, 15: { $0 != $1 },
+    16: { $0 != $1 }, 17: { $0 != $1 }, 18: { $0 != $1 }, 19: { $0 != $1 } ]
+
+// rdar://problem/32034560 - type-checker hangs trying to solve expression
+struct R32034560 {
+  private var R32034560: Array<Array<UInt32>>
+  private func foo(x: UInt32) -> UInt32 {
+    return ((self.R32034560[0][Int(x >> 24) & 0xFF] &+ self.R32034560[1][Int(x >> 16) & 0xFF]) ^ self.R32034560[2][Int(x >> 8) & 0xFF]) &+ self.R32034560[3][Int(x & 0xFF)]
+  }
+}
+
+// rdar://problem/33806601
+
+class P_33806601 {
+    var x : Int = 0
+    var y : Int = 1
+}
+
+func foo33806601<T>(_ n: T) -> T where T : FloatingPoint { fatalError() }
+func foo33806601(_ n: Double) -> Double { return 0.0 }
+
+let _: (P_33806601, P_33806601) -> Double = {
+  (p : P_33806601, s : P_33806601)  -> Double in
+    foo33806601(Double((p.x - s.x) * (p.x - s.x) + (p.y - s.y) * (p.y - s.y)))
+}

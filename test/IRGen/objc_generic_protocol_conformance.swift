@@ -1,7 +1,5 @@
-// RUN: %target-swift-frontend(mock-sdk: %clang-importer-sdk) -emit-silgen %s -import-objc-header %S/Inputs/objc_generic_protocol_conformance.h | %FileCheck --check-prefix=SIL %s
-// RUN: %target-swift-frontend(mock-sdk: %clang-importer-sdk) -emit-ir %s -import-objc-header %S/Inputs/objc_generic_protocol_conformance.h | %FileCheck --check-prefix=IR %s
-
-// REQUIRES: objc_interop
+// RUN: %target-swift-frontend(mock-sdk: %clang-importer-sdk) -emit-silgen -primary-file %s -enable-objc-interop -import-objc-header %S/Inputs/objc_generic_protocol_conformance.h | %FileCheck --check-prefix=SIL %s
+// RUN: %target-swift-frontend(mock-sdk: %clang-importer-sdk) -emit-ir -primary-file %s -enable-objc-interop -import-objc-header %S/Inputs/objc_generic_protocol_conformance.h | %FileCheck --check-prefix=IR %s
 
 protocol P {
   func foo()
@@ -9,5 +7,5 @@ protocol P {
 
 extension Foo: P {}
 
-// SIL-LABEL: sil hidden [transparent] [thunk] @_TTWuRxs9AnyObjectrGCSo3Foo{{.*}} @pseudogeneric
-// IR-LABEL: define hidden void @_TTWuRxs9AnyObjectrGCSo3Foo{{.*}}(%CSo3Foo** noalias nocapture dereferenceable({{4|8}}), %swift.type*{{( %Self)?}}, i8**{{( %SelfWitnessTable)?}})
+// SIL-LABEL: sil private [transparent] [thunk] @$sSo3FooCyxG33objc_generic_protocol_conformance1PA2dEP3fooyyFTW {{.*}} @pseudogeneric
+// IR-LABEL: define internal swiftcc void @"$sSo3FooCyxG33objc_generic_protocol_conformance1PA2dEP3fooyyFTW"(%TSo3FooC** noalias nocapture swiftself dereferenceable({{4|8}}), %swift.type*{{( %Self)?}}, i8**{{( %SelfWitnessTable)?}})

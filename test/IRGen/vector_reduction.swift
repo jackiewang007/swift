@@ -2,12 +2,12 @@
 
 // REQUIRES: CPU=x86_64
 
-// FIXME: https://bugs.swift.org/browse/SR-2808
-// XFAIL: resilient_stdlib
+// rdar://30579970
+// REQUIRES: optimized_stdlib
 
 // We were missing target transform info and not vectorizing the loop below.
 
-// CHECK: xor <2 x i64>
+// CHECK: xor <{{(2|4|8)}} x i64>
 
 public func f(a: UnsafePointer<Int>, b: UnsafePointer<Int>, count: Int) -> Int {
   var c = 0

@@ -10,33 +10,24 @@
 @inline(never) func id<T>(_ t: T) -> T {
   return t
 }
-// CHECK-LABEL: define hidden void @_TF21dynamic_self_metadata2idurFxx
+// CHECK-LABEL: define hidden swiftcc void @"$s21dynamic_self_metadata2idyxxlF"
 
 class C {
   class func fromMetatype() -> Self? { return nil }
-  // CHECK-LABEL: define hidden i64 @_TZFC21dynamic_self_metadata1C12fromMetatypefT_GSqDS0__(%swift.type*)
-  // CHECK: [[ALLOCA:%.+]] = alloca [[TYPE]], align 8
-  // CHECK: [[CAST1:%.+]] = bitcast [[TYPE]]* [[ALLOCA]] to i64*
-  // CHECK: store i64 0, i64* [[CAST1]], align 8
-  // CHECK: [[CAST2:%.+]] = bitcast [[TYPE]]* [[ALLOCA]] to i64*
-  // CHECK: [[LOAD:%.+]] = load i64, i64* [[CAST2]], align 8
-  // CHECK: ret i64 [[LOAD]]
+  // CHECK-LABEL: define hidden swiftcc i64 @"$s21dynamic_self_metadata1CC12fromMetatypeACXDSgyFZ"(%swift.type* swiftself)
+  // CHECK: ret i64 0
 
   func fromInstance() -> Self? { return nil }
-  // CHECK-LABEL: define hidden i64 @_TFC21dynamic_self_metadata1C12fromInstancefT_GSqDS0__(%C21dynamic_self_metadata1C*)
-  // CHECK: [[ALLOCA:%.+]] = alloca [[TYPE]], align 8
-  // CHECK: [[CAST1:%.+]] = bitcast [[TYPE]]* [[ALLOCA]] to i64*
-  // CHECK: store i64 0, i64* [[CAST1]], align 8
-  // CHECK: [[CAST2:%.+]] = bitcast [[TYPE]]* [[ALLOCA]] to i64*
-  // CHECK: [[LOAD:%.+]] = load i64, i64* [[CAST2]], align 8
-  // CHECK: ret i64 [[LOAD]]
+  // CHECK-LABEL: define hidden swiftcc i64 @"$s21dynamic_self_metadata1CC12fromInstanceACXDSgyF"(%T21dynamic_self_metadata1CC* swiftself)
+  // CHECK: ret i64 0
 
   func dynamicSelfArgument() -> Self? {
     return id(nil)
   }
-  // CHECK-LABEL: define hidden i64 @_TFC21dynamic_self_metadata1C19dynamicSelfArgumentfT_GSqDS0__(%C21dynamic_self_metadata1C*)
-  // CHECK: [[CAST1:%.+]] = bitcast %C21dynamic_self_metadata1C* %0 to [[METATYPE:%.+]]
+  // CHECK-LABEL: define hidden swiftcc i64 @"$s21dynamic_self_metadata1CC0A12SelfArgumentACXDSgyF"(%T21dynamic_self_metadata1CC* swiftself)
+  // CHECK: [[CAST1:%.+]] = bitcast %T21dynamic_self_metadata1CC* %0 to [[METATYPE:%.+]]
   // CHECK: [[TYPE1:%.+]] = call %swift.type* @swift_getObjectType([[METATYPE]] [[CAST1]])
-  // CHECK: [[TYPE2:%.+]] = call %swift.type* @_TMaSq(%swift.type* [[TYPE1]])
-  // CHECK: call void @_TF21dynamic_self_metadata2idurFxx({{.*}}, %swift.type* [[TYPE2]])
+  // CHECK: [[T0:%.+]] = call swiftcc %swift.metadata_response @"$sSqMa"(i64 0, %swift.type* [[TYPE1]])
+  // CHECK: [[TYPE2:%.+]] = extractvalue %swift.metadata_response [[T0]], 0
+  // CHECK: call swiftcc void @"$s21dynamic_self_metadata2idyxxlF"({{.*}}, %swift.type* [[TYPE2]])
 }

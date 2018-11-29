@@ -1,4 +1,4 @@
-// RUN: %target-parse-verify-swift
+// RUN: %target-typecheck-verify-swift
 
 struct OuterNonGeneric {
   struct MidNonGeneric {
@@ -104,6 +104,11 @@ class OuterGenericClass<T> {
       super.init()
     }
   }
+
+  class Middle {
+    class Inner1<T> {}
+    class Inner2<T> : Middle where T: Inner1<Int> {}
+  }
 }
 
 // <rdar://problem/12895793>
@@ -132,7 +137,7 @@ struct AnyStream<T : Sequence> {
   }
 }
 
-func enumerate<T : Sequence>(_ arg: T) -> AnyStream<T> {
+func enumerate<T>(_ arg: T) -> AnyStream<T> {
   return AnyStream<T>(input: arg)
 }
 
@@ -219,7 +224,7 @@ extension GS {
   }
 
   func h() {
-    _ = GS() as GS<Int> // expected-error{{cannot convert value of type 'GS<T>' to type 'GS<Int>' in coercion}}
+    _ = GS() as GS<Int> // expected-error{{'GS<T>' is not convertible to 'GS<Int>'; did you mean to use 'as!' to force downcast?}}
   }
 }
 
@@ -297,4 +302,122 @@ typealias OuterGenericMidGeneric<T> = OuterGeneric<T>.MidGeneric
 
 extension OuterGenericMidGeneric {
 
+}
+
+class BaseClass {
+  struct T {}
+
+  func m1() -> T {}
+  func m2() -> BaseClass.T {}
+  func m3() -> DerivedClass.T {}
+}
+
+func f1() -> DerivedClass.T {
+  return BaseClass.T()
+}
+
+func f2() -> BaseClass.T {
+  return DerivedClass.T()
+}
+
+func f3() -> DerivedClass.T {
+  return DerivedClass.T()
+}
+
+class DerivedClass : BaseClass {
+  override func m1() -> DerivedClass.T {
+    return f2()
+  }
+
+  override func m2() -> BaseClass.T {
+    return f3()
+  }
+
+  override func m3() -> T {
+    return f2()
+  }
+}
+
+// https://bugs.swift.org/browse/SR-3847: Resolve members in inner types.
+// This first extension isn't necessary; we could have put 'originalValue' in
+// the original declaration.
+extension OuterNonGenericClass.InnerNonGenericBase {
+  static let originalValue = 0
+}
+// Each of these two cases used to crash.
+extension OuterNonGenericClass.InnerNonGenericBase {
+  static let propUsingMember = originalValue
+}
+extension OuterNonGenericClass.InnerNonGenericClass1 {
+  static let anotherPropUsingMember = originalValue
+}
+
+// rdar://problem/30353095: Extensions of nested types with generic
+// requirements placed on type parameters
+struct OuterWithConstraint<T : HasAssocType> {
+  struct InnerWithConstraint<U : HasAssocType> { }
+}
+
+extension OuterWithConstraint.InnerWithConstraint {
+  func foo<V>(v: V) where T.FirstAssocType == U.SecondAssocType {}
+}
+
+// Name lookup within a 'where' clause should find generic parameters
+// of the outer type.
+extension OuterGeneric.MidGeneric where D == Int, F == String {
+  func doStuff() -> (D, F) {
+    return (100, "hello")
+  }
+}
+
+// https://bugs.swift.org/browse/SR-4672
+protocol ExpressibleByCatLiteral {}
+protocol ExpressibleByDogLiteral {}
+
+struct Kitten : ExpressibleByCatLiteral {}
+struct Puppy : ExpressibleByDogLiteral {}
+
+struct Claws<A: ExpressibleByCatLiteral> { // expected-note {{'A' declared as parameter to type 'Claws'}}
+  struct Fangs<B: ExpressibleByDogLiteral> { }
+}
+
+struct NotADog {}
+
+func pets<T>(fur: T) -> Claws<Kitten>.Fangs<T> {
+  return Claws<Kitten>.Fangs<T>()
+}
+
+func something<T>() -> T { // expected-note {{in call to function 'something()'}}
+  while true {}
+}
+
+func test() {
+  let _: Claws<Kitten>.Fangs<Puppy> = pets(fur: Puppy())
+
+  // <https://bugs.swift.org/browse/SR-5600>
+  let _: Claws.Fangs<Puppy> = pets(fur: Puppy())
+  let _: Claws.Fangs<Puppy> = Claws<Kitten>.Fangs()
+  let _: Claws.Fangs<Puppy> = Claws.Fangs()
+  // expected-error@-1 {{cannot convert value of type 'Claws<_>.Fangs<_>' to specified type 'Claws.Fangs<Puppy>'}}
+  let _: Claws.Fangs<NotADog> = something()
+  // expected-error@-1 {{generic parameter 'T' could not be inferred}} // FIXME: bad diagnostic
+  _ = Claws.Fangs<NotADog>()
+  // expected-error@-1 {{generic parameter 'A' could not be inferred}}
+  // expected-note@-2 {{explicitly specify the generic arguments to fix this issue}}
+}
+
+// https://bugs.swift.org/browse/SR-4379
+extension OuterGeneric.MidNonGeneric {
+  func doStuff() -> OuterGeneric {
+    return OuterGeneric()
+  }
+
+  func doMoreStuff() -> OuterGeneric.MidNonGeneric {
+    return OuterGeneric.MidNonGeneric()
+  }
+
+  func doMoreStuffWrong() -> Self {
+    // expected-error@-1 {{'Self' is only available in a protocol or as the result of a method in a class; did you mean 'OuterGeneric.MidNonGeneric'?}}
+
+  }
 }

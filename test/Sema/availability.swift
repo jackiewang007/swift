@@ -1,4 +1,4 @@
-// RUN: %target-parse-verify-swift
+// RUN: %target-typecheck-verify-swift -module-name MyModule
 
 // REQUIRES: OS=macosx
 
@@ -10,10 +10,21 @@ func test() {
 }
 
 @available(*,unavailable,message: "use 'Int' instead")
-struct NSUInteger {} // expected-note 2 {{explicitly marked unavailable here}}
+struct NSUInteger {} // expected-note 3 {{explicitly marked unavailable here}}
+
+struct Outer {
+  @available(*,unavailable,message: "use 'UInt' instead")
+  struct NSUInteger {} // expected-note 2 {{explicitly marked unavailable here}}
+}
 
 func foo(x : NSUInteger) { // expected-error {{'NSUInteger' is unavailable: use 'Int' instead}}
      let y : NSUInteger = 42 // expected-error {{'NSUInteger' is unavailable: use 'Int' instead}}
+
+  let z : MyModule.NSUInteger = 42 // expected-error {{'NSUInteger' is unavailable: use 'Int' instead}}
+
+  let z2 : Outer.NSUInteger = 42 // expected-error {{'NSUInteger' is unavailable: use 'UInt' instead}}  
+
+  let z3 : MyModule.Outer.NSUInteger = 42 // expected-error {{'NSUInteger' is unavailable: use 'UInt' instead}}  
 }
 
 // Test preventing overrides of unavailable methods.
@@ -30,7 +41,7 @@ class ClassWithUnavailable {
   }
 
   @available(*, unavailable)
-  subscript (i: Int) -> Int { // expected-note{{'subscript' has been explicitly marked unavailable here}}
+  subscript (i: Int) -> Int { // expected-note{{'subscript(_:)' has been explicitly marked unavailable here}}
     return i
   }
 }
@@ -44,7 +55,7 @@ func testInit() {
 }
 
 func testSubscript(cwu: ClassWithUnavailable) {
-  _ = cwu[5] // expected-error{{'subscript' is unavailable}}
+  _ = cwu[5] // expected-error{{'subscript(_:)' is unavailable}}
 }
 
 /* FIXME 'nil == a' fails to type-check with a bogus error message

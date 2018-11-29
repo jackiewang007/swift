@@ -2,31 +2,15 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
 @_exported import Foundation // Clang module
-
-/// Keys used in the result of `URLResourceValues.thumbnailDictionary`.
-@available(OSX 10.10, iOS 8.0, *)
-public struct URLThumbnailSizeKey : RawRepresentable, Hashable {
-    public typealias RawValue = String
-    
-    public init(rawValue: RawValue) { self.rawValue = rawValue }
-    private(set) public var rawValue: RawValue
-    
-    /// Key for a 1024 x 1024 thumbnail image.
-    static public let none: URLThumbnailSizeKey = URLThumbnailSizeKey(rawValue: URLThumbnailDictionaryItem.NSThumbnail1024x1024SizeKey.rawValue)
-  
-    public var hashValue: Int {
-        return rawValue.hashValue
-    }
-}
 
 /**
  URLs to file system resources support the properties defined below. Note that not all property values will exist for all file system URLs. For example, if a file is located on a volume that does not support creation dates, it is valid to request the creation date property, but the returned value will be nil, and no error will be generated.
@@ -63,7 +47,7 @@ public struct URLResourceValues {
         return (_values[key] as? NSNumber)?.intValue
     }
     
-    private mutating func _set(_ key : URLResourceKey, newValue : Any?) {
+    private mutating func _set(_ key : URLResourceKey, newValue : __owned Any?) {
         _keys.insert(key)
         _values[key] = newValue
     }
@@ -137,12 +121,12 @@ public struct URLResourceValues {
     }
     
     /// True if resource is an application.
-    @available(OSX 10.11, iOS 9.0, *)
+    @available(macOS 10.11, iOS 9.0, *)
     public var isApplication: Bool? { return _get(.isApplicationKey) }
     
-#if os(OSX)
+#if os(macOS)
     /// True if the resource is scriptable. Only applies to applications.
-    @available(OSX 10.11, *)
+    @available(macOS 10.11, *)
     public var applicationIsScriptable: Bool? { return _get(.applicationIsScriptableKey) }
 #endif
     
@@ -253,7 +237,7 @@ public struct URLResourceValues {
         set { _set(.isExcludedFromBackupKey, newValue: newValue) }
     }
     
-#if os(OSX)
+#if os(macOS)
     /// The array of Tag names.
     public var tagNames: [String]? { return _get(.tagNamesKey) }
 #endif
@@ -261,7 +245,7 @@ public struct URLResourceValues {
     public var path: String? { return _get(.pathKey) }
     
     /// The URL's path as a canonical absolute file system path.
-    @available(OSX 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
+    @available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
     public var canonicalPath: String? { return _get(.canonicalPathKey) }
     
     /// True if this URL is a file system trigger directory. Traversing or opening a file system trigger will cause an attempt to mount a file system on the trigger directory.
@@ -270,38 +254,36 @@ public struct URLResourceValues {
     /// An opaque generation identifier which can be compared using `==` to determine if the data in a document has been modified.
     ///
     /// For URLs which refer to the same file inode, the generation identifier will change when the data in the file's data fork is changed (changes to extended attributes or other file system metadata do not change the generation identifier). For URLs which refer to the same directory inode, the generation identifier will change when direct children of that directory are added, removed or renamed (changes to the data of the direct children of that directory will not change the generation identifier). The generation identifier is persistent across system restarts. The generation identifier is tied to a specific document on a specific volume and is not transferred when the document is copied to another volume. This property is not supported by all volumes.
-    @available(OSX 10.10, iOS 8.0, *)
+    @available(macOS 10.10, iOS 8.0, *)
     public var generationIdentifier: (NSCopying & NSCoding & NSSecureCoding & NSObjectProtocol)? { return _get(.generationIdentifierKey) }
     
     /// The document identifier -- a value assigned by the kernel to a document (which can be either a file or directory) and is used to identify the document regardless of where it gets moved on a volume.
     ///
     /// The document identifier survives "safe save" operations; i.e it is sticky to the path it was assigned to (`replaceItem(at:,withItemAt:,backupItemName:,options:,resultingItem:) throws` is the preferred safe-save API). The document identifier is persistent across system restarts. The document identifier is not transferred when the file is copied. Document identifiers are only unique within a single volume. This property is not supported by all volumes.
-    @available(OSX 10.10, iOS 8.0, *)
+    @available(macOS 10.10, iOS 8.0, *)
     public var documentIdentifier: Int? { return _get(.documentIdentifierKey) }
     
     /// The date the resource was created, or renamed into or within its parent directory. Note that inconsistent behavior may be observed when this attribute is requested on hard-linked items. This property is not supported by all volumes.
-    @available(OSX 10.10, iOS 8.0, *)
+    @available(macOS 10.10, iOS 8.0, *)
     public var addedToDirectoryDate: Date? { return _get(.addedToDirectoryDateKey) }
     
-#if os(OSX)
+#if os(macOS)
     /// The quarantine properties as defined in LSQuarantine.h. To remove quarantine information from a file, pass `nil` as the value when setting this property.
-    @available(OSX 10.10, *)
+    @available(macOS 10.10, *)
     public var quarantineProperties: [String : Any]? {
         get {
+            let value = _values[.quarantinePropertiesKey]
             // If a caller has caused us to stash NSNull in the dictionary (via set), make sure to return nil instead of NSNull
-            if let isNull = _values[.quarantinePropertiesKey] as? NSNull {
+            if value is NSNull {
                 return nil
             } else {
-                return _values[.quarantinePropertiesKey] as? [String : Any]
+                return value as? [String : Any]
             }
         }
         set {
-            if let v = newValue {
-                _set(.quarantinePropertiesKey, newValue: newValue as NSObject?)
-            } else {
-                // Set to NSNull, a special case for deleting quarantine properties
-                _set(.quarantinePropertiesKey, newValue: NSNull())
-            }
+            // Use NSNull for nil, a special case for deleting quarantine
+            // properties
+            _set(.quarantinePropertiesKey, newValue: newValue ?? NSNull())
         }
     }
 #endif
@@ -317,6 +299,19 @@ public struct URLResourceValues {
     
     /// Total free space in bytes.
     public var volumeAvailableCapacity : Int? { return _get(.volumeAvailableCapacityKey) }
+    
+#if os(macOS) || os(iOS)
+    /// Total available capacity in bytes for "Important" resources, including space expected to be cleared by purging non-essential and cached resources. "Important" means something that the user or application clearly expects to be present on the local system, but is ultimately replaceable. This would include items that the user has explicitly requested via the UI, and resources that an application requires in order to provide functionality.
+    /// Examples: A video that the user has explicitly requested to watch but has not yet finished watching or an audio file that the user has requested to download.
+    /// This value should not be used in determining if there is room for an irreplaceable resource. In the case of irreplaceable resources, always attempt to save the resource regardless of available capacity and handle failure as gracefully as possible.
+    @available(macOS 10.13, iOS 11.0, *) @available(tvOS, unavailable) @available(watchOS, unavailable)
+    public var volumeAvailableCapacityForImportantUsage: Int64? { return _get(.volumeAvailableCapacityForImportantUsageKey) }
+    
+    /// Total available capacity in bytes for "Opportunistic" resources, including space expected to be cleared by purging non-essential and cached resources. "Opportunistic" means something that the user is likely to want but does not expect to be present on the local system, but is ultimately non-essential and replaceable. This would include items that will be created or downloaded without an explicit request from the user on the current device.
+    /// Examples: A background download of a newly available episode of a TV series that a user has been recently watching, a piece of content explicitly requested on another device, and a new document saved to a network server by the current user from another device.
+    @available(macOS 10.13, iOS 11.0, *) @available(tvOS, unavailable) @available(watchOS, unavailable)
+    public var volumeAvailableCapacityForOpportunisticUsage: Int64? { return _get(.volumeAvailableCapacityForOpportunisticUsageKey) }
+#endif
     
     /// Total number of resources on the volume.
     public var volumeResourceCount : Int? { return _get(.volumeResourceCountKey) }
@@ -406,16 +401,36 @@ public struct URLResourceValues {
     public var volumeLocalizedName : String? { return _get(.volumeLocalizedNameKey) }
     
     /// true if the volume is encrypted. 
-    @available(OSX 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
+    @available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
     public var volumeIsEncrypted : Bool? { return _get(.volumeIsEncryptedKey) }
 
     /// true if the volume is the root filesystem. 
-    @available(OSX 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
+    @available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
     public var volumeIsRootFileSystem : Bool? { return _get(.volumeIsRootFileSystemKey) }
 
     /// true if the volume supports transparent decompression of compressed files using decmpfs. 
-    @available(OSX 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
+    @available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
     public var volumeSupportsCompression : Bool? { return _get(.volumeSupportsCompressionKey) }
+    
+    /// true if the volume supports clonefile(2).
+    @available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
+    public var volumeSupportsFileCloning : Bool? { return _get(.volumeSupportsFileCloningKey) }
+    
+    /// true if the volume supports renamex_np(2)'s RENAME_SWAP option.
+    @available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
+    public var volumeSupportsSwapRenaming : Bool? { return _get(.volumeSupportsSwapRenamingKey) }
+    
+    /// true if the volume supports renamex_np(2)'s RENAME_EXCL option.
+    @available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
+    public var volumeSupportsExclusiveRenaming : Bool? { return _get(.volumeSupportsExclusiveRenamingKey) }
+    
+    /// true if the volume supports making files immutable with isUserImmutable or isSystemImmutable.
+    @available(macOS 10.13, iOS 11.0, tvOS 11.0, watchOS 4.0, *)
+    public var volumeSupportsImmutableFiles : Bool? { return _get(.volumeSupportsImmutableFilesKey) }
+    
+    /// true if the volume supports setting POSIX access permissions with fileSecurity.
+    @available(macOS 10.13, iOS 11.0, tvOS 11.0, watchOS 4.0, *)
+    public var volumeSupportsAccessPermissions : Bool? { return _get(.volumeSupportsAccessPermissionsKey) }
     
     /// true if this item is synced to the cloud, false if it is only a local file. 
     public var isUbiquitousItem : Bool? { return _get(.isUbiquitousItemKey) }
@@ -442,14 +457,36 @@ public struct URLResourceValues {
     public var ubiquitousItemUploadingError : NSError? { return _get(.ubiquitousItemUploadingErrorKey) }
     
     /// returns whether a download of this item has already been requested with an API like `startDownloadingUbiquitousItem(at:) throws`.
-    @available(OSX 10.10, iOS 8.0, *)
+    @available(macOS 10.10, iOS 8.0, *)
     public var ubiquitousItemDownloadRequested : Bool? { return _get(.ubiquitousItemDownloadRequestedKey) }
     
     /// returns the name of this item's container as displayed to users.
-    @available(OSX 10.10, iOS 8.0, *)
+    @available(macOS 10.10, iOS 8.0, *)
     public var ubiquitousItemContainerDisplayName : String? { return _get(.ubiquitousItemContainerDisplayNameKey) }
     
-#if !os(OSX)
+#if os(macOS) || os(iOS)
+    // true if ubiquitous item is shared.
+    @available(macOS 10.13, iOS 11.0, *) @available(tvOS, unavailable) @available(watchOS, unavailable)
+    public var ubiquitousItemIsShared: Bool? { return _get(.ubiquitousItemIsSharedKey) }
+    
+    // The current user's role for this shared item, or nil if not shared
+    @available(macOS 10.13, iOS 11.0, *) @available(tvOS, unavailable) @available(watchOS, unavailable)
+    public var ubiquitousSharedItemCurrentUserRole: URLUbiquitousSharedItemRole? { return _get(.ubiquitousSharedItemCurrentUserRoleKey) }
+    
+    // The permissions for the current user, or nil if not shared.
+    @available(macOS 10.13, iOS 11.0, *) @available(tvOS, unavailable) @available(watchOS, unavailable)
+    public var ubiquitousSharedItemCurrentUserPermissions: URLUbiquitousSharedItemPermissions? { return _get(.ubiquitousSharedItemCurrentUserPermissionsKey) }
+    
+    // The name components for the owner, or nil if not shared.
+    @available(macOS 10.13, iOS 11.0, *) @available(tvOS, unavailable) @available(watchOS, unavailable)
+    public var ubiquitousSharedItemOwnerNameComponents: PersonNameComponents? { return _get(.ubiquitousSharedItemOwnerNameComponentsKey) }
+    
+    // The name components for the most recent editor, or nil if not shared.
+    @available(macOS 10.13, iOS 11.0, *) @available(tvOS, unavailable) @available(watchOS, unavailable)
+    public var ubiquitousSharedItemMostRecentEditorNameComponents: PersonNameComponents? { return _get(.ubiquitousSharedItemMostRecentEditorNameComponentsKey) }
+#endif
+    
+#if !os(macOS)
     /// The protection level for this file
     @available(iOS 9.0, *)
     public var fileProtection : URLFileProtection? { return _get(.fileProtectionKey) }
@@ -499,7 +536,7 @@ public struct URL : ReferenceConvertible, Equatable {
     /// Initialize with string.
     ///
     /// Returns `nil` if a `URL` cannot be formed with the string (for example, if the string contains characters that are illegal in a URL, or is an empty string).
-    public init?(string: String) {
+    public init?(string: __shared String) {
         guard !string.isEmpty else { return nil }
         
         if let inner = NSURL(string: string) {
@@ -512,7 +549,7 @@ public struct URL : ReferenceConvertible, Equatable {
     /// Initialize with string, relative to another URL.
     ///
     /// Returns `nil` if a `URL` cannot be formed with the string (for example, if the string contains characters that are illegal in a URL, or is an empty string).
-    public init?(string: String, relativeTo url: URL?) {
+    public init?(string: __shared String, relativeTo url: __shared URL?) {
         guard !string.isEmpty else { return nil }
         
         if let inner = NSURL(string: string, relativeTo: url) {
@@ -526,16 +563,16 @@ public struct URL : ReferenceConvertible, Equatable {
     ///
     /// If an empty string is used for the path, then the path is assumed to be ".".
     /// - note: This function avoids an extra file system access to check if the file URL is a directory. You should use it if you know the answer already.
-    @available(OSX 10.11, iOS 9.0, *)
-    public init(fileURLWithPath path: String, isDirectory: Bool, relativeTo base: URL?) {
+    @available(macOS 10.11, iOS 9.0, *)
+    public init(fileURLWithPath path: __shared String, isDirectory: Bool, relativeTo base: __shared URL?) {
         _url = URL._converted(from: NSURL(fileURLWithPath: path.isEmpty ? "." : path, isDirectory: isDirectory, relativeTo: base))
     }
     
     /// Initializes a newly created file URL referencing the local file or directory at path, relative to a base URL.
     ///
     /// If an empty string is used for the path, then the path is assumed to be ".".
-    @available(OSX 10.11, iOS 9.0, *)
-    public init(fileURLWithPath path: String, relativeTo base: URL?) {
+    @available(macOS 10.11, iOS 9.0, *)
+    public init(fileURLWithPath path: __shared String, relativeTo base: __shared URL?) {
         _url = URL._converted(from: NSURL(fileURLWithPath: path.isEmpty ? "." : path, relativeTo: base))
     }
     
@@ -543,22 +580,22 @@ public struct URL : ReferenceConvertible, Equatable {
     ///
     /// If an empty string is used for the path, then the path is assumed to be ".".
     /// - note: This function avoids an extra file system access to check if the file URL is a directory. You should use it if you know the answer already.
-    public init(fileURLWithPath path: String, isDirectory: Bool) {
+    public init(fileURLWithPath path: __shared String, isDirectory: Bool) {
         _url = URL._converted(from: NSURL(fileURLWithPath: path.isEmpty ? "." : path, isDirectory: isDirectory))
     }
     
     /// Initializes a newly created file URL referencing the local file or directory at path.
     ///
     /// If an empty string is used for the path, then the path is assumed to be ".".
-    public init(fileURLWithPath path: String) {
+    public init(fileURLWithPath path: __shared String) {
         _url = URL._converted(from: NSURL(fileURLWithPath: path.isEmpty ? "." : path))
     }
     
     /// Initializes a newly created URL using the contents of the given data, relative to a base URL.
     ///
     /// If the data representation is not a legal URL string as ASCII bytes, the URL object may not behave as expected. If the URL cannot be formed then this will return nil.
-    @available(OSX 10.11, iOS 9.0, *)
-    public init?(dataRepresentation: Data, relativeTo url: URL?, isAbsolute: Bool = false) {
+    @available(macOS 10.11, iOS 9.0, *)
+    public init?(dataRepresentation: __shared Data, relativeTo url: __shared URL?, isAbsolute: Bool = false) {
         guard dataRepresentation.count > 0 else { return nil }
         
         if isAbsolute {
@@ -569,20 +606,29 @@ public struct URL : ReferenceConvertible, Equatable {
     }
 
     /// Initializes a URL that refers to a location specified by resolving bookmark data.
-    public init?(resolvingBookmarkData data: Data, options: BookmarkResolutionOptions = [], relativeTo url: URL? = nil, bookmarkDataIsStale: inout Bool) throws {
+    @available(swift, obsoleted: 4.2)
+    public init?(resolvingBookmarkData data: __shared Data, options: BookmarkResolutionOptions = [], relativeTo url: __shared URL? = nil, bookmarkDataIsStale: inout Bool) throws {
+        var stale : ObjCBool = false
+        _url = URL._converted(from: try NSURL(resolvingBookmarkData: data, options: options, relativeTo: url, bookmarkDataIsStale: &stale))
+        bookmarkDataIsStale = stale.boolValue
+    }
+
+    /// Initializes a URL that refers to a location specified by resolving bookmark data.
+    @available(swift, introduced: 4.2)
+    public init(resolvingBookmarkData data: __shared Data, options: BookmarkResolutionOptions = [], relativeTo url: __shared URL? = nil, bookmarkDataIsStale: inout Bool) throws {
         var stale : ObjCBool = false
         _url = URL._converted(from: try NSURL(resolvingBookmarkData: data, options: options, relativeTo: url, bookmarkDataIsStale: &stale))
         bookmarkDataIsStale = stale.boolValue
     }
     
     /// Creates and initializes an NSURL that refers to the location specified by resolving the alias file at url. If the url argument does not refer to an alias file as defined by the NSURLIsAliasFileKey property, the NSURL returned is the same as url argument. This method fails and returns nil if the url argument is unreachable, or if the original file or directory could not be located or is not reachable, or if the original file or directory is on a volume that could not be located or mounted. The URLBookmarkResolutionWithSecurityScope option is not supported by this method.
-    @available(OSX 10.10, iOS 8.0, *)
-    public init(resolvingAliasFileAt url: URL, options: BookmarkResolutionOptions = []) throws {
+    @available(macOS 10.10, iOS 8.0, *)
+    public init(resolvingAliasFileAt url: __shared URL, options: BookmarkResolutionOptions = []) throws {
         self.init(reference: try NSURL(resolvingAliasFileAt: url, options: options))
     }
 
     /// Initializes a newly created URL referencing the local file or directory at the file system representation of the path. File system representation is a null-terminated C string with canonical UTF-8 encoding.
-    public init(fileURLWithFileSystemRepresentation path: UnsafePointer<Int8>, isDirectory: Bool, relativeTo baseURL: URL?) {
+    public init(fileURLWithFileSystemRepresentation path: UnsafePointer<Int8>, isDirectory: Bool, relativeTo baseURL: __shared URL?) {
         _url = URL._converted(from: NSURL(fileURLWithFileSystemRepresentation: path, isDirectory: isDirectory, relativeTo: baseURL))
     }
     
@@ -595,7 +641,7 @@ public struct URL : ReferenceConvertible, Equatable {
     /// Returns the data representation of the URL's relativeString. 
     ///
     /// If the URL was initialized with `init?(dataRepresentation:relativeTo:isAbsolute:)`, the data representation returned are the same bytes as those used at initialization; otherwise, the data representation returned are the bytes of the `relativeString` encoded with UTF8 string encoding.
-    @available(OSX 10.11, iOS 9.0, *)
+    @available(macOS 10.11, iOS 9.0, *)
     public var dataRepresentation: Data {
         return _url.dataRepresentation
     }
@@ -748,7 +794,7 @@ public struct URL : ReferenceConvertible, Equatable {
     }
     
     /// Returns true if the URL path represents a directory.
-    @available(OSX 10.11, iOS 9.0, *)
+    @available(macOS 10.11, iOS 9.0, *)
     public var hasDirectoryPath: Bool {
         return _url.hasDirectoryPath
     }
@@ -757,7 +803,7 @@ public struct URL : ReferenceConvertible, Equatable {
     /// 
     /// File system representation is a null-terminated C string with canonical UTF-8 encoding.
     /// - note: The pointer is not valid outside the context of the block.
-    @available(OSX 10.9, iOS 7.0, *)
+    @available(macOS 10.9, iOS 7.0, *)
     public func withUnsafeFileSystemRepresentation<ResultType>(_ block: (UnsafePointer<Int8>?) throws -> ResultType) rethrows -> ResultType {
         return try block(_url.fileSystemRepresentation)
     }
@@ -991,7 +1037,7 @@ public struct URL : ReferenceConvertible, Equatable {
     /// Returns whether the promised item URL's resource exists and is reachable.
     ///
     /// This method synchronously checks if the resource's backing store is reachable. Checking reachability is appropriate when making decisions that do not require other immediate operations on the resource, e.g. periodic maintenance of UI state that depends on the existence of a specific document. When performing operations such as opening a file or copying resource properties, it is more efficient to simply try the operation and handle failures. This method is currently applicable only to URLs for file system resources. For other URL types, `false` is returned.
-    @available(OSX 10.10, iOS 8.0, *)
+    @available(macOS 10.10, iOS 8.0, *)
     public func checkPromisedItemIsReachable() throws -> Bool {
         var error : NSError?
         let result = _url.checkPromisedItemIsReachableAndReturnError(&error)
@@ -1059,7 +1105,7 @@ public struct URL : ReferenceConvertible, Equatable {
     ///     You are inside the accessor block of a coordinated read or write that used NSFileCoordinatorReadingImmediatelyAvailableMetadataOnly, NSFileCoordinatorWritingForDeleting, NSFileCoordinatorWritingForMoving, or NSFileCoordinatorWritingContentIndependentMetadataOnly
     ///
     /// Most of the URL resource value keys will work with these APIs. However, there are some that are tied to the item's contents that will not work, such as `contentAccessDateKey` or `generationIdentifierKey`. If one of these keys is used, the method will return a `URLResourceValues` value, but the value for that property will be nil.
-    @available(OSX 10.10, iOS 8.0, *)
+    @available(macOS 10.10, iOS 8.0, *)
     public func promisedItemResourceValues(forKeys keys: Set<URLResourceKey>) throws -> URLResourceValues {
         return URLResourceValues(keys: keys, values: try _url.promisedItemResourceValues(forKeys: Array(keys)))
     }
@@ -1105,13 +1151,13 @@ public struct URL : ReferenceConvertible, Equatable {
     }
     
     /// Given an NSURL created by resolving a bookmark data created with security scope, make the resource referenced by the url accessible to the process. When access to this resource is no longer needed the client must call stopAccessingSecurityScopedResource. Each call to startAccessingSecurityScopedResource must be balanced with a call to stopAccessingSecurityScopedResource (Note: this is not reference counted).
-    @available(OSX 10.7, iOS 8.0, *)
+    @available(macOS 10.7, iOS 8.0, *)
     public func startAccessingSecurityScopedResource() -> Bool {
         return _url.startAccessingSecurityScopedResource()
     }
     
     /// Revokes the access granted to the url by a prior successful call to startAccessingSecurityScopedResource.
-    @available(OSX 10.7, iOS 8.0, *)
+    @available(macOS 10.7, iOS 8.0, *)
     public func stopAccessingSecurityScopedResource() {
         _url.stopAccessingSecurityScopedResource()
     }
@@ -1129,7 +1175,7 @@ public struct URL : ReferenceConvertible, Equatable {
         }
     }
     
-    fileprivate init(reference: NSURL) {
+    fileprivate init(reference: __shared NSURL) {
         _url = URL._converted(from: reference).copy() as! NSURL
     }
     
@@ -1159,6 +1205,7 @@ extension URL : _ObjectiveCBridgeable {
         return true
     }
 
+    @_effects(readonly)
     public static func _unconditionallyBridgeFromObjectiveC(_ source: NSURL?) -> URL {
         var result: URL?
         _forceBridgeFromObjectiveC(source!, result: &result)
@@ -1184,9 +1231,38 @@ extension NSURL : _HasCustomAnyHashableRepresentation {
     }
 }
 
-extension URL : CustomPlaygroundQuickLookable {
+extension URL : _CustomPlaygroundQuickLookable {
+    @available(*, deprecated, message: "URL.customPlaygroundQuickLook will be removed in a future Swift version")
     public var customPlaygroundQuickLook: PlaygroundQuickLook {
         return .url(absoluteString)
+    }
+}
+
+extension URL : Codable {
+    private enum CodingKeys : Int, CodingKey {
+        case base
+        case relative
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let relative = try container.decode(String.self, forKey: .relative)
+        let base = try container.decodeIfPresent(URL.self, forKey: .base)
+
+        guard let url = URL(string: relative, relativeTo: base) else {
+            throw DecodingError.dataCorrupted(DecodingError.Context(codingPath: decoder.codingPath,
+                                                                    debugDescription: "Invalid URL string."))
+        }
+
+        self = url
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(self.relativeString, forKey: .relative)
+        if let base = self.baseURL {
+            try container.encode(base, forKey: .base)
+        }
     }
 }
 

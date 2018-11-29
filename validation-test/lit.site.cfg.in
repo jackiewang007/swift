@@ -2,11 +2,11 @@
 #
 # This source file is part of the Swift.org open source project
 #
-# Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+# Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 # Licensed under Apache License v2.0 with Runtime Library Exception
 #
-# See http://swift.org/LICENSE.txt for license information
-# See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+# See https://swift.org/LICENSE.txt for license information
+# See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 #
 # -----------------------------------------------------------------------------
 
@@ -32,6 +32,7 @@ config.android_ndk_path = "@SWIFT_ANDROID_NDK_PATH@"
 config.android_ndk_gcc_version = "@SWIFT_ANDROID_NDK_GCC_VERSION@"
 
 config.coverage_mode = "@SWIFT_ANALYZE_CODE_COVERAGE@"
+config.lldb_build_root = "@LLDB_BUILD_DIR@"
 
 if "@SWIFT_ASAN_BUILD@" == "TRUE":
     config.available_features.add("asan")
@@ -64,8 +65,11 @@ else:
 if "@SWIFT_OPTIMIZED@" == "TRUE":
     config.available_features.add("optimized_stdlib")
 
-if "@SWIFT_STDLIB_ENABLE_RESILIENCE@" == "TRUE":
-    config.available_features.add("resilient_stdlib")
+if "@SWIFT_ENABLE_SOURCEKIT_TESTS@" == "TRUE":
+    config.available_features.add('sourcekit')
+
+if "@SWIFT_STDLIB_USE_NONATOMIC_RC@" == "TRUE":
+    config.available_features.add("nonatomic_rc")
 
 if "@CMAKE_GENERATOR@" == "Xcode":
     xcode_bin_dir = os.path.join(config.llvm_obj_root, "@LLVM_BUILD_TYPE@",
@@ -73,6 +77,8 @@ if "@CMAKE_GENERATOR@" == "Xcode":
     lit_config.note('Adding to path: ' + xcode_bin_dir)
     config.environment['PATH'] = \
       os.path.pathsep.join((xcode_bin_dir, config.environment['PATH']))
+
+config.available_features.add("CMAKE_GENERATOR=@CMAKE_GENERATOR@")
 
 # Let the main config do the real work.
 config.test_exec_root = os.path.dirname(os.path.realpath(__file__))

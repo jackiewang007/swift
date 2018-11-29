@@ -1,6 +1,26 @@
-// RUN: %target-parse-verify-swift -I %S/Inputs/custom-modules -F %S/Inputs/custom-frameworks
+// RUN: %target-typecheck-verify-swift -I %S/Inputs/custom-modules -F %S/Inputs/custom-frameworks
 import APINotesTest
 import APINotesFrameworkTest
+
+#if _runtime(_ObjC)
+extension A {
+  func implicitlyObjC() { }
+}
+
+extension C {
+  func alsoImplicitlyObjC() { }
+}
+
+class D : C {
+  func yetAnotherImplicitlyObjC() { }
+}
+
+func testSelectors(a: AnyObject) {
+  a.implicitlyObjC?()  // okay: would complain without SwiftObjCMembers
+  a.alsoImplicitlyObjC?()  // okay: would complain without SwiftObjCMembers
+  a.yetAnotherImplicitlyObjC?()  // okay: would complain without SwiftObjCMembers
+}
+#endif
 
 func testSwiftName() {
   moveTo(x: 0, y: 0, z: 0)

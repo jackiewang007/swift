@@ -1,8 +1,8 @@
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -74,7 +74,7 @@ class TestUUID : TestUUIDSuper {
         let valFromRef = ref as UUID
         var bytes: [UInt8] = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
         let valFromBytes = bytes.withUnsafeMutableBufferPointer { buffer -> UUID in
-            ref.getBytes(buffer.baseAddress)
+            ref.getBytes(buffer.baseAddress!)
             return UUID(uuid: UnsafeRawPointer(buffer.baseAddress!).load(as: uuid_t.self))
         }
         let valFromStr = UUID(uuidString: ref.uuidString)

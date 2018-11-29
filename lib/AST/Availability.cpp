@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -14,11 +14,13 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "swift/AST/AST.h"
 #include "swift/AST/Attr.h"
+#include "swift/AST/Decl.h"
+#include "swift/AST/Types.h"
 #include "swift/AST/Availability.h"
 #include "swift/AST/PlatformKind.h"
 #include "swift/AST/TypeWalker.h"
+#include <map>
 
 using namespace swift;
 
@@ -30,22 +32,22 @@ struct InferredAvailability {
   PlatformAgnosticAvailabilityKind PlatformAgnostic
     = PlatformAgnosticAvailabilityKind::None;
   
-  Optional<clang::VersionTuple> Introduced;
-  Optional<clang::VersionTuple> Deprecated;
-  Optional<clang::VersionTuple> Obsoleted;
+  Optional<llvm::VersionTuple> Introduced;
+  Optional<llvm::VersionTuple> Deprecated;
+  Optional<llvm::VersionTuple> Obsoleted;
 };
 
 /// The type of a function that merges two version tuples.
-typedef const clang::VersionTuple &(*MergeFunction)(
-    const clang::VersionTuple &, const clang::VersionTuple &);
+typedef const llvm::VersionTuple &(*MergeFunction)(
+    const llvm::VersionTuple &, const llvm::VersionTuple &);
 
 } // end anonymous namespace
 
 /// Apply a merge function to two optional versions, returning the result
 /// in Inferred.
 static void
-mergeIntoInferredVersion(const Optional<clang::VersionTuple> &Version,
-                         Optional<clang::VersionTuple> &Inferred,
+mergeIntoInferredVersion(const Optional<llvm::VersionTuple> &Version,
+                         Optional<llvm::VersionTuple> &Inferred,
                          MergeFunction Merge) {
   if (Version.hasValue()) {
     if (Inferred.hasValue()) {
@@ -81,17 +83,20 @@ createAvailableAttr(PlatformKind Platform,
                        const InferredAvailability &Inferred,
                        ASTContext &Context) {
 
-  clang::VersionTuple Introduced =
-      Inferred.Introduced.getValueOr(clang::VersionTuple());
-  clang::VersionTuple Deprecated =
-      Inferred.Deprecated.getValueOr(clang::VersionTuple());
-  clang::VersionTuple Obsoleted =
-      Inferred.Obsoleted.getValueOr(clang::VersionTuple());
+  llvm::VersionTuple Introduced =
+      Inferred.Introduced.getValueOr(llvm::VersionTuple());
+  llvm::VersionTuple Deprecated =
+      Inferred.Deprecated.getValueOr(llvm::VersionTuple());
+  llvm::VersionTuple Obsoleted =
+      Inferred.Obsoleted.getValueOr(llvm::VersionTuple());
 
   return new (Context) AvailableAttr(
       SourceLoc(), SourceRange(), Platform,
       /*Message=*/StringRef(),
-      /*Rename=*/StringRef(), Introduced, Deprecated, Obsoleted,
+      /*Rename=*/StringRef(),
+        Introduced, /*IntroducedRange=*/SourceRange(),
+        Deprecated, /*DeprecatedRange=*/SourceRange(),
+        Obsoleted, /*ObsoletedRange=*/SourceRange(),
       Inferred.PlatformAgnostic, /*Implicit=*/true);
 }
 
@@ -187,8 +192,8 @@ public:
 
   AvailabilityInferenceTypeWalker(ASTContext &AC) : AC(AC) {}
 
-  virtual Action walkToTypePre(Type ty) {
-    if (auto *nominalDecl = ty.getCanonicalTypeOrNull().getAnyNominal()) {
+  Action walkToTypePre(Type ty) override {
+    if (auto *nominalDecl = ty->getAnyNominal()) {
       AvailabilityInfo.intersectWith(
           AvailabilityInference::availableRange(nominalDecl, AC));
     }
@@ -196,7 +201,7 @@ public:
     return Action::Continue;
   }
 };
-};
+} // end anonymous namespace
 
 
 AvailabilityContext AvailabilityInference::inferForType(Type t) {

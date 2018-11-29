@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -19,6 +19,7 @@
 
 #include "swift/SILOptimizer/Analysis/Analysis.h"
 #include "swift/SIL/SILInstruction.h"
+#include "swift/SIL/ApplySite.h"
 #include "llvm/ADT/SmallVector.h"
 
 namespace swift {
@@ -181,7 +182,7 @@ protected:
     }
 
     ~BottomUpFunctionOrder() {
-      assert(InitiallyUnscheduled.size() == 0 &&
+      assert(InitiallyUnscheduled.empty() &&
              "not finished scheduling");
       assert(Scheduled.size() == numVisited &&
              "missed some functions to schedule");
@@ -286,7 +287,7 @@ protected:
     }
   };
 
-  BottomUpIPAnalysis(AnalysisKind K) : SILAnalysis(K) { }
+  BottomUpIPAnalysis(SILAnalysisKind k) : SILAnalysis(k) {}
 
   /// Increments the CurrentUpdateID.
   /// Should be called at the beginning of a recomputation.

@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -14,7 +14,7 @@
 
 import Foundation
 
-@available(OSX 10.10, *)
+@available(macOS 10.10, *)
 extension TKSmartCard {
   public func send(ins: UInt8, p1: UInt8, p2: UInt8, data: Data? = nil,
     le: Int? = nil, reply: @escaping (Data?, UInt16, Error?) -> Void) {
@@ -23,7 +23,7 @@ extension TKSmartCard {
       le: le.map { NSNumber(value: $0) }, reply: reply)
   }
 
-  @available(OSX 10.12, *)
+  @available(macOS 10.12, *)
   public func send(ins: UInt8, p1: UInt8, p2: UInt8, data: Data? = nil,
     le: Int? = nil) throws -> (sw: UInt16, response: Data) {
 
@@ -33,7 +33,7 @@ extension TKSmartCard {
     return (sw: sw, response: response)
   }
 
-  @available(OSX 10.12, *)
+  @available(macOS 10.12, *)
   public func withSession<T>(_ body: @escaping () throws -> T) throws -> T {
     var result: T?
     try self.__inSession(executeBlock: {

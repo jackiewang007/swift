@@ -1,4 +1,4 @@
-// RUN: %target-parse-verify-swift
+// RUN: %target-typecheck-verify-swift
 
 struct X { }
 struct Y { }
@@ -53,7 +53,8 @@ value(_) // expected-error{{'_' can only appear in a pattern or on the left side
 // <rdar://problem/23798944> = vs. == in Swift if string character count statement causes segmentation fault
 func f23798944() {
   let s = ""
-  if s.characters.count = 0 { // expected-error {{cannot assign to property: 'count' is a get-only property}}
+  if s.count = 0 { // expected-error {{use of '=' in a boolean context, did you mean '=='?}}
   }
 }
 
+.sr_3506 = 0 // expected-error {{reference to member 'sr_3506' cannot be resolved without a contextual type}}

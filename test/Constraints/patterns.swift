@@ -1,4 +1,4 @@
-// RUN: %target-parse-verify-swift
+// RUN: %target-typecheck-verify-swift
 
 // Leaf expression patterns are matched to corresponding pieces of a switch
 // subject (TODO: or ~= expression) using ~= overload resolution.
@@ -15,6 +15,8 @@ case (0..<10, _, _),
      (0..<10, 2.5, "three"),
      (0...9, _, _),
      (0...9, 2.5, "three"):
+  ()
+default:
   ()
 }
 
@@ -55,6 +57,8 @@ case is B,
   ()
 case is E:
   ()
+default:
+  ()
 }
 
 switch bp {
@@ -67,6 +71,8 @@ case let s as S:
   s.s()
 case let e as E:
   e.e()
+default:
+  ()
 }
 
 // Super-to-subclass.
@@ -75,6 +81,8 @@ switch db {
 case is D:
   ()
 case is E: // expected-warning {{always fails}}
+  ()
+default:
   ()
 }
 
@@ -114,7 +122,8 @@ case iPadHair.HairForceOne: // expected-error{{generic enum type 'iPadHair' is a
   ()
 case Watch.Edition: // TODO: should warn that cast can't succeed with currently known conformances
   ()
-case .HairForceOne: // expected-error{{enum case 'HairForceOne' not found in type 'HairType'}}
+// TODO: Bad error message
+case .HairForceOne: // expected-error{{cannot convert}}
   ()
 default:
   break
@@ -123,7 +132,7 @@ default:
 
 // <rdar://problem/19382878> Introduce new x? pattern
 switch Optional(42) {
-case let x?: break
+case let x?: break // expected-warning{{immutable value 'x' was never used; consider replacing with '_' or removing it}}
 case nil: break
 }
 
@@ -149,14 +158,13 @@ case let x???: print(x, terminator: "")
 case let x??: print(x as Any, terminator: "")
 case let x?: print(x as Any, terminator: "")
 case 4???: break
-case nil??: break
-case nil?: break
+case nil??: break // expected-warning {{case is already handled by previous patterns; consider removing it}}
+case nil?: break // expected-warning {{case is already handled by previous patterns; consider removing it}}
 default: break
 }
 
-// <rdar://problem/21995744> QoI: Binary operator '~=' cannot be applied to operands of type 'String' and 'String?'
 switch ("foo" as String?) {
-case "what": break // expected-error{{expression pattern of type 'String' cannot match values of type 'String?'}}
+case "what": break
 default: break
 }
 
@@ -174,6 +182,7 @@ func ~= <T : Equatable>(lhs: T?, rhs: T?) -> Bool {
 
 switch 4 as Int? {
 case x?.method(): break // match value
+default: break
 }
 
 switch 4 {
@@ -181,9 +190,9 @@ case x ?? 42: break // match value
 default: break
 }
 
-for (var x) in 0...100 {}
-for var x in 0...100 {}  // rdar://20167543
-for (let x) in 0...100 {} // expected-error {{'let' pattern cannot appear nested in an already immutable context}}
+for (var x) in 0...100 {} // expected-warning{{variable 'x' was never used; consider replacing with '_' or removing it}}
+for var x in 0...100 {}  // rdar://20167543 expected-warning{{variable 'x' was never used; consider replacing with '_' or removing it}}
+for (let x) in 0...100 { _ = x} // expected-error {{'let' pattern cannot appear nested in an already immutable context}}
 
 var (let y) = 42  // expected-error {{'let' cannot appear nested inside another 'var' or 'let' pattern}}
 let (var z) = 42  // expected-error {{'var' cannot appear nested inside another 'var' or 'let' pattern}}
@@ -247,4 +256,152 @@ enum SR2057 {
 
 let sr2057: SR2057?
 if case .foo = sr2057 { } // expected-error{{enum case 'foo' not found in type 'SR2057?'}}
+
+
+// Invalid 'is' pattern
+class SomeClass {}
+if case let doesNotExist as SomeClass:AlsoDoesNotExist {}
+// expected-error@-1 {{use of undeclared type 'AlsoDoesNotExist'}}
+// expected-error@-2 {{variable binding in a condition requires an initializer}}
+
+// `.foo` and `.bar(...)` pattern syntax should also be able to match
+// static members as expr patterns
+
+struct StaticMembers: Equatable {
+  init() {}
+  init(_: Int) {}
+  init?(opt: Int) {}
+  static var prop = StaticMembers()
+  static var optProp: Optional = StaticMembers()
+
+  static func method(_: Int) -> StaticMembers { return prop }
+  static func method(withLabel: Int) -> StaticMembers { return prop }
+  static func optMethod(_: Int) -> StaticMembers? { return optProp }
+
+  static func ==(x: StaticMembers, y: StaticMembers) -> Bool { return true }
+}
+
+let staticMembers = StaticMembers()
+let optStaticMembers: Optional = StaticMembers()
+
+switch staticMembers {
+  case .init: break // expected-error{{cannot match values of type 'StaticMembers'}}
+  case .init(opt:): break // expected-error{{cannot match values of type 'StaticMembers'}}
+  case .init(): break
+
+  case .init(0): break
+  case .init(_): break // expected-error{{'_' can only appear in a pattern}}
+  case .init(let x): break // expected-error{{cannot appear in an expression}}
+  case .init(opt: 0): break // expected-error{{pattern cannot match values of type 'StaticMembers'}}
+
+  case .prop: break
+  // TODO: repeated error message
+  case .optProp: break // expected-error* {{not unwrapped}}
+
+  case .method: break // expected-error{{cannot match}}
+  case .method(0): break
+  case .method(_): break // expected-error{{'_' can only appear in a pattern}}
+  case .method(let x): break // expected-error{{cannot appear in an expression}}
+
+  case .method(withLabel:): break // expected-error{{cannot match}}
+  case .method(withLabel: 0): break
+  case .method(withLabel: _): break // expected-error{{'_' can only appear in a pattern}}
+  case .method(withLabel: let x): break // expected-error{{cannot appear in an expression}}
+
+  case .optMethod: break // expected-error{{cannot match}}
+  case .optMethod(0): break // expected-error{{pattern cannot match values of type 'StaticMembers'}}
+}
+
+_ = 0
+
+// rdar://problem/32241441 - Add fix-it for cases in switch with optional chaining
+
+struct S_32241441 {
+  enum E_32241441 {
+    case foo
+    case bar
+  }
+
+  var type: E_32241441 = E_32241441.foo
+}
+
+func rdar32241441() {
+  let s: S_32241441? = S_32241441()
+
+  switch s?.type {
+  case .foo: // expected-error {{enum case 'foo' not found in type 'S_32241441.E_32241441?'}} {{12-12=?}}
+    break;
+  case .bar: // expected-error {{enum case 'bar' not found in type 'S_32241441.E_32241441?'}} {{12-12=?}}
+    break;
+  }
+}
+
+
+// SR-6100
+struct One<Two> {
+    public enum E: Error {
+        // if you remove associated value, everything works
+        case SomeError(String)
+    }
+}
+
+func testOne() {
+  do {
+  } catch let error { // expected-warning{{'catch' block is unreachable because no errors are thrown in 'do' block}}
+    if case One.E.SomeError = error {} // expected-error{{generic enum type 'One.E' is ambiguous without explicit generic parameters when matching value of type 'Error'}}
+  }
+}
+
+// SR-8347
+// constrain initializer expressions of optional some pattern bindings to be optional
+func test8347() -> String {
+  struct C {
+    subscript (s: String) -> String? {
+      return ""
+    }
+    subscript (s: String) -> [String] {
+      return [""]
+    }
+
+    func f() -> String? {
+      return ""
+    }
+    func f() -> Int {
+      return 3
+    }
+
+    func g() -> String {
+      return ""
+    }
+
+    func h() -> String { // expected-note {{found this candidate}}
+      return ""
+    }
+    func h() -> Double { // expected-note {{found this candidate}}
+      return 3.0
+    }
+    func h() -> Int? { //expected-note{{found this candidate}}
+      return 2
+    }
+    func h() -> Float? { //expected-note{{found this candidate}}
+      return nil
+    }
+
+  }
+
+  let c = C()
+  if let s = c[""] {
+    return s
+  }
+  if let s = c.f() {
+    return s
+  }
+  if let s = c.g() { //expected-error{{initializer for conditional binding must have Optional type, not 'String'}}
+    return s
+  }
+  if let s = c.h() { //expected-error{{ambiguous use of 'h()'}}
+    return s
+  }
+}
+
 

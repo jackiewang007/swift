@@ -1,4 +1,4 @@
-// RUN: %target-parse-verify-swift
+// RUN: %target-typecheck-verify-swift
 
 protocol MyFormattedPrintable {
   func myFormat() -> String
@@ -72,7 +72,7 @@ func getFirst<R : IteratorProtocol>(_ r: R) -> R.Element {
   return r.next()!
 }
 
-func testGetFirst(ir: CountableRange<Int>) {
+func testGetFirst(ir: Range<Int>) {
   _ = getFirst(ir.makeIterator()) as Int
 }
 
@@ -167,6 +167,7 @@ func useRangeOfPrintables(_ roi : RangeOfPrintables<[Int]>) {
 
 var dfail : Dictionary<Int> // expected-error{{generic type 'Dictionary' specialized with too few type parameters (got 1, but expected 2)}}
 var notgeneric : Int<Float> // expected-error{{cannot specialize non-generic type 'Int'}}{{21-28=}}
+var notgenericNested : Array<Int<Float>> // expected-error{{cannot specialize non-generic type 'Int'}}{{33-40=}}
 
 // Make sure that redundant typealiases (that map to the same
 // underlying type) don't break protocol conformance or use.
@@ -226,15 +227,18 @@ var y: X5<X4, Int> // expected-error{{'X5' requires the types 'X4.AssocP' (aka '
 
 // Recursive generic signature validation.
 class Top {}
-class Bottom<T : Bottom<Top>> {} // expected-error {{type may not reference itself as a requirement}}
+class Bottom<T : Bottom<Top>> {}
+// expected-error@-1 {{generic class 'Bottom' references itself}}
+// expected-note@-2 {{type declared here}}
 
 // Invalid inheritance clause
 
 struct UnsolvableInheritance1<T : T.A> {}
-// expected-error@-1 {{inheritance from non-protocol, non-class type 'T.A'}}
+// expected-error@-1 {{'A' is not a member type of 'T'}}
 
 struct UnsolvableInheritance2<T : U.A, U : T.A> {}
-// expected-error@-1 {{inheritance from non-protocol, non-class type 'U.A'}}
-// expected-error@-2 {{inheritance from non-protocol, non-class type 'T.A'}}
+// expected-error@-1 {{'A' is not a member type of 'U'}}
+// expected-error@-2 {{'A' is not a member type of 'T'}}
 
-enum X7<T> where X7.X : G { case X } // expected-error{{enum element 'X' is not a member type of 'X7<T>'}}
+enum X7<T> where X7.X : G { case X } // expected-error{{enum case 'X' is not a member type of 'X7<T>'}}
+// expected-error@-1{{use of undeclared type 'G'}}

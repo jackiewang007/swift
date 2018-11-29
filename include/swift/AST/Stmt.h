@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -20,11 +20,13 @@
 #include "swift/AST/Availability.h"
 #include "swift/AST/AvailabilitySpec.h"
 #include "swift/AST/ASTNode.h"
+#include "swift/AST/IfConfigClause.h"
 #include "swift/AST/TypeAlignments.h"
 #include "swift/Basic/NullablePtr.h"
 #include "llvm/Support/TrailingObjects.h"
 
 namespace swift {
+  class AnyPattern;
   class ASTContext;
   class ASTWalker;
   class Decl;
@@ -36,22 +38,59 @@ namespace swift {
   
 enum class StmtKind {
 #define STMT(ID, PARENT) ID,
+#define LAST_STMT(ID) Last_Stmt = ID,
 #define STMT_RANGE(Id, FirstId, LastId) \
   First_##Id##Stmt = FirstId, Last_##Id##Stmt = LastId,
 #include "swift/AST/StmtNodes.def"
 };
+enum : unsigned { NumStmtKindBits =
+  countBitsUsed(static_cast<unsigned>(StmtKind::Last_Stmt)) };
 
 /// Stmt - Base class for all statements in swift.
 class alignas(8) Stmt {
   Stmt(const Stmt&) = delete;
   Stmt& operator=(const Stmt&) = delete;
 
-  /// Kind - The subclass of Stmt that this is.
-  unsigned Kind : 31;
-  /// Implicit - Whether this statement is implicit.
-  unsigned Implicit : 1;
-
 protected:
+  union { uint64_t OpaqueBits;
+
+  SWIFT_INLINE_BITFIELD_BASE(Stmt, bitmax(NumStmtKindBits,8) + 1,
+    /// Kind - The subclass of Stmt that this is.
+    Kind : bitmax(NumStmtKindBits,8),
+
+    /// Implicit - Whether this statement is implicit.
+    Implicit : 1
+  );
+
+  SWIFT_INLINE_BITFIELD_FULL(BraceStmt, Stmt, 32,
+    : NumPadBits,
+    NumElements : 32
+  );
+
+  SWIFT_INLINE_BITFIELD_FULL(CaseStmt, Stmt, 32,
+    : NumPadBits,
+    NumPatterns : 32
+  );
+
+  SWIFT_INLINE_BITFIELD_EMPTY(LabeledStmt, Stmt);
+
+  SWIFT_INLINE_BITFIELD_FULL(DoCatchStmt, LabeledStmt, 32,
+    : NumPadBits,
+    NumCatches : 32
+  );
+
+  SWIFT_INLINE_BITFIELD_FULL(SwitchStmt, LabeledStmt, 32,
+    : NumPadBits,
+    CaseCount : 32
+  );
+
+  SWIFT_INLINE_BITFIELD_FULL(YieldStmt, Stmt, 32,
+    : NumPadBits,
+    NumYields : 32
+  );
+
+  } Bits;
+
   /// Return the given value for the 'implicit' flag if present, or if None,
   /// return true if the location is invalid.
   static bool getDefaultImplicitFlag(Optional<bool> implicit, SourceLoc keyLoc){
@@ -59,10 +98,13 @@ protected:
   }
   
 public:
-  Stmt(StmtKind kind, bool implicit)
-    : Kind(unsigned(kind)), Implicit(unsigned(implicit)) {}
+  Stmt(StmtKind kind, bool implicit) {
+    Bits.OpaqueBits = 0;
+    Bits.Stmt.Kind = static_cast<unsigned>(kind);
+    Bits.Stmt.Implicit = implicit;
+  }
 
-  StmtKind getKind() const { return StmtKind(Kind); }
+  StmtKind getKind() const { return StmtKind(Bits.Stmt.Kind); }
 
   /// \brief Retrieve the name of the given statement kind.
   ///
@@ -82,7 +124,7 @@ public:
   
   /// isImplicit - Determines whether this statement was implicitly-generated,
   /// rather than explicitly written in the AST.
-  bool isImplicit() const { return bool(Implicit); }
+  bool isImplicit() const { return Bits.Stmt.Implicit; }
 
   /// walk - This recursively walks the AST rooted at this statement.
   Stmt *walk(ASTWalker &walker);
@@ -91,7 +133,7 @@ public:
   LLVM_ATTRIBUTE_DEPRECATED(
       void dump() const LLVM_ATTRIBUTE_USED,
       "only for use within the debugger");
-  void print(raw_ostream &OS, unsigned Indent = 0) const;
+  void dump(raw_ostream &OS, const ASTContext *Ctx = nullptr, unsigned Indent = 0) const;
 
   // Only allow allocation of Exprs using the allocator in ASTContext
   // or by doing a placement new.
@@ -110,8 +152,6 @@ class BraceStmt final : public Stmt,
     private llvm::TrailingObjects<BraceStmt, ASTNode> {
   friend TrailingObjects;
 
-  unsigned NumElements;
-  
   SourceLoc LBLoc;
   SourceLoc RBLoc;
 
@@ -129,19 +169,19 @@ public:
   
   SourceRange getSourceRange() const { return SourceRange(LBLoc, RBLoc); }
 
-  unsigned getNumElements() const { return NumElements; }
+  unsigned getNumElements() const { return Bits.BraceStmt.NumElements; }
 
   ASTNode getElement(unsigned i) const { return getElements()[i]; }
   void setElement(unsigned i, ASTNode node) { getElements()[i] = node; }
 
   /// The elements contained within the BraceStmt.
   MutableArrayRef<ASTNode> getElements() {
-    return {getTrailingObjects<ASTNode>(), NumElements};
+    return {getTrailingObjects<ASTNode>(), Bits.BraceStmt.NumElements};
   }
 
   /// The elements contained within the BraceStmt (const version).
   ArrayRef<ASTNode> getElements() const {
-    return {getTrailingObjects<ASTNode>(), NumElements};
+    return {getTrailingObjects<ASTNode>(), Bits.BraceStmt.NumElements};
   }
   
   static bool classof(const Stmt *S) { return S->getKind() == StmtKind::Brace; }
@@ -174,7 +214,49 @@ public:
   
   static bool classof(const Stmt *S) { return S->getKind() == StmtKind::Return;}
 };
+
+/// YieldStmt - A yield statement.  The yield-values sequence is not optional,
+/// but the parentheses are.
+///    yield 42
+class YieldStmt final
+    : public Stmt, private llvm::TrailingObjects<YieldStmt, Expr*> {
+  friend TrailingObjects;
+
+  SourceLoc YieldLoc;
+  SourceLoc LPLoc;
+  SourceLoc RPLoc;
+
+  YieldStmt(SourceLoc yieldLoc, SourceLoc lpLoc, ArrayRef<Expr *> yields,
+            SourceLoc rpLoc, Optional<bool> implicit = None)
+    : Stmt(StmtKind::Yield, getDefaultImplicitFlag(implicit, yieldLoc)),
+      YieldLoc(yieldLoc), LPLoc(lpLoc), RPLoc(rpLoc) {
+    Bits.YieldStmt.NumYields = yields.size();
+    memcpy(getMutableYields().data(), yields.data(),
+           yields.size() * sizeof(Expr*));
+  }
+
+public:
+  static YieldStmt *create(const ASTContext &ctx, SourceLoc yieldLoc,
+                           SourceLoc lp, ArrayRef<Expr*> yields, SourceLoc rp,
+                           Optional<bool> implicit = None);
+
+  SourceLoc getYieldLoc() const { return YieldLoc; }
+  SourceLoc getLParenLoc() const { return LPLoc; }
+  SourceLoc getRParenLoc() const { return RPLoc; }
+
+  SourceLoc getStartLoc() const { return YieldLoc; }
+  SourceLoc getEndLoc() const;
+
+  ArrayRef<Expr*> getYields() const {
+    return {getTrailingObjects<Expr*>(), Bits.YieldStmt.NumYields};
+  }
+  MutableArrayRef<Expr*> getMutableYields() {
+    return {getTrailingObjects<Expr*>(), Bits.YieldStmt.NumYields};
+  }
   
+  static bool classof(const Stmt *S) { return S->getKind() == StmtKind::Yield; }
+};
+
 /// DeferStmt - A 'defer' statement.  This runs the substatement it contains
 /// when the enclosing scope is exited.
 ///
@@ -268,8 +350,6 @@ public:
   
   const VersionRange &getAvailableRange() const { return AvailableRange; }
   void setAvailableRange(const VersionRange &Range) { AvailableRange = Range; }
-  
-  void getPlatformKeywordLocs(SmallVectorImpl<SourceLoc> &PlatformLocs);
 };
 
 
@@ -506,14 +586,13 @@ class DoCatchStmt final : public LabeledStmt,
 
   SourceLoc DoLoc;
   Stmt *Body;
-  unsigned NumCatches;
 
   DoCatchStmt(LabeledStmtInfo labelInfo, SourceLoc doLoc,
               Stmt *body, ArrayRef<CatchStmt*> catches,
               Optional<bool> implicit)
     : LabeledStmt(StmtKind::DoCatch, getDefaultImplicitFlag(implicit, doLoc),
-                  labelInfo),
-      DoLoc(doLoc), Body(body), NumCatches(catches.size()) {
+                  labelInfo), DoLoc(doLoc), Body(body) {
+    Bits.DoCatchStmt.NumCatches = catches.size();
     std::uninitialized_copy(catches.begin(), catches.end(),
                             getTrailingObjects<CatchStmt *>());
   }
@@ -533,10 +612,10 @@ public:
   void setBody(Stmt *s) { Body = s; }
 
   ArrayRef<CatchStmt*> getCatches() const {
-    return {getTrailingObjects<CatchStmt*>(), NumCatches};
+    return {getTrailingObjects<CatchStmt*>(), Bits.DoCatchStmt.NumCatches};
   }
   MutableArrayRef<CatchStmt*> getMutableCatches() {
-    return {getTrailingObjects<CatchStmt*>(), NumCatches};
+    return {getTrailingObjects<CatchStmt*>(), Bits.DoCatchStmt.NumCatches};
   }
 
   /// Does this statement contain a syntactically exhaustive catch
@@ -653,69 +732,6 @@ public:
   static bool classof(const Stmt *S) { return S->getKind() == StmtKind::Guard; }
 };
 
-  
-/// This represents one part of a #if block.  If the condition field is
-/// non-null, then this represents a #if or a #elseif, otherwise it represents
-/// an #else block.
-struct IfConfigStmtClause {
-  /// The location of the #if, #elseif, or #else keyword.
-  SourceLoc Loc;
-  
-  /// The condition guarding this #if or #elseif block.  If this is null, this
-  /// is a #else clause.
-  Expr *Cond;
-  
-  /// Elements inside the clause
-  ArrayRef<ASTNode> Elements;
-  
-  /// True if this is the active clause of the #if block.  Since this is
-  /// evaluated at parse time, this is always known.
-  bool isActive;
-  
-  IfConfigStmtClause(SourceLoc Loc, Expr *Cond,
-                     ArrayRef<ASTNode> Elements, bool isActive)
-    : Loc(Loc), Cond(Cond), Elements(Elements), isActive(isActive) {
-  }
-};
-
-/// IfConfigStmt - This class models the statement-side representation of
-/// #if/#else/#endif blocks.
-class IfConfigStmt : public Stmt {
-  /// An array of clauses controlling each of the #if/#elseif/#else conditions.
-  /// The array is ASTContext allocated.
-  ArrayRef<IfConfigStmtClause> Clauses;
-  SourceLoc EndLoc;
-  bool HadMissingEnd;
-
-public:
-  IfConfigStmt(ArrayRef<IfConfigStmtClause> Clauses, SourceLoc EndLoc,
-               bool HadMissingEnd)
-  : Stmt(StmtKind::IfConfig, /*implicit=*/false),
-    Clauses(Clauses), EndLoc(EndLoc), HadMissingEnd(HadMissingEnd) {}
-  
-  SourceLoc getIfLoc() const { return Clauses[0].Loc; }
-
-  SourceLoc getStartLoc() const { return getIfLoc(); }
-  SourceLoc getEndLoc() const { return EndLoc; }
-
-  bool hadMissingEnd() const { return HadMissingEnd; }
-
-  const ArrayRef<IfConfigStmtClause> &getClauses() const { return Clauses; }
-  
-  ArrayRef<ASTNode> getActiveClauseElements() const {
-    for (auto &Clause : Clauses)
-      if (Clause.isActive)
-        return Clause.Elements;
-    return ArrayRef<ASTNode>();
-  }
-
-  // Implement isa/cast/dyncast/etc.
-  static bool classof(const Stmt *S) {
-    return S->getKind() == StmtKind::IfConfig;
-  }
-};
-
-  
 /// WhileStmt - while statement. After type-checking, the condition is of
 /// type Builtin.Int1.
 class WhileStmt : public LabeledConditionalStmt {
@@ -765,58 +781,6 @@ public:
   void setCond(Expr *e) { Cond = e; }
   
   static bool classof(const Stmt *S) {return S->getKind() == StmtKind::RepeatWhile;}
-};
-
-/// ForStmt - for statement.  After type-checking, the condition is of
-/// type Builtin.Int1.  Note that the condition is optional.  If not present,
-/// it always evaluates to true.  The Initializer and Increment are also
-/// optional.
-class ForStmt : public LabeledStmt {
-  SourceLoc ForLoc, Semi1Loc, Semi2Loc;
-  NullablePtr<Expr> Initializer;
-  ArrayRef<Decl*> InitializerVarDecls;
-  NullablePtr<Expr> Cond;
-  NullablePtr<Expr> Increment;
-  Stmt *Body;
-  
-public:
-  ForStmt(LabeledStmtInfo LabelInfo, SourceLoc ForLoc,
-          NullablePtr<Expr> Initializer,
-          ArrayRef<Decl*> InitializerVarDecls,
-          SourceLoc Semi1Loc, NullablePtr<Expr> Cond, SourceLoc Semi2Loc,
-          NullablePtr<Expr> Increment,
-          Stmt *Body,
-          Optional<bool> implicit = None)
-  : LabeledStmt(StmtKind::For, getDefaultImplicitFlag(implicit, ForLoc),
-                LabelInfo),
-    ForLoc(ForLoc), Semi1Loc(Semi1Loc),
-    Semi2Loc(Semi2Loc), Initializer(Initializer),
-    InitializerVarDecls(InitializerVarDecls),
-    Cond(Cond), Increment(Increment), Body(Body) {
-  }
-  
-  SourceLoc getStartLoc() const { return getLabelLocOrKeywordLoc(ForLoc); }
-  SourceLoc getEndLoc() const { return Body->getEndLoc(); }
-
-  SourceLoc getFirstSemicolonLoc() const { return Semi1Loc; }
-  SourceLoc getSecondSemicolonLoc() const { return Semi2Loc; }
-  
-  NullablePtr<Expr> getInitializer() const { return Initializer; }
-  void setInitializer(Expr *V) { Initializer = V; }
-  
-  ArrayRef<Decl*> getInitializerVarDecls() const { return InitializerVarDecls; }
-  void setInitializerVarDecls(ArrayRef<Decl*> D) { InitializerVarDecls = D; }
-
-  NullablePtr<Expr> getCond() const { return Cond; }
-  void setCond(NullablePtr<Expr> C) { Cond = C; }
-
-  NullablePtr<Expr> getIncrement() const { return Increment; }
-  void setIncrement(Expr *V) { Increment = V; }
-
-  Stmt *getBody() const { return Body; }
-  void setBody(Stmt *s) { Body = s; }
-  
-  static bool classof(const Stmt *S) { return S->getKind() == StmtKind::For; }
 };
 
 /// ForEachStmt - foreach statement that iterates over the elements in a
@@ -897,17 +861,40 @@ public:
 
 /// A pattern and an optional guard expression used in a 'case' statement.
 class CaseLabelItem {
+  enum class Kind {
+    /// A normal pattern
+    Normal = 0,
+    /// `default`
+    Default,
+  };
+
   Pattern *CasePattern;
   SourceLoc WhereLoc;
-  llvm::PointerIntPair<Expr *, 1, bool> GuardExprAndIsDefault;
+  llvm::PointerIntPair<Expr *, 1, Kind> GuardExprAndKind;
+
+  CaseLabelItem(Kind kind, Pattern *casePattern, SourceLoc whereLoc,
+                Expr *guardExpr)
+    : CasePattern(casePattern), WhereLoc(whereLoc),
+      GuardExprAndKind(guardExpr, kind) {}
 
 public:
   CaseLabelItem(const CaseLabelItem &) = default;
 
-  CaseLabelItem(bool IsDefault, Pattern *CasePattern, SourceLoc WhereLoc,
-                Expr *GuardExpr)
-      : CasePattern(CasePattern), WhereLoc(WhereLoc),
-        GuardExprAndIsDefault(GuardExpr, IsDefault) {}
+  CaseLabelItem(Pattern *casePattern, SourceLoc whereLoc, Expr *guardExpr)
+    : CaseLabelItem(Kind::Normal, casePattern, whereLoc, guardExpr) {}
+  explicit CaseLabelItem(Pattern *casePattern)
+    : CaseLabelItem(casePattern, SourceLoc(), nullptr) {}
+
+  static CaseLabelItem getDefault(AnyPattern *pattern,
+                                  SourceLoc whereLoc,
+                                  Expr *guardExpr) {
+    assert(pattern);
+    return CaseLabelItem(Kind::Default, reinterpret_cast<Pattern *>(pattern),
+                         whereLoc, guardExpr);
+  }
+  static CaseLabelItem getDefault(AnyPattern *pattern) {
+    return getDefault(pattern, SourceLoc(), nullptr);
+  }
 
   SourceLoc getWhereLoc() const { return WhereLoc; }
 
@@ -921,14 +908,16 @@ public:
 
   /// Return the guard expression if present, or null if the case label has
   /// no guard.
-  Expr *getGuardExpr() { return GuardExprAndIsDefault.getPointer(); }
+  Expr *getGuardExpr() { return GuardExprAndKind.getPointer(); }
   const Expr *getGuardExpr() const {
-    return GuardExprAndIsDefault.getPointer();
+    return GuardExprAndKind.getPointer();
   }
-  void setGuardExpr(Expr *e) { GuardExprAndIsDefault.setPointer(e); }
+  void setGuardExpr(Expr *e) { GuardExprAndKind.setPointer(e); }
 
   /// Returns true if this is syntactically a 'default' label.
-  bool isDefault() const { return GuardExprAndIsDefault.getInt(); }
+  bool isDefault() const {
+    return GuardExprAndKind.getInt() == Kind::Default;
+  }
 };
 
 /// A 'case' or 'default' block of a switch statement.  Only valid as the
@@ -948,27 +937,28 @@ class CaseStmt final : public Stmt,
     private llvm::TrailingObjects<CaseStmt, CaseLabelItem> {
   friend TrailingObjects;
 
+  SourceLoc UnknownAttrLoc;
   SourceLoc CaseLoc;
   SourceLoc ColonLoc;
 
   llvm::PointerIntPair<Stmt *, 1, bool> BodyAndHasBoundDecls;
-  unsigned NumPatterns;
 
   CaseStmt(SourceLoc CaseLoc, ArrayRef<CaseLabelItem> CaseLabelItems,
-           bool HasBoundDecls, SourceLoc ColonLoc, Stmt *Body,
-           Optional<bool> Implicit);
+           bool HasBoundDecls, SourceLoc UnknownAttrLoc, SourceLoc ColonLoc,
+           Stmt *Body, Optional<bool> Implicit);
 
 public:
   static CaseStmt *create(ASTContext &C, SourceLoc CaseLoc,
                           ArrayRef<CaseLabelItem> CaseLabelItems,
-                          bool HasBoundDecls, SourceLoc ColonLoc, Stmt *Body,
+                          bool HasBoundDecls, SourceLoc UnknownAttrLoc,
+                          SourceLoc ColonLoc, Stmt *Body,
                           Optional<bool> Implicit = None);
 
   ArrayRef<CaseLabelItem> getCaseLabelItems() const {
-    return {getTrailingObjects<CaseLabelItem>(), NumPatterns};
+    return {getTrailingObjects<CaseLabelItem>(), Bits.CaseStmt.NumPatterns};
   }
   MutableArrayRef<CaseLabelItem> getMutableCaseLabelItems() {
-    return {getTrailingObjects<CaseLabelItem>(), NumPatterns};
+    return {getTrailingObjects<CaseLabelItem>(), Bits.CaseStmt.NumPatterns};
   }
 
   Stmt *getBody() const { return BodyAndHasBoundDecls.getPointer(); }
@@ -980,7 +970,11 @@ public:
   /// Get the source location of the 'case' or 'default' of the first label.
   SourceLoc getLoc() const { return CaseLoc; }
 
-  SourceLoc getStartLoc() const { return getLoc(); }
+  SourceLoc getStartLoc() const {
+    if (UnknownAttrLoc.isValid())
+      return UnknownAttrLoc;
+    return getLoc();
+  }
   SourceLoc getEndLoc() const { return getBody()->getEndLoc(); }
   SourceRange getLabelItemsRange() const {
     return ColonLoc.isValid() ? SourceRange(getLoc(), ColonLoc) : getSourceRange();
@@ -988,17 +982,24 @@ public:
 
   bool isDefault() { return getCaseLabelItems()[0].isDefault(); }
 
+  bool hasUnknownAttr() const {
+    // Note: This representation doesn't allow for synthesized @unknown cases.
+    // However, that's probably sensible; the purpose of @unknown is for
+    // diagnosing otherwise-non-exhaustive switches, and the user can't edit
+    // a synthesized case.
+    return UnknownAttrLoc.isValid();
+  }
+
   static bool classof(const Stmt *S) { return S->getKind() == StmtKind::Case; }
 };
 
 /// Switch statement.
 class SwitchStmt final : public LabeledStmt,
-    private llvm::TrailingObjects<SwitchStmt, CaseStmt *> {
+    private llvm::TrailingObjects<SwitchStmt, ASTNode> {
   friend TrailingObjects;
 
   SourceLoc SwitchLoc, LBraceLoc, RBraceLoc;
   Expr *SubjectExpr;
-  unsigned CaseCount;
 
   SwitchStmt(LabeledStmtInfo LabelInfo, SourceLoc SwitchLoc, Expr *SubjectExpr,
              SourceLoc LBraceLoc, unsigned CaseCount, SourceLoc RBraceLoc,
@@ -1006,15 +1007,16 @@ class SwitchStmt final : public LabeledStmt,
     : LabeledStmt(StmtKind::Switch, getDefaultImplicitFlag(implicit, SwitchLoc),
                   LabelInfo),
       SwitchLoc(SwitchLoc), LBraceLoc(LBraceLoc), RBraceLoc(RBraceLoc),
-      SubjectExpr(SubjectExpr), CaseCount(CaseCount)
-  {}
+      SubjectExpr(SubjectExpr) {
+    Bits.SwitchStmt.CaseCount = CaseCount;
+  }
 
 public:
   /// Allocate a new SwitchStmt in the given ASTContext.
   static SwitchStmt *create(LabeledStmtInfo LabelInfo, SourceLoc SwitchLoc,
                             Expr *SubjectExpr,
                             SourceLoc LBraceLoc,
-                            ArrayRef<CaseStmt*> Cases,
+                            ArrayRef<ASTNode> Cases,
                             SourceLoc RBraceLoc,
                             ASTContext &C);
   
@@ -1033,10 +1035,28 @@ public:
   /// Get the subject expression of the switch.
   Expr *getSubjectExpr() const { return SubjectExpr; }
   void setSubjectExpr(Expr *e) { SubjectExpr = e; }
+
+  ArrayRef<ASTNode> getRawCases() const {
+    return {getTrailingObjects<ASTNode>(), Bits.SwitchStmt.CaseCount};
+  }
+
+private:
+  struct AsCaseStmtWithSkippingNonCaseStmts {
+    AsCaseStmtWithSkippingNonCaseStmts() {}
+    Optional<CaseStmt*> operator()(const ASTNode &N) const {
+      if (auto *CS = llvm::dyn_cast_or_null<CaseStmt>(N.dyn_cast<Stmt*>()))
+        return CS;
+      return None;
+    }
+  };
+
+public:
+  using AsCaseStmtRange = OptionalTransformRange<ArrayRef<ASTNode>,
+                            AsCaseStmtWithSkippingNonCaseStmts>;
   
   /// Get the list of case clauses.
-  ArrayRef<CaseStmt*> getCases() const {
-    return {getTrailingObjects<CaseStmt*>(), CaseCount};
+  AsCaseStmtRange getCases() const {
+    return AsCaseStmtRange(getRawCases(), AsCaseStmtWithSkippingNonCaseStmts());
   }
   
   static bool classof(const Stmt *S) {
@@ -1049,7 +1069,7 @@ class BreakStmt : public Stmt {
   SourceLoc Loc;
   Identifier TargetName; // Named target statement, if specified in the source.
   SourceLoc TargetLoc;
-  LabeledStmt *Target;  // Target stmt, wired up by Sema.
+  LabeledStmt *Target = nullptr;  // Target stmt, wired up by Sema.
 public:
   BreakStmt(SourceLoc Loc, Identifier TargetName, SourceLoc TargetLoc,
             Optional<bool> implicit = None)
@@ -1084,7 +1104,7 @@ class ContinueStmt : public Stmt {
   SourceLoc Loc;
   Identifier TargetName; // Named target statement, if specified in the source.
   SourceLoc TargetLoc;
-  LabeledStmt *Target;
+  LabeledStmt *Target = nullptr;
 
 public:
   ContinueStmt(SourceLoc Loc, Identifier TargetName, SourceLoc TargetLoc,
@@ -1118,18 +1138,29 @@ public:
 /// FallthroughStmt - The keyword "fallthrough".
 class FallthroughStmt : public Stmt {
   SourceLoc Loc;
+  CaseStmt *FallthroughSource;
   CaseStmt *FallthroughDest;
   
 public:
   FallthroughStmt(SourceLoc Loc, Optional<bool> implicit = None)
     : Stmt(StmtKind::Fallthrough, getDefaultImplicitFlag(implicit, Loc)),
-      Loc(Loc), FallthroughDest(nullptr)
+      Loc(Loc), FallthroughSource(nullptr), FallthroughDest(nullptr)
   {}
   
   SourceLoc getLoc() const { return Loc; }
   
   SourceRange getSourceRange() const { return Loc; }
-  
+
+  /// Get the CaseStmt block from which the fallthrough transfers control.
+  /// Set during Sema. (May stay null if fallthrough is invalid.)
+  CaseStmt *getFallthroughSource() const {
+    return FallthroughSource;
+  }
+  void setFallthroughSource(CaseStmt *C) {
+    assert(!FallthroughSource && "fallthrough source already set?!");
+    FallthroughSource = C;
+  }
+
   /// Get the CaseStmt block to which the fallthrough transfers control.
   /// Set during Sema.
   CaseStmt *getFallthroughDest() const {
@@ -1191,6 +1222,31 @@ public:
   
   static bool classof(const Stmt *S) {
     return S->getKind() == StmtKind::Throw;
+  }
+};
+
+/// PoundAssertStmt - Asserts that a condition is true, at compile time.
+class PoundAssertStmt : public Stmt {
+  SourceRange Range;
+  Expr *Condition;
+  StringRef Message;
+
+ public:
+  PoundAssertStmt(SourceRange Range, Expr *condition, StringRef message)
+      : Stmt(StmtKind::PoundAssert, /*Implicit=*/false),
+        Range(Range),
+        Condition(condition),
+        Message(message) {}
+
+  SourceRange getSourceRange() const { return Range; }
+
+  Expr *getCondition() const { return Condition; }
+  StringRef getMessage() const { return Message; }
+
+  void setCondition(Expr *condition) { Condition = condition; }
+
+  static bool classof(const Stmt *S) {
+    return S->getKind() == StmtKind::PoundAssert;
   }
 };
 

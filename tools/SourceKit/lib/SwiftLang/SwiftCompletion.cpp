@@ -2,25 +2,27 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
 #include "CodeCompletionOrganizer.h"
 #include "SwiftASTManager.h"
 #include "SwiftLangSupport.h"
+#include "SwiftEditorDiagConsumer.h"
 #include "SourceKit/Support/Logging.h"
 #include "SourceKit/Support/UIdent.h"
 
-#include "swift/Basic/Fallthrough.h"
+#include "swift/AST/ASTPrinter.h"
 #include "swift/Frontend/Frontend.h"
 #include "swift/Frontend/PrintingDiagnosticConsumer.h"
 #include "swift/IDE/CodeCompletionCache.h"
 
+#include "llvm/Support/Compiler.h"
 #include "llvm/Support/MemoryBuffer.h"
 
 using namespace SourceKit;
@@ -110,21 +112,6 @@ static bool swiftCodeCompleteImpl(SwiftLangSupport &Lang,
                                   ArrayRef<const char *> Args,
                                   std::string &Error) {
 
-  trace::TracedOperation TracedOp;
-  if (trace::enabled()) {
-    trace::SwiftInvocation SwiftArgs;
-    trace::initTraceInfo(SwiftArgs,
-                         UnresolvedInputFile->getBufferIdentifier(),
-                         Args);
-    SwiftArgs.addFile(UnresolvedInputFile->getBufferIdentifier(),
-                      UnresolvedInputFile->getBuffer());
-
-    TracedOp.start(trace::OperationKind::CodeCompletionInit, SwiftArgs,
-                   { std::make_pair("Offset", std::to_string(Offset)),
-                     std::make_pair("InputBufferSize",
-                                    std::to_string(UnresolvedInputFile->getBufferSize()))});
-  }
-  
   // Resolve symlinks for the input file; we resolve them for the input files
   // in the arguments as well.
   // FIXME: We need the Swift equivalent of Clang's FileEntry.
@@ -132,33 +119,50 @@ static bool swiftCodeCompleteImpl(SwiftLangSupport &Lang,
       UnresolvedInputFile->getBuffer(),
       Lang.resolvePathSymlinks(UnresolvedInputFile->getBufferIdentifier()));
 
-  CompilerInstance CI;
-  // Display diagnostics to stderr.
-  PrintingDiagnosticConsumer PrintDiags;
-  CI.addDiagnosticConsumer(&PrintDiags);
-
-  CompilerInvocation Invocation;
-  bool Failed = Lang.getASTManager().initCompilerInvocation(
-      Invocation, Args, CI.getDiags(), InputFile->getBufferIdentifier(), Error);
-  if (Failed) {
-    return false;
-  }
-  if (Invocation.getInputFilenames().empty()) {
-    Error = "no input filenames specified";
-    return false;
-  }
-
   auto origBuffSize = InputFile->getBufferSize();
   unsigned CodeCompletionOffset = Offset;
   if (CodeCompletionOffset > origBuffSize) {
     CodeCompletionOffset = origBuffSize;
   }
 
+  CompilerInstance CI;
+  // Display diagnostics to stderr.
+  PrintingDiagnosticConsumer PrintDiags;
+  CI.addDiagnosticConsumer(&PrintDiags);
+
+  EditorDiagConsumer TraceDiags;
+  trace::TracedOperation TracedOp(trace::OperationKind::CodeCompletion);
+  if (TracedOp.enabled()) {
+    CI.addDiagnosticConsumer(&TraceDiags);
+    trace::SwiftInvocation SwiftArgs;
+    trace::initTraceInfo(SwiftArgs, InputFile->getBufferIdentifier(), Args);
+    TracedOp.setDiagnosticProvider(
+        [&TraceDiags](SmallVectorImpl<DiagnosticEntryInfo> &diags) {
+          TraceDiags.getAllDiagnostics(diags);
+        });
+    TracedOp.start(SwiftArgs,
+                   {std::make_pair("OriginalOffset", std::to_string(Offset)),
+                    std::make_pair("Offset",
+                      std::to_string(CodeCompletionOffset))});
+  }
+
+  CompilerInvocation Invocation;
+  bool Failed = Lang.getASTManager()->initCompilerInvocation(
+      Invocation, Args, CI.getDiags(), InputFile->getBufferIdentifier(), Error);
+  if (Failed) {
+    return false;
+  }
+  if (!Invocation.getFrontendOptions().InputsAndOutputs.hasInputs()) {
+    Error = "no input filenames specified";
+    return false;
+  }
+
   const char *Position = InputFile->getBufferStart() + CodeCompletionOffset;
-  std::unique_ptr<llvm::MemoryBuffer> NewBuffer =
-      llvm::MemoryBuffer::getNewUninitMemBuffer(InputFile->getBufferSize() + 1,
+  std::unique_ptr<llvm::WritableMemoryBuffer> NewBuffer =
+      llvm::WritableMemoryBuffer::getNewUninitMemBuffer(
+                                              InputFile->getBufferSize() + 1,
                                               InputFile->getBufferIdentifier());
-  char *NewBuf = const_cast<char*>(NewBuffer->getBufferStart());
+  char *NewBuf = NewBuffer->getBufferStart();
   char *NewPos = std::copy(InputFile->getBufferStart(), Position, NewBuf);
   *NewPos = '\0';
   std::copy(Position, InputFile->getBufferEnd(), NewPos+1);
@@ -184,33 +188,13 @@ static bool swiftCodeCompleteImpl(SwiftLangSupport &Lang,
     return true;
   }
 
-  TracedOp.finish();
-
-  if (trace::enabled()) {
-    trace::SwiftInvocation SwiftArgs;
-    trace::initTraceInfo(SwiftArgs, InputFile->getBufferIdentifier(), Args);
-    trace::initTraceFiles(SwiftArgs, CI);
-
-    // Replace primary file with original content
-    std::for_each(SwiftArgs.Files.begin(), SwiftArgs.Files.end(),
-                  [&] (trace::StringPairs::value_type &Pair) {
-                    if (Pair.first == InputFile->getBufferIdentifier()) {
-                      Pair.second = InputFile->getBuffer();
-                    }
-                  });
-
-    TracedOp.start(trace::OperationKind::CodeCompletion, SwiftArgs,
-                   {std::make_pair("OriginalOffset", std::to_string(Offset)),
-                    std::make_pair("Offset",
-                      std::to_string(CodeCompletionOffset))});
-  }
-
   CloseClangModuleFiles scopedCloseFiles(
       *CI.getASTContext().getClangModuleLoader());
   SwiftConsumer.setContext(&CI.getASTContext(), &Invocation,
                            &CompletionContext);
   CI.performSema();
   SwiftConsumer.clearContext();
+
   return true;
 }
 
@@ -472,13 +456,13 @@ bool SwiftToSourceKitCompletionAdapter::handleResult(
   }
   unsigned DescEnd = SS.size();
 
-  if (Result->getName().empty() || DescBegin == DescEnd) {
+  if (DescBegin == DescEnd) {
     LOG_FUNC_SECTION_WARN {
       llvm::SmallString<64> LogMessage;
       llvm::raw_svector_ostream LogMessageOs(LogMessage);
 
-      LogMessageOs << "Code completion result with empty name and/or "
-                      "description was ignored: \n";
+      LogMessageOs << "Code completion result with empty description "
+                      "was ignored: \n";
       Result->print(LogMessageOs);
 
       *Log << LogMessage;
@@ -589,13 +573,12 @@ getCodeCompletionLiteralKindForUID(UIdent uid) {
 
 static CodeCompletionKeywordKind
 getCodeCompletionKeywordKindForUID(UIdent uid) {
-#define SIL_KEYWORD(kw)
-#define KEYWORD(kw)                                                            \
-  static UIdent Keyword##kw##UID("source.lang.swift.keyword." #kw);            \
-  if (uid == Keyword##kw##UID) {                                               \
-    return CodeCompletionKeywordKind::kw_##kw;                                 \
+#define SWIFT_KEYWORD(kw) \
+  static UIdent Keyword##kw##UID("source.lang.swift.keyword." #kw); \
+  if (uid == Keyword##kw##UID) { \
+    return CodeCompletionKeywordKind::kw_##kw; \
   }
-#include "swift/Parse/Tokens.def"
+#include "swift/Syntax/TokenKinds.def"
 
   // FIXME: should warn about unexpected keyword kind.
   return CodeCompletionKeywordKind::None;
@@ -662,7 +645,7 @@ void SwiftToSourceKitCompletionAdapter::getResultSourceText(
   for (size_t i = 0; i < Chunks.size(); ++i) {
     auto &C = Chunks[i];
     if (C.is(ChunkKind::BraceStmtWithCursor)) {
-      OS << " {\n<#code#>\n}";
+      OS << " {\n" << getCodePlaceholder() << "\n}";
       continue;
     }
     if (C.is(ChunkKind::CallParameterBegin)) {
@@ -728,6 +711,10 @@ CompletionKind CodeCompletion::SessionCache::getCompletionKind() {
 bool CodeCompletion::SessionCache::getCompletionHasExpectedTypes() {
   llvm::sys::ScopedLock L(mtx);
   return completionHasExpectedTypes;
+}
+bool CodeCompletion::SessionCache::getCompletionMayUseImplicitMemberExpr() {
+  llvm::sys::ScopedLock L(mtx);
+  return completionMayUseImplicitMemberExpr;
 }
 const CodeCompletion::FilterRules &
 CodeCompletion::SessionCache::getFilterRules() {
@@ -811,6 +798,7 @@ static void translateCodeCompletionOptions(OptionsDictionary &from,
   static UIdent KeyAddInnerResults("key.codecomplete.addinnerresults");
   static UIdent KeyAddInnerOperators("key.codecomplete.addinneroperators");
   static UIdent KeyAddInitsToTopLevel("key.codecomplete.addinitstotoplevel");
+  static UIdent KeyCallPatternHeuristics("key.codecomplete.callpatternheuristics");
   static UIdent KeyFuzzyMatching("key.codecomplete.fuzzymatching");
   static UIdent KeyTopNonLiteral("key.codecomplete.showtopnonliteralresults");
   static UIdent KeyContextWeight("key.codecomplete.sort.contextweight");
@@ -832,6 +820,7 @@ static void translateCodeCompletionOptions(OptionsDictionary &from,
   from.valueForOption(KeyAddInnerResults, to.addInnerResults);
   from.valueForOption(KeyAddInnerOperators, to.addInnerOperators);
   from.valueForOption(KeyAddInitsToTopLevel, to.addInitsToTopLevel);
+  from.valueForOption(KeyCallPatternHeuristics, to.callPatternHeuristics);
   from.valueForOption(KeyFuzzyMatching, to.fuzzyMatching);
   from.valueForOption(KeyContextWeight, to.semanticContextWeight);
   from.valueForOption(KeyFuzzyWeight, to.fuzzyMatchWeight);
@@ -865,13 +854,12 @@ static bool canonicalizeFilterName(const char *origName,
         if (next == ':' || next == ')')
           continue;
       }
-      SWIFT_FALLTHROUGH;
+      LLVM_FALLTHROUGH;
     default:
       Result.push_back(curr);
       continue;
     }
   }
-  llvm_unreachable("exit is on null byte");
 }
 
 static void translateFilterRules(ArrayRef<FilterRule> rawFilterRules,
@@ -887,7 +875,12 @@ static void translateFilterRules(ArrayRef<FilterRule> rawFilterRules,
         // Note: name is null-terminated.
         if (canonicalizeFilterName(name.data(), canonName))
           continue;
-        filterRules.hideByName[canonName] = rule.hide;
+        filterRules.hideByFilterName[canonName] = rule.hide;
+      }
+      break;
+    case FilterRule::Description:
+      for (auto name : rule.names) {
+        filterRules.hideByDescription[name] = rule.hide;
       }
       break;
     case FilterRule::Module:
@@ -955,13 +948,19 @@ filterInnerResults(ArrayRef<Result *> results, bool includeInner,
     if (!includeInnerOperators && result->isOperator())
       continue;
 
-    llvm::SmallString<64> name;
+    llvm::SmallString<64> filterName;
     {
-      llvm::raw_svector_ostream OSS(name);
+      llvm::raw_svector_ostream OSS(filterName);
       CodeCompletion::CompletionBuilder::getFilterName(
           result->getCompletionString(), OSS);
     }
-    if (rules.hideCompletion(result, name))
+    llvm::SmallString<64> description;
+    {
+      llvm::raw_svector_ostream OSS(description);
+      CodeCompletion::CompletionBuilder::getDescription(
+          result, OSS, /*leadingPunctuation=*/false);
+    }
+    if (rules.hideCompletion(result, filterName, description))
       continue;
 
     bool inner = checkInnerResult(result, hasDot, hasQDot, hasInit);
@@ -1027,6 +1026,12 @@ static void transformAndForwardResults(
   if (!hasEarlyInnerResults) {
     organizer.addCompletionsWithFilter(session->getSortedCompletions(),
                                        filterText, rules, exactMatch);
+    // Add leading dot?
+    if (options.addInnerOperators && !rules.hideFilterName(".") &&
+        session->getCompletionMayUseImplicitMemberExpr()) {
+      organizer.addCompletionsWithFilter(
+          buildDot(), filterText, CodeCompletion::FilterRules(), exactMatch);
+    }
   }
 
   if (hasEarlyInnerResults &&
@@ -1040,11 +1045,11 @@ static void transformAndForwardResults(
                            options.addInnerOperators, hasDot, hasQDot, hasInit,
                            rules);
     if (options.addInnerOperators) {
-      if (hasInit && !rules.hideName("("))
+      if (hasInit && !rules.hideFilterName("("))
         innerResults.insert(innerResults.begin(), buildParen());
-      if (hasDot && !rules.hideName("."))
+      if (hasDot && !rules.hideFilterName("."))
         innerResults.insert(innerResults.begin(), buildDot());
-      if (hasQDot && !rules.hideName("?."))
+      if (hasQDot && !rules.hideFilterName("?."))
         innerResults.insert(innerResults.begin(), buildQDot());
     }
 
@@ -1063,6 +1068,9 @@ static void transformAndForwardResults(
     SwiftCodeCompletionConsumer swiftConsumer([&](
         MutableArrayRef<CodeCompletionResult *> results,
         SwiftCompletionInfo &info) {
+      auto *context = info.completionContext;
+      if (!context || context->CodeCompletionKind != CompletionKind::PostfixExpr)
+        return;
       auto topResults = filterInnerResults(results, options.addInnerResults,
                                            options.addInnerOperators, hasDot,
                                            hasQDot, hasInit, rules);
@@ -1095,11 +1103,11 @@ static void transformAndForwardResults(
     }
 
     if (options.addInnerOperators) {
-      if (hasInit && !rules.hideName("("))
+      if (hasInit && !rules.hideFilterName("("))
         innerResults.insert(innerResults.begin(), buildParen());
-      if (hasDot && !rules.hideName("."))
+      if (hasDot && !rules.hideFilterName("."))
         innerResults.insert(innerResults.begin(), buildDot());
-      if (hasQDot && !rules.hideName("?."))
+      if (hasQDot && !rules.hideFilterName("?."))
         innerResults.insert(innerResults.begin(), buildQDot());
     }
 
@@ -1153,20 +1161,29 @@ void SwiftLangSupport::codeCompleteOpen(
 
   CompletionKind completionKind = CompletionKind::None;
   bool hasExpectedTypes = false;
+  bool mayUseImplicitMemberExpr = false;
 
   SwiftCodeCompletionConsumer swiftConsumer(
       [&](MutableArrayRef<CodeCompletionResult *> results,
           SwiftCompletionInfo &info) {
-        completionKind = info.completionContext->CodeCompletionKind;
-        hasExpectedTypes = info.completionContext->HasExpectedTypeRelation;
+        auto &completionCtx = *info.completionContext;
+        completionKind = completionCtx.CodeCompletionKind;
+        hasExpectedTypes = completionCtx.HasExpectedTypeRelation;
+        mayUseImplicitMemberExpr = completionCtx.MayUseImplicitMemberExpr;
         completions =
             extendCompletions(results, sink, info, nameToPopularity, CCOpts);
       });
 
   // Add any codecomplete.open specific flags.
   std::vector<const char *> extendedArgs(args.begin(), args.end());
-  if (CCOpts.addInitsToTopLevel)
+  if (CCOpts.addInitsToTopLevel) {
+    extendedArgs.push_back("-Xfrontend");
     extendedArgs.push_back("-code-complete-inits-in-postfix-expr");
+  }
+  if (CCOpts.callPatternHeuristics) {
+    extendedArgs.push_back("-Xfrontend");
+    extendedArgs.push_back("-code-complete-call-pattern-heuristics");
+  }
 
   // Invoke completion.
   std::string error;
@@ -1192,7 +1209,8 @@ void SwiftLangSupport::codeCompleteOpen(
   std::vector<std::string> argsCopy(extendedArgs.begin(), extendedArgs.end());
   SessionCacheRef session{new SessionCache(
       std::move(sink), std::move(bufferCopy), std::move(argsCopy),
-      completionKind, hasExpectedTypes, std::move(filterRules))};
+      completionKind, hasExpectedTypes, mayUseImplicitMemberExpr,
+      std::move(filterRules))};
   session->setSortedCompletions(std::move(completions));
 
   if (!CCSessions.set(name, offset, session)) {

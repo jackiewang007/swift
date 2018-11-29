@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -34,21 +34,17 @@ namespace swift {
 
 namespace immediate {
 
-// Returns a handle to the runtime suitable for other 'dlsym' or 'dlclose' 
-// calls or 'NULL' if an error occurred.
+/// Returns a handle to the runtime suitable for other \c dlsym or \c dlclose
+/// calls or \c null if an error occurred.
+///
+/// \param runtimeLibPath Path to search for compiler-relative stdlib dylibs.
 void *loadSwiftRuntime(StringRef runtimeLibPath);
 bool tryLoadLibraries(ArrayRef<LinkLibrary> LinkLibraries,
                       SearchPathOptions SearchPathOpts,
                       DiagnosticEngine &Diags);
 bool linkLLVMModules(llvm::Module *Module,
                      std::unique_ptr<llvm::Module> SubModule);
-bool IRGenImportedModules(
-    CompilerInstance &CI,
-    llvm::Module &Module,
-    llvm::SmallPtrSet<swift::ModuleDecl *, 8> &ImportedModules,
-    SmallVectorImpl<llvm::Function*> &InitFns,
-    IRGenOptions &IRGenOpts,
-    const SILOptions &SILOpts);
+bool autolinkImportedModules(ModuleDecl *M, IRGenOptions &IRGenOpts);
 
 } // end namespace immediate
 } // end namespace swift

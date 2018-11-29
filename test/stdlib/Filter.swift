@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 // RUN: %target-run-simple-swift
@@ -32,12 +32,6 @@ extension LazyFilterSequence where Base : TestProtocol1 {
   }
 }
 
-extension LazyFilterIndex where Base : TestProtocol1 {
-  var _baseIsTestProtocol1: Bool {
-    fatalError("not implemented")
-  }
-}
-
 extension LazyFilterCollection where Base : TestProtocol1 {
   var _baseIsTestProtocol1: Bool {
     fatalError("not implemented")
@@ -58,6 +52,25 @@ FilterTests.test("filtering sequences") {
 
   let f1 = (1..<30).makeIterator().lazy.filter { $0 % 7 == 0 }
   expectEqualSequence([7, 14, 21, 28], f1)
+}
+
+FilterTests.test("single-count") {
+  // Check that we're only calling a lazy filter's predicate one time for
+  // each element in a sequence or collection.
+  var count = 0
+  let mod7AndCount: (Int) -> Bool = {
+    count += 1
+    return $0 % 7 == 0
+  }
+    
+  let f0 = (0..<30).makeIterator().lazy.filter(mod7AndCount)
+  _ = Array(f0)
+  expectEqual(30, count)
+
+  count = 0
+  let f1 = LazyFilterCollection(_base: 0..<30, mod7AndCount)
+  _ = Array(f1)
+  expectEqual(30, count)
 }
 
 runAllTests()

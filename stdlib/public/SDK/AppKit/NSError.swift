@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 @_exported import AppKit
@@ -33,11 +33,15 @@ extension CocoaError.Code {
   public static var serviceMalformedServiceDictionary: CocoaError.Code {
     return CocoaError.Code(rawValue: 66564)
   }
-  public static var serviceMiscellaneous: CocoaError.Code {
+  public static var serviceMiscellaneousError: CocoaError.Code {
     return CocoaError.Code(rawValue: 66800)
   }
   public static var sharingServiceNotConfigured: CocoaError.Code {
     return CocoaError.Code(rawValue: 67072)
+  }
+  @available(macOS 10.13, *)
+  public static var fontAssetDownloadError: CocoaError.Code {
+    return CocoaError.Code(rawValue: 66304)
   }
 }
 
@@ -71,8 +75,8 @@ extension CocoaError.Code {
   public static var serviceMalformedServiceDictionaryError: CocoaError.Code {
     return CocoaError.Code(rawValue: 66564)
   }
-  @available(*, deprecated, renamed: "serviceMiscellaneous")
-  public static var serviceMiscellaneousError: CocoaError.Code {
+  @available(*, deprecated, renamed: "serviceMiscellaneousError")
+  public static var serviceMiscellaneous: CocoaError.Code {
     return CocoaError.Code(rawValue: 66800)
   }
   @available(*, deprecated, renamed: "sharingServiceNotConfigured")
@@ -108,6 +112,10 @@ extension CocoaError {
   }
   public static var sharingServiceNotConfigured: CocoaError.Code {
     return CocoaError.Code(rawValue: 67072)
+  }
+  @available(macOS 10.13, *)
+  public static var fontAssetDownloadError: CocoaError.Code {
+    return CocoaError.Code(rawValue: 66304)
   }
 }
 
@@ -162,6 +170,11 @@ extension CocoaError {
 
   public var isTextReadWriteError: Bool {
     return code.rawValue >= 65792 && code.rawValue <= 66303
+  }
+
+  @available(macOS 10.13, *)
+  public var isFontError: Bool {
+    return code.rawValue >= 66304 && code.rawValue <= 66335
   }
 }
 

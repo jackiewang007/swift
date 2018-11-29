@@ -1,4 +1,4 @@
-// RUN: %target-parse-verify-swift -parse-as-library
+// RUN: %target-typecheck-verify-swift -parse-as-library
 
 protocol BaseProto {
   associatedtype AssocTy
@@ -17,5 +17,5 @@ protocol DerivedProto : BaseProto {
 }
 
 
-func generic<T: BaseProto>(_ assoc: T.AssocTy) {} // no-warning
+func generic<T: BaseProto>(_: T, _ assoc: T.AssocTy) {} // no-warning
 

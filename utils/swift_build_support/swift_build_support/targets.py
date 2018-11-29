@@ -2,11 +2,11 @@
 #
 # This source file is part of the Swift.org open source project
 #
-# Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+# Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 # Licensed under Apache License v2.0 with Runtime Library Exception
 #
-# See http://swift.org/LICENSE.txt for license information
-# See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+# See https://swift.org/LICENSE.txt for license information
+# See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 
 import os
 import platform
@@ -113,6 +113,7 @@ class StdlibDeploymentTarget(object):
 
     Linux = Platform("linux", archs=[
         "x86_64",
+        "i686",
         "armv6",
         "armv7",
         "aarch64",
@@ -124,7 +125,11 @@ class StdlibDeploymentTarget(object):
 
     Cygwin = Platform("cygwin", archs=["x86_64"])
 
-    Android = Platform("android", archs=["armv7"])
+    Android = Platform("android", archs=["armv7", "aarch64"])
+
+    Windows = Platform("windows", archs=["x86_64"])
+
+    Haiku = Platform("haiku", archs=["x86_64"])
 
     # The list of known platforms.
     known_platforms = [
@@ -135,7 +140,9 @@ class StdlibDeploymentTarget(object):
         Linux,
         FreeBSD,
         Cygwin,
-        Android]
+        Android,
+        Windows,
+        Haiku]
 
     # Cache of targets by name.
     _targets_by_name = dict((target.name, target)
@@ -146,7 +153,7 @@ class StdlibDeploymentTarget(object):
     def host_target():
         """
         Return the host target for the build machine, if it is one of
-        the recognized targets. Otherwise, return None.
+        the recognized targets. Otherwise, throw a NotImplementedError.
         """
         system = platform.system()
         machine = platform.machine()
@@ -154,6 +161,8 @@ class StdlibDeploymentTarget(object):
         if system == 'Linux':
             if machine == 'x86_64':
                 return StdlibDeploymentTarget.Linux.x86_64
+            elif machine == 'i686':
+                return StdlibDeploymentTarget.Linux.i686
             elif machine.startswith('armv7'):
                 # linux-armv7* is canonicalized to 'linux-armv7'
                 return StdlibDeploymentTarget.Linux.armv7
@@ -181,7 +190,16 @@ class StdlibDeploymentTarget(object):
             if machine == 'x86_64':
                 return StdlibDeploymentTarget.Cygwin.x86_64
 
-        return None
+        elif system == 'Windows':
+            if machine == "AMD64":
+                return StdlibDeploymentTarget.Windows.x86_64
+
+        elif system == 'Haiku':
+            if machine == 'x86_64':
+                return StdlibDeploymentTarget.Haiku.x86_64
+
+        raise NotImplementedError('System "%s" with architecture "%s" is not '
+                                  'supported' % (system, machine))
 
     @staticmethod
     def default_stdlib_deployment_targets():

@@ -1,4 +1,4 @@
-// RUN: %target-parse-verify-swift
+// RUN: %target-typecheck-verify-swift -swift-version 4
 
 protocol Fooable {
   associatedtype Foo
@@ -123,7 +123,7 @@ struct Composed<Left: Bindable, Right: Observable> where Left.Input == Right.Out
 infix operator <- : AssignmentPrecedence
 
 func <- <
-    Right : Observable
+    Right
     >(lhs: @escaping (Right.Output) -> Void, rhs: Right) -> Composed<SideEffect<Right>, Right>?
 {
   return nil
@@ -154,7 +154,7 @@ extension Dictionary {
 
 // rdar://problem/19245317
 protocol P {
-	associatedtype T: P // expected-error{{type may not reference itself as a requirement}}
+	associatedtype T: P
 }
 
 struct S<A: P> {
@@ -328,8 +328,98 @@ protocol P9 {
 
 struct X7<T: P9> where T.A : C { }
 
-extension X7 where T.A == Int { } // expected-error 2{{'T' requires that 'Int' inherit from 'C'}}
-
+extension X7 where T.A == Int { } // expected-error {{'T.A' requires that 'Int' inherit from 'C'}}
 struct X8<T: C> { }
 
-extension X8 where T == Int { } // expected-error 2{{'T' requires that 'Int' inherit from 'C'}}
+extension X8 where T == Int { } // expected-error {{'T' requires that 'Int' inherit from 'C'}}
+
+protocol P10 {
+	associatedtype A
+	associatedtype B
+	associatedtype C
+	associatedtype D
+	associatedtype E
+}
+
+protocol P11: P10 where A == B { }
+
+func intracomponent<T: P11>(_: T) // expected-note{{previous same-type constraint 'T.A' == 'T.B' implied here}}
+  where T.A == T.B { } // expected-warning{{redundant same-type constraint 'T.A' == 'T.B'}}
+
+func intercomponentSameComponents<T: P10>(_: T)
+  where T.A == T.B, // expected-warning{{redundant same-type constraint 'T.A' == 'T.B'}}
+        T.B == T.A { } // expected-note{{previous same-type constraint 'T.B' == 'T.A' written here}}
+
+func intercomponentMoreThanSpanningTree<T: P10>(_: T)
+  where T.A == T.B,
+        T.B == T.C,
+        T.D == T.E, // expected-note {{previous same-type constraint 'T.D' == 'T.E' written here}}
+        T.D == T.B,
+        T.E == T.B  // expected-warning {{redundant same-type constraint 'T.E' == 'T.B'}}
+        { }
+
+func trivialRedundancy<T: P10>(_: T) where T.A == T.A { } // expected-warning{{redundant same-type constraint 'T.A' == 'T.A'}}
+
+struct X11<T: P10> where T.A == T.B { }
+
+func intracomponentInferred<T>(_: X11<T>)
+  where T.A == T.B { }
+
+// Suppress redundant same-type constraint warnings from result types.
+struct StructTakingP1<T: P1> { }
+
+func resultTypeSuppress<T: P1>() -> StructTakingP1<T> {
+  return StructTakingP1()
+}
+
+// Check directly-concrete same-type constraints
+typealias NotAnInt = Double
+
+extension X11 where NotAnInt == Int { }
+// expected-error@-1{{generic signature requires types 'NotAnInt' (aka 'Double') and 'Int' to be the same}}
+
+
+struct X12<T> { }
+
+protocol P12 {
+  associatedtype A
+  associatedtype B
+}
+
+func testP12a<T: P12>(_: T) where T.A == X12<Int>, T.A == X12<T.B>, T.B == Int { }
+// expected-warning@-1{{redundant same-type constraint 'T.B' == 'Int'}}
+// expected-note@-2{{same-type constraint 'T.B' == 'Int' written here}}
+
+func testP12b<T: P12>(_: T) where T.B == Int, T.A == X12<T.B>, X12<T.B> == T.A { }
+// expected-warning@-1{{redundant same-type constraint 'T.A' == 'X12<Int>'}}
+// expected-note@-2{{same-type constraint 'T.A' == 'X12<Int>' written here}}
+
+// rdar://45307061 - dropping delayed same-type constraints when merging
+// equivalence classes
+
+protocol FakeIterator {
+  associatedtype Element
+}
+
+protocol FakeSequence {
+  associatedtype Iterator : FakeIterator
+  associatedtype Element where Iterator.Element == Element
+}
+
+protocol ObserverType {
+  associatedtype E
+}
+
+struct Bad<S: FakeSequence, O> where S.Element : ObserverType, S.Element.E == O {}
+
+func good<S: FakeSequence, O>(_: S, _: O) where S.Element : ObserverType, O == S.Element.E {
+  _ = Bad<S, O>()
+}
+
+func bad<S: FakeSequence, O>(_: S, _: O) where S.Element : ObserverType, O == S.Iterator.Element.E {
+  _ = Bad<S, O>()
+}
+
+func ugly<S: FakeSequence, O>(_: S, _: O) where S.Element : ObserverType, O == S.Iterator.Element.E, O == S.Element.E {
+  _ = Bad<S, O>()
+}

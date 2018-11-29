@@ -2,23 +2,17 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 // Extern C functions
 //===----------------------------------------------------------------------===//
 
 // FIXME: Once we have an FFI interface, make these have proper function bodies
-
-@_transparent
-public // @testable
-func _countLeadingZeros(_ value: Int64) -> Int64 {
-    return Int64(Builtin.int_ctlz_Int64(value._value, false._value))
-}
 
 /// Returns if `x` is a power of 2.
 @_transparent
@@ -57,13 +51,13 @@ public func _autorelease(_ x: AnyObject) {
 ///
 /// This function is primarily useful to call various runtime functions
 /// written in C++.
-func _withUninitializedString<R>(
+internal func _withUninitializedString<R>(
   _ body: (UnsafeMutablePointer<String>) -> R
 ) -> (R, String) {
   let stringPtr = UnsafeMutablePointer<String>.allocate(capacity: 1)
   let bodyResult = body(stringPtr)
   let stringResult = stringPtr.move()
-  stringPtr.deallocate(capacity: 1)
+  stringPtr.deallocate()
   return (bodyResult, stringResult)
 }
 
@@ -80,62 +74,27 @@ public func _getTypeName(_ type: Any.Type, qualified: Bool)
 public // @testable
 func _typeName(_ type: Any.Type, qualified: Bool = true) -> String {
   let (stringPtr, count) = _getTypeName(type, qualified: qualified)
-  return ._fromWellFormedCodeUnitSequence(UTF8.self,
-    input: UnsafeBufferPointer(start: stringPtr, count: count))
+  return String._fromUTF8Repairing(
+    UnsafeBufferPointer(start: stringPtr, count: count)).0
 }
-
-@_silgen_name("swift_getTypeByMangledName")
-func _getTypeByMangledName(
-    _ name: UnsafePointer<UInt8>,
-    _ nameLength: UInt)
-  -> Any.Type?
 
 /// Lookup a class given a name. Until the demangled encoding of type
 /// names is stabilized, this is limited to top-level class names (Foo.bar).
 public // SPI(Foundation)
 func _typeByName(_ name: String) -> Any.Type? {
-  let components = name.characters.split{$0 == "."}.map(String.init)
-  guard components.count == 2 else {
-    return nil
-  }
-
-  // Note: explicitly build a class name to match on, rather than matching
-  // on the result of _typeName(), to ensure the type we are resolving is
-  // actually a class.
-  var name = "C"
-  if components[0] == "Swift" {
-    name += "s"
-  } else {
-    name += String(components[0].characters.count) + components[0]
-  }
-  name += String(components[1].characters.count) + components[1]
-
   let nameUTF8 = Array(name.utf8)
   return nameUTF8.withUnsafeBufferPointer { (nameUTF8) in
-    let type = _getTypeByMangledName(nameUTF8.baseAddress!,
-                                     UInt(nameUTF8.endIndex))
-
-    return type
+    return  _getTypeByMangledName(nameUTF8.baseAddress!,
+                                  UInt(nameUTF8.endIndex),
+                                  genericEnvironment: nil,
+                                  genericArguments: nil)
   }
 }
 
-/// Returns `floor(log(x))`.  This equals to the position of the most
-/// significant non-zero bit, or 63 - number-of-zeros before it.
-///
-/// The function is only defined for positive values of `x`.
-///
-/// Examples:
-///
-///      floorLog2(1) == 0
-///      floorLog2(2) == floorLog2(3) == 1
-///      floorLog2(9) == floorLog2(15) == 3
-///
-/// TODO: Implement version working on Int instead of Int64.
-@_transparent
-public // @testable
-func _floorLog2(_ x: Int64) -> Int {
-  _sanityCheck(x > 0, "_floorLog2 operates only on non-negative integers")
-  // Note: use unchecked subtraction because we this expression cannot
-  // overflow.
-  return 63 &- Int(_countLeadingZeros(x))
-}
+@_silgen_name("swift_stdlib_getTypeByMangledName")
+internal func _getTypeByMangledName(
+  _ name: UnsafePointer<UInt8>,
+  _ nameLength: UInt,
+  genericEnvironment: UnsafeRawPointer?,
+  genericArguments: UnsafeRawPointer?)
+  -> Any.Type?

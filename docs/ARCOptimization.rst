@@ -38,7 +38,6 @@ Reference Counting Instructions
 - fix_lifetime
 - mark_dependence
 - is_unique
-- is_unique_or_pinned
 - copy_block
 
 Memory Behavior of ARC Operations
@@ -232,7 +231,8 @@ this is true. The rule for conversions is that a conversion that preserves RC
 identity must have the following properties:
 
 1. Both of its arguments must be non-trivial values with the same ownership
-   semantics (i.e. unowned, strong, weak). This means that conversions such as:
+   semantics (i.e. unowned, strong, weak). This means that the following
+   conversions do not propagate RC identity:
 
    - address_to_pointer
    - pointer_to_address
@@ -347,15 +347,10 @@ static argument type is optional, then a null check is also performed.
 Thus, is_unique only returns true for non-null, native Swift object
 references with a strong reference count of one.
 
-is_unique_or_pinned has the same semantics as is_unique except that it
-also returns true if the object is marked pinned (by strong_pin)
-regardless of the reference count. This allows for simultaneous
-non-structural modification of multiple subobjects.
-
 Builtin.isUnique
 ----------------
 
-Builtin.isUnique and Builtin.isUniqueOrPinned give the standard
+Builtin.isUnique gives the standard
 library access to optimization safe uniqueness checking. Because the
 type of reference check is derived from the builtin argument's static
 type, the most efficient check is automatically generated. However, in
@@ -366,7 +361,6 @@ additional pointer bit mask and dynamic class lookup to be bypassed in
 these cases:
 
 - isUnique_native : <T> (inout T[?]) -> Int1
-- isUniqueOrPinned_native : <T> (inout T[?]) -> Int1
 
 These builtins perform an implicit cast to NativeObject before
 checking uniqueness. There's no way at SIL level to cast the address
@@ -379,7 +373,7 @@ Semantic Tags
 ARC takes advantage of certain semantic tags. This section documents these
 semantics and their meanings.
 
-arc.programtermination_point
+programtermination_point
 ----------------------------
 
 If this semantic tag is applied to a function, then we know that:
@@ -391,6 +385,28 @@ If this semantic tag is applied to a function, then we know that:
 This allows one, when performing ARC code motion, to ignore blocks that contain
 an apply to this function as long as the block does not have any other side
 effect having instructions.
+
+Unreachable Code and Lifetimes
+==============================
+
+The general case of unreachable code in terms of lifetime balancing has further
+interesting properties. Namely, an unreachable and noreturn functions signify a
+scope that has been split. This means that objects that are alive in that
+scope's lifetime may never end. This means that:
+
+1. While we can not ignore all such unreachable terminated blocks for ARC
+purposes for instance, if we sink a retain past a br into a non
+programtermination_point block, we must sink the retain into the block.
+
+2. If we are able to infer that an object's lifetime scope would never end due
+to the unreachable/no-return function, then we do not need to end the lifetime
+of the object early. An example of a situation where this can happen is with
+closure specialization. In closure specialization, we clone a caller that takes
+in a closure and create a copy of the closure in the caller with the specific
+closure. This allows for the closure to be eliminated in the specialized
+function and other optimizations to come into play. Since the lifetime of the
+original closure extended past any assertions in the original function, we do
+not need to insert releases in such locations to maintain program behavior.
 
 ARC Sequence Optimization
 =========================
@@ -886,7 +902,7 @@ Consider the following pseudo-Swift example::
 
   var GLOBAL_D : D = D1()
 
-  class C { deinit { GLOBAL_D = D2 } }
+  class C { deinit { GLOBAL_D = D2() } }
 
   func main() {
     let c = C()

@@ -1,16 +1,16 @@
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
-// RUN: rm -rf %t
-// RUN: mkdir -p %t
+// RUN: %empty-directory(%t)
 //
 // RUN: %target-clang %S/Inputs/FoundationBridge/FoundationBridge.m -c -o %t/FoundationBridgeObjC.o -g
 // RUN: %target-build-swift %s -I %S/Inputs/FoundationBridge/ -Xlinker %t/FoundationBridgeObjC.o -o %t/TestLocale
+// RUN: %target-codesign %t/TestLocale
 
 // RUN: %target-run %t/TestLocale > %t.txt
 // REQUIRES: executable_test
@@ -94,7 +94,9 @@ class TestLocale : TestLocaleSuper {
         
         expectEqual(".", locale.decimalSeparator)
         expectEqual(",", locale.groupingSeparator)
-        expectEqual("HK$", locale.currencySymbol)
+        if #available(macOS 10.11, *) {
+          expectEqual("HK$", locale.currencySymbol)
+        }
         expectEqual("HKD", locale.currencyCode)
         
         expectTrue(Locale.availableIdentifiers.count > 0)

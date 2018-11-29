@@ -1,7 +1,7 @@
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: %empty-directory(%t)
 // RUN: %build-clang-importer-objc-overlays
 
-// RUN: %target-swift-frontend(mock-sdk: %clang-importer-sdk-nosource -I %t) -I %S/Inputs/custom-modules -parse %s -verify
+// RUN: %target-swift-frontend(mock-sdk: %clang-importer-sdk-nosource -I %t) -I %S/Inputs/custom-modules -typecheck %s -verify
 // RUN: %target-swift-frontend(mock-sdk: %clang-importer-sdk-nosource -I %t) -I %S/Inputs/custom-modules -emit-ir %s -D IRGEN | %FileCheck %s
 
 // RUN: %target-swift-ide-test(mock-sdk: %clang-importer-sdk-nosource -I %t) -I %S/Inputs/custom-modules -print-module -source-filename="%s" -module-to-print SwiftPrivateAttr > %t.txt
@@ -19,7 +19,7 @@ import SwiftPrivateAttr
 // half of a module, or from an overlay. At that point we should test that these
 // are available in that case and /not/ in the normal import case.
 
-// CHECK-LABEL: define{{( protected)?}} void @{{.+}}12testProperty
+// CHECK-LABEL: define{{( protected)?}} swiftcc void @{{.+}}12testProperty
 public func testProperty(_ foo: Foo) {
   // CHECK: @"\01L_selector(setPrivValue:)"
   _ = foo.__privValue
@@ -34,7 +34,7 @@ public func testProperty(_ foo: Foo) {
 #endif
 }
 
-// CHECK-LABEL: define{{( protected)?}} void @{{.+}}11testMethods
+// CHECK-LABEL: define{{( protected)?}} swiftcc void @{{.+}}11testMethods
 public func testMethods(_ foo: Foo) {
   // CHECK: @"\01L_selector(noArgs)"
   foo.__noArgs()
@@ -44,7 +44,7 @@ public func testMethods(_ foo: Foo) {
   foo.__twoArgs(1, other: 2)
 }
 
-// CHECK-LABEL: define{{( protected)?}} void @{{.+}}16testInitializers
+// CHECK-LABEL: define{{( protected)?}} swiftcc void @{{.+}}16testInitializers
 public func testInitializers() {
   // Checked below; look for "CSo3Bar".
   _ = Bar(__noArgs: ())
@@ -53,7 +53,7 @@ public func testInitializers() {
   _ = Bar(__: 1)
 }
 
-// CHECK-LABEL: define{{( protected)?}} void @{{.+}}18testFactoryMethods
+// CHECK-LABEL: define{{( protected)?}} swiftcc void @{{.+}}18testFactoryMethods
 public func testFactoryMethods() {
   // CHECK: @"\01L_selector(fooWithOneArg:)"
   _ = Foo(__oneArg: 1)
@@ -65,12 +65,12 @@ public func testFactoryMethods() {
 
 #if !IRGEN
 public func testSubscript(_ foo: Foo) {
-  _ = foo[foo] // expected-error {{type 'Foo' has no subscript members}}
-  _ = foo[1] // expected-error {{type 'Foo' has no subscript members}}
+  _ = foo[foo] // expected-error {{value of type 'Foo' has no subscripts}}
+  _ = foo[1] // expected-error {{value of type 'Foo' has no subscripts}}
 }
 #endif
 
-// CHECK-LABEL: define{{( protected)?}} void @{{.+}}12testTopLevel
+// CHECK-LABEL: define{{( protected)?}} swiftcc void @{{.+}}12testTopLevel
 public func testTopLevel() {
   // Checked below; look for "PrivFooSub".
   let foo = __PrivFooSub()
@@ -91,18 +91,18 @@ public func testTopLevel() {
 #endif
 }
 
-// CHECK-LABEL: define linkonce_odr hidden %swift.type* @_TMaCSo12__PrivFooSub{{.*}} {
-// CHECK: %objc_class** @"OBJC_CLASS_REF_$_PrivFooSub"
+// CHECK-LABEL: define linkonce_odr hidden swiftcc %swift.metadata_response @"$sSo10PrivFooSubCMa{{.*}} {
+// CHECK: %objc_class** @"\01l_OBJC_CLASS_REF_$_PrivFooSub"
 // CHECK: }
 
-// CHECK-LABEL: define linkonce_odr hidden {{.+}} @_TTOFCSo3BarcfT2__Vs5Int32_GSQS__
-// CHECK: @"\01L_selector(init:)"
-// CHECK-LABEL: define linkonce_odr hidden {{.+}} @_TTOFCSo3BarcfT9__twoArgsVs5Int325otherS0__GSQS__
-// CHECK: @"\01L_selector(initWithTwoArgs:other:)"
-// CHECK-LABEL: define linkonce_odr hidden {{.+}} @_TTOFCSo3BarcfT8__oneArgVs5Int32_GSQS__
-// CHECK: @"\01L_selector(initWithOneArg:)"
-// CHECK-LABEL: define linkonce_odr hidden {{.+}} @_TTOFCSo3BarcfT8__noArgsT__GSQS__
+// CHECK-LABEL: define linkonce_odr hidden {{.+}} @"$sSo3BarC8__noArgsABSgyt_tcfcTO"
 // CHECK: @"\01L_selector(initWithNoArgs)"
+// CHECK-LABEL: define linkonce_odr hidden {{.+}} @"$sSo3BarC8__oneArgABSgs5Int32V_tcfcTO"
+// CHECK: @"\01L_selector(initWithOneArg:)"
+// CHECK-LABEL: define linkonce_odr hidden {{.+}} @"$sSo3BarC9__twoArgs5otherABSgs5Int32V_AGtcfcTO"
+// CHECK: @"\01L_selector(initWithTwoArgs:other:)"
+// CHECK-LABEL: define linkonce_odr hidden {{.+}} @"$sSo3BarC2__ABSgs5Int32V_tcfcTO"
+// CHECK: @"\01L_selector(init:)"
 
 _ = __PrivAnonymousA
 _ = __E0PrivA
@@ -132,3 +132,10 @@ func testCF(_ a: __PrivCFType, b: __PrivCFSub, c: __PrivInt) {
 extension __PrivCFType {}
 extension __PrivCFSub {}
 _ = 1 as __PrivInt
+
+#if !IRGEN
+func testRawNames() {
+  let _ = Foo.__fooWithOneArg(0) // expected-error {{'__fooWithOneArg' has been replaced by 'init(__oneArg:)'}}
+  let _ = Foo.__foo // expected-error{{'__foo' has been replaced by 'init(__:)'}}
+}
+#endif

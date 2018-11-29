@@ -1,4 +1,4 @@
-// RUN: %target-swift-frontend -enable-experimental-property-behaviors -emit-silgen %s | %FileCheck %s
+// RUN: %target-swift-frontend -enable-experimental-property-behaviors -emit-silgen -enable-sil-ownership %s | %FileCheck %s
 protocol diBehavior {
   associatedtype Value
   var storage: Value { get set }
@@ -24,12 +24,13 @@ struct Foo {
   // TODO
   // var xx: (Int, Int) __behavior diBehavior
 
-  // CHECK-LABEL: sil hidden @_TFV22property_behavior_init3FooC
-  // CHECK:       bb0([[X:%.*]] : $Int,
+  // CHECK-LABEL: sil hidden @$s22property_behavior_init3FooV{{[_0-9a-zA-Z]*}}fC
+  // CHECK:       bb0([[X:%.*]] : @trivial $Int,
   init(x: Int) {
-    // CHECK: [[UNINIT_SELF:%.*]] = mark_uninitialized [rootself]
-    // CHECK: [[UNINIT_STORAGE:%.*]] = struct_element_addr [[UNINIT_SELF]]
-    // CHECK: [[UNINIT_BEHAVIOR:%.*]] = mark_uninitialized_behavior {{.*}}<Foo>([[UNINIT_STORAGE]]) : {{.*}}, {{%.*}}([[UNINIT_SELF]])
+    // CHECK: [[MARKED_SELF_BOX:%.*]] = mark_uninitialized [rootself]
+    // CHECK: [[PB_BOX:%.*]] = project_box [[MARKED_SELF_BOX]]
+    // CHECK: [[UNINIT_STORAGE:%.*]] = struct_element_addr [[PB_BOX]]
+    // CHECK: [[UNINIT_BEHAVIOR:%.*]] = mark_uninitialized_behavior {{.*}}<Foo>([[UNINIT_STORAGE]]) : {{.*}}, {{%.*}}([[PB_BOX]])
 
     // Pure assignments undergo DI analysis so assign to the marking proxy.
 
@@ -40,21 +41,23 @@ struct Foo {
 
     // Reads or inouts use the accessors normally.
 
-    // CHECK: [[SELF:%.*]] = load [trivial] [[UNINIT_SELF]]
-    // CHECK: [[GETTER:%.*]] = function_ref @_TFV22property_behavior_init3Foog1xSi
+    // CHECK: [[READ:%.*]] = begin_access [read] [unknown] [[PB_BOX]]
+    // CHECK: [[SELF:%.*]] = load [trivial] [[READ]]
+    // CHECK: [[GETTER:%.*]] = function_ref @$s22property_behavior_init3FooV1xSivg
     // CHECK: apply [[GETTER]]([[SELF]])
     _ = self.x
 
-    // CHECK: [[WHACK:%.*]] = function_ref @_TF22property_behavior_init5whackurFRxT_
+    // CHECK: [[WRITE:%.*]] = begin_access [modify] [unknown] [[PB_BOX]]
     // CHECK: [[INOUT:%.*]] = alloc_stack
-    // CHECK: [[SELF:%.*]] = load [trivial] [[UNINIT_SELF]]
-    // CHECK: [[GETTER:%.*]] = function_ref @_TFV22property_behavior_init3Foog1xSi
+    // CHECK: [[SELF:%.*]] = load [trivial] [[WRITE]]
+    // CHECK: [[GETTER:%.*]] = function_ref @$s22property_behavior_init3FooV1xSivg
     // CHECK: [[VALUE:%.*]] = apply [[GETTER]]([[SELF]])
     // CHECK: store [[VALUE]] to [trivial] [[INOUT]]
+    // CHECK: [[WHACK:%.*]] = function_ref @$s22property_behavior_init5whackyyxzlF
     // CHECK: apply [[WHACK]]<Int>([[INOUT]])
     // CHECK: [[VALUE:%.*]] = load [trivial] [[INOUT]]
-    // CHECK: [[SETTER:%.*]] = function_ref @_TFV22property_behavior_init3Foos1xSi
-    // CHECK: apply [[SETTER]]([[VALUE]], [[UNINIT_SELF]])
+    // CHECK: [[SETTER:%.*]] = function_ref @$s22property_behavior_init3FooV1xSivs
+    // CHECK: apply [[SETTER]]([[VALUE]], [[WRITE]])
     whack(&self.x)
   }
 }

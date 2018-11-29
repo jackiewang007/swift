@@ -1,8 +1,8 @@
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -12,7 +12,7 @@
 
 import Foundation
 
-#if os(OSX)
+#if os(macOS)
 
 #if FOUNDATION_XCTEST
 import XCTest
@@ -169,20 +169,24 @@ class TestAffineTransform : TestAffineTransformSuper {
         checkPointTransformation(noop, point: point, expectedPoint: point)
         
         var tenEighty = AffineTransform.identity
-        tenEighty.rotate(byRadians: CGFloat(6 * M_PI))
+        tenEighty.rotate(byRadians: 6 * .pi)
         checkPointTransformation(tenEighty, point: point, expectedPoint: point)
         
         var rotateCounterClockwise = AffineTransform.identity
-        rotateCounterClockwise.rotate(byRadians: CGFloat(M_PI_2))
+        rotateCounterClockwise.rotate(byRadians: .pi / 2)
         checkPointTransformation(rotateCounterClockwise, point: point, expectedPoint: NSPoint(x: CGFloat(-10.0), y: CGFloat(10.0)))
         
         var rotateClockwise = AffineTransform.identity
-        rotateClockwise.rotate(byRadians: CGFloat(-M_PI_2))
+        rotateClockwise.rotate(byRadians: -.pi / 2)
         checkPointTransformation(rotateClockwise, point: point, expectedPoint: NSPoint(x: CGFloat(10.0), y: CGFloat(-10.0)))
         
         var reflectAboutOrigin = AffineTransform.identity
-        reflectAboutOrigin.rotate(byRadians: CGFloat(M_PI))
+        reflectAboutOrigin.rotate(byRadians: .pi)
         checkPointTransformation(reflectAboutOrigin, point: point, expectedPoint: NSPoint(x: CGFloat(-10.0), y: CGFloat(-10.0)))
+        
+        var scaleThenRotate = AffineTransform(scale: 2)
+        scaleThenRotate.rotate(byRadians: .pi / 2)
+        checkPointTransformation(scaleThenRotate, point: point, expectedPoint: NSPoint(x: CGFloat(-20.0), y: CGFloat(20.0)))
     }
     
     func test_Inversion() {
@@ -364,6 +368,20 @@ class TestAffineTransform : TestAffineTransformSuper {
         expectNotEqual(anyHashables[0], anyHashables[1])
         expectEqual(anyHashables[1], anyHashables[2])
     }
+
+    func test_unconditionallyBridgeFromObjectiveC() {
+        expectEqual(AffineTransform(), AffineTransform._unconditionallyBridgeFromObjectiveC(nil))
+    }
+
+    func test_rotation_compose() {
+        var t = AffineTransform.identity
+        t.translate(x: 1.0, y: 1.0)
+        t.rotate(byDegrees: 90)
+        t.translate(x: -1.0, y: -1.0)
+        let result = t.transform(NSPoint(x: 1.0, y: 2.0))
+        expectEqualWithAccuracy(0.0, Double(result.x), accuracy: accuracyThreshold)
+        expectEqualWithAccuracy(1.0, Double(result.y), accuracy: accuracyThreshold)
+    }
 }
 
 #if !FOUNDATION_XCTEST
@@ -386,6 +404,8 @@ AffineTransformTests.test("test_hashing_identity") { TestAffineTransform().test_
 AffineTransformTests.test("test_hashing_values") { TestAffineTransform().test_hashing_values() }
 AffineTransformTests.test("test_AnyHashableContainingAffineTransform") { TestAffineTransform().test_AnyHashableContainingAffineTransform() }
 AffineTransformTests.test("test_AnyHashableCreatedFromNSAffineTransform") { TestAffineTransform().test_AnyHashableCreatedFromNSAffineTransform() }
+AffineTransformTests.test("test_unconditionallyBridgeFromObjectiveC") { TestAffineTransform().test_unconditionallyBridgeFromObjectiveC() }
+AffineTransformTests.test("test_rotation_compose") { TestAffineTransform().test_rotation_compose() }
 runAllTests()
 #endif
     

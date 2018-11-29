@@ -16,11 +16,11 @@ class ClassB : ClassA
 {
     override init (_ input : Int64)
     {
-    // CHECK: @_TFC{{.*}}6ClassBcfVs5Int64S0_
-    // CHECK:  alloca {{.*}}ClassB*
+    // CHECK: @"$s{{.*}}6ClassBCyACs5Int64Vcfc"
+    // CHECK:  alloca {{.*}}ClassBC*
     // CHECK:  alloca i64
     // CHECK-NOT: alloca
-    // CHECK: ret {{.*}}ClassB
+    // CHECK: ret {{.*}}ClassBC
         super.init (input)
     }
 }

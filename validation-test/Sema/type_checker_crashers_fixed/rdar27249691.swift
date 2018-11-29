@@ -1,5 +1,4 @@
-// RUN: not %target-swift-frontend %s -parse
-// REQUIRES: asserts
+// RUN: not %target-swift-frontend %s -typecheck
 
 infix operator ~> : BitwiseShiftPrecedence
 

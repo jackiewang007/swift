@@ -2,17 +2,18 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
 @_exported import Foundation // Clang module
 import CoreFoundation
 import Darwin
+import _SwiftFoundationOverlayShims
 
 //===----------------------------------------------------------------------===//
 // NSError (as an out parameter).
@@ -23,10 +24,17 @@ public typealias NSErrorPointer = AutoreleasingUnsafeMutablePointer<NSError?>?
 // Note: NSErrorPointer becomes ErrorPointer in Swift 3.
 public typealias ErrorPointer = NSErrorPointer
 
-public // COMPILER_INTRINSIC
-let _nilObjCError: Error = _GenericObjCError.nilError
+// An error value to use when an Objective-C API indicates error
+// but produces a nil error object.
+// This is 'internal' rather than 'private' for no other reason but to make the
+// type print more nicely. It's not part of the ABI, so if type printing of
+// private things improves we can change it.
+internal enum _GenericObjCError : Error {
+  case nilError
+}
+// A cached instance of the above in order to save on the conversion to Error.
+private let _nilObjCError: Error = _GenericObjCError.nilError
 
-@_silgen_name("swift_convertNSErrorToError")
 public // COMPILER_INTRINSIC
 func _convertNSErrorToError(_ error: NSError?) -> Error {
   if let error = error {
@@ -35,7 +43,6 @@ func _convertNSErrorToError(_ error: NSError?) -> Error {
   return _nilObjCError
 }
 
-@_silgen_name("swift_convertErrorToNSError")
 public // COMPILER_INTRINSIC
 func _convertErrorToNSError(_ error: Error) -> NSError {
   return unsafeDowncast(_bridgeErrorToNSError(error), to: NSError.self)
@@ -64,13 +71,6 @@ public extension LocalizedError {
   var helpAnchor: String? { return nil }
 }
 
-@_silgen_name("NS_Swift_performErrorRecoverySelector")
-internal func NS_Swift_performErrorRecoverySelector(
-  delegate: AnyObject?,
-  selector: Selector,
-  success: ObjCBool,
-  contextInfo: UnsafeMutableRawPointer?)
-
 /// Class that implements the informal protocol
 /// NSErrorRecoveryAttempting, which is used by NSError when it
 /// attempts recovery from an error.
@@ -83,11 +83,7 @@ class _NSErrorRecoveryAttempter {
                        contextInfo: UnsafeMutableRawPointer?) {
     let error = nsError as Error as! RecoverableError
     error.attemptRecovery(optionIndex: recoveryOptionIndex) { success in
-      NS_Swift_performErrorRecoverySelector(
-        delegate: delegate,
-        selector: didRecoverSelector,
-        success: ObjCBool(success),
-        contextInfo: contextInfo)
+      __NSErrorPerformRecoverySelector(delegate, didRecoverSelector, success, contextInfo)
     }
   }
 
@@ -113,7 +109,7 @@ public protocol RecoverableError : Error {
   /// "document" granularity, that do not affect the entire
   /// application.
   func attemptRecovery(optionIndex recoveryOptionIndex: Int,
-                       resultHandler handler: (_ recovered: Bool) -> Void)
+                       resultHandler handler: @escaping (_ recovered: Bool) -> Void)
 
   /// Attempt to recover from this error when the user selected the
   /// option at the given index. Returns true to indicate
@@ -131,7 +127,7 @@ public extension RecoverableError {
   /// mechanism (``attemptRecovery(optionIndex:)``) to implement
   /// document-modal recovery.
   func attemptRecovery(optionIndex recoveryOptionIndex: Int,
-                       resultHandler handler: (_ recovered: Bool) -> Void) {
+                       resultHandler handler: @escaping (_ recovered: Bool) -> Void) {
     handler(attemptRecovery(optionIndex: recoveryOptionIndex))
   }
 }
@@ -152,12 +148,12 @@ public protocol CustomNSError : Error {
 public extension CustomNSError {
   /// Default domain of the error.
   static var errorDomain: String {
-    return String(reflecting: type(of: self))
+    return String(reflecting: self)
   }
 
   /// The error code within the given domain.
   var errorCode: Int {
-    return _swift_getDefaultErrorCode(self)
+    return _getDefaultErrorCode(self)
   }
 
   /// The default user-info dictionary.
@@ -166,17 +162,34 @@ public extension CustomNSError {
   }
 }
 
-extension CustomNSError where Self: RawRepresentable, Self.RawValue: SignedInteger {
-  // The error code of Error with integral raw values is the raw value.
-  public var errorCode: Int {
-    return numericCast(self.rawValue)
-  }
+/// Convert an arbitrary binary integer to an Int, reinterpreting signed
+/// -> unsigned if needed but trapping if the result is otherwise not
+/// expressible.
+func unsafeBinaryIntegerToInt<T: BinaryInteger>(_ value: T) -> Int {
+    if T.isSigned {
+        return numericCast(value)
+    }
+
+    let uintValue: UInt = numericCast(value)
+    return Int(bitPattern: uintValue)
 }
 
-extension CustomNSError where Self: RawRepresentable, Self.RawValue: UnsignedInteger {
+/// Convert from an Int to an arbitrary binary integer, reinterpreting signed ->
+/// unsigned if needed but trapping if the result is otherwise not expressible.
+func unsafeBinaryIntegerFromInt<T: BinaryInteger>(_ value: Int) -> T {
+  if T.isSigned {
+    return numericCast(value)
+  }
+
+  let uintValue = UInt(bitPattern: value)
+  return numericCast(uintValue)
+}
+
+extension CustomNSError
+    where Self: RawRepresentable, Self.RawValue: FixedWidthInteger {
   // The error code of Error with integral raw values is the raw value.
   public var errorCode: Int {
-    return numericCast(self.rawValue)
+    return unsafeBinaryIntegerToInt(self.rawValue)
   }
 }
 
@@ -189,13 +202,7 @@ public extension Error where Self : CustomNSError {
 }
 
 public extension Error where Self: CustomNSError, Self: RawRepresentable,
-    Self.RawValue: SignedInteger {
-  /// Default implementation for customized NSErrors.
-  var _code: Int { return self.errorCode }  
-}
-
-public extension Error where Self: CustomNSError, Self: RawRepresentable,
-    Self.RawValue: UnsignedInteger {
+    Self.RawValue: FixedWidthInteger {
   /// Default implementation for customized NSErrors.
   var _code: Int { return self.errorCode }  
 }
@@ -211,14 +218,13 @@ internal let _errorDomainUserInfoProviderQueue = DispatchQueue(
   label: "SwiftFoundation._errorDomainUserInfoProviderQueue")
 
 /// Retrieve the default userInfo dictionary for a given error.
-@_silgen_name("swift_Foundation_getErrorDefaultUserInfo")
-public func _swift_Foundation_getErrorDefaultUserInfo(_ error: Error)
+public func _getErrorDefaultUserInfo<T: Error>(_ error: T)
   -> AnyObject? {
   let hasUserInfoValueProvider: Bool
 
   // If the OS supports user info value providers, use those
   // to lazily populate the user-info dictionary for this domain.
-  if #available(OSX 10.11, iOS 9.0, tvOS 9.0, watchOS 2.0, *) {
+  if #available(macOS 10.11, iOS 9.0, tvOS 9.0, watchOS 2.0, *) {
     // Note: the Cocoa error domain specifically excluded from
     // user-info value providers.
     let domain = error._domain
@@ -313,11 +319,17 @@ public func _swift_Foundation_getErrorDefaultUserInfo(_ error: Error)
 // or CFError is used as an Error existential.
 
 extension NSError : Error {
+  @nonobjc
   public var _domain: String { return domain }
+
+  @nonobjc
   public var _code: Int { return code }
+
+  @nonobjc
   public var _userInfo: AnyObject? { return userInfo as NSDictionary }
 
   /// The "embedded" NSError is itself.
+  @nonobjc
   public func _getEmbeddedNSError() -> AnyObject? {
     return self
   }
@@ -342,18 +354,12 @@ extension CFError : Error {
   }
 }
 
-// An error value to use when an Objective-C API indicates error
-// but produces a nil error object.
-public enum _GenericObjCError : Error {
-  case nilError
-}
-
 /// An internal protocol to represent Swift error enums that map to standard
 /// Cocoa NSError domains.
 public protocol _ObjectiveCBridgeableError : Error {
   /// Produce a value of the error type corresponding to the given NSError,
   /// or return nil if it cannot be bridged.
-  init?(_bridgedNSError: NSError)
+  init?(_bridgedNSError: __shared NSError)
 }
 
 /// A hook for the runtime to use _ObjectiveCBridgeableError in order to
@@ -362,8 +368,7 @@ public protocol _ObjectiveCBridgeableError : Error {
 /// If the bridge succeeds, the bridged value is written to the uninitialized
 /// memory pointed to by 'out', and true is returned. Otherwise, 'out' is
 /// left uninitialized, and false is returned.
-@_silgen_name("swift_stdlib_bridgeNSErrorToError")
-public func _stdlib_bridgeNSErrorToError<
+public func _bridgeNSErrorToError<
   T : _ObjectiveCBridgeableError
 >(_ error: NSError, out: UnsafeMutablePointer<T>) -> Bool {
   if let bridged = T(_bridgedNSError: error) {
@@ -374,93 +379,43 @@ public func _stdlib_bridgeNSErrorToError<
   }
 }
 
-/// Helper protocol for _BridgedNSError, which used to provide
-/// default implementations.
-public protocol __BridgedNSError : Error {
-  static var _nsErrorDomain: String { get }
-}
-
-// Allow two bridged NSError types to be compared.
-extension __BridgedNSError
-    where Self: RawRepresentable, Self.RawValue: SignedInteger {
-  public static func ==(lhs: Self, rhs: Self) -> Bool {
-    return lhs.rawValue.toIntMax() == rhs.rawValue.toIntMax()
-  }
-}
-
-public extension __BridgedNSError 
-    where Self: RawRepresentable, Self.RawValue: SignedInteger {
-  public final var _domain: String { return Self._nsErrorDomain }
-  public final var _code: Int { return Int(rawValue.toIntMax()) }
-
-  public init?(rawValue: RawValue) {
-    self = unsafeBitCast(rawValue, to: Self.self)
-  }
-
-  public init?(_bridgedNSError: NSError) {
-    if _bridgedNSError.domain != Self._nsErrorDomain {
-      return nil
-    }
-
-    self.init(rawValue: RawValue(IntMax(_bridgedNSError.code)))
-  }
-
-  public final var hashValue: Int { return _code }
-}
-
-// Allow two bridged NSError types to be compared.
-extension __BridgedNSError
-    where Self: RawRepresentable, Self.RawValue: UnsignedInteger {
-  public static func ==(lhs: Self, rhs: Self) -> Bool {
-    return lhs.rawValue.toUIntMax() == rhs.rawValue.toUIntMax()
-  }
-}
-
-public extension __BridgedNSError
-    where Self: RawRepresentable, Self.RawValue: UnsignedInteger {
-  public final var _domain: String { return Self._nsErrorDomain }
-  public final var _code: Int {
-    return Int(bitPattern: UInt(rawValue.toUIntMax()))
-  }
-
-  public init?(rawValue: RawValue) {
-    self = unsafeBitCast(rawValue, to: Self.self)
-  }
-
-  public init?(_bridgedNSError: NSError) {
-    if _bridgedNSError.domain != Self._nsErrorDomain {
-      return nil
-    }
-
-    self.init(rawValue: RawValue(UIntMax(UInt(_bridgedNSError.code))))
-  }
-
-  public final var hashValue: Int { return _code }
-}
-
 /// Describes a raw representable type that is bridged to a particular
 /// NSError domain.
 ///
 /// This protocol is used primarily to generate the conformance to
-/// _ObjectiveCBridgeableError for such an enum.
-public protocol _BridgedNSError : __BridgedNSError,
-                                  RawRepresentable,
-                                  _ObjectiveCBridgeableError,
-                                  Hashable {
+/// _ObjectiveCBridgeableError for such an enum defined in Swift.
+public protocol _BridgedNSError :
+    _ObjectiveCBridgeableError, RawRepresentable, Hashable
+    where Self.RawValue: FixedWidthInteger {
   /// The NSError domain to which this type is bridged.
   static var _nsErrorDomain: String { get }
+}
+
+extension _BridgedNSError {
+  public var _domain: String { return Self._nsErrorDomain }
+}
+
+extension _BridgedNSError where Self.RawValue: FixedWidthInteger {
+  public var _code: Int { return Int(rawValue) }
+
+  public init?(_bridgedNSError: __shared NSError) {
+    if _bridgedNSError.domain != Self._nsErrorDomain {
+      return nil
+    }
+
+    self.init(rawValue: RawValue(_bridgedNSError.code))
+  }
+
+  public var hashValue: Int { return _code }
 }
 
 /// Describes a bridged error that stores the underlying NSError, so
 /// it can be queried.
 public protocol _BridgedStoredNSError :
-     __BridgedNSError, _ObjectiveCBridgeableError, CustomNSError,
-     Hashable {
+     _ObjectiveCBridgeableError, CustomNSError, Hashable {
   /// The type of an error code.
-  associatedtype Code: _ErrorCodeProtocol
-
-  /// The error code for the given error.
-  var code: Code { get }
+  associatedtype Code: _ErrorCodeProtocol, RawRepresentable
+  where Code.RawValue: FixedWidthInteger
 
   //// Retrieves the embedded NSError.
   var _nsError: NSError { get }
@@ -473,60 +428,31 @@ public protocol _BridgedStoredNSError :
   init(_nsError error: NSError)
 }
 
-/// TODO: Better way to do this?
-internal func _stringDictToAnyHashableDict(_ input: [String : Any])
-    -> [AnyHashable : Any] {
-  var result = [AnyHashable : Any](minimumCapacity: input.count)
-  for (k, v) in input {
-    result[k] = v
-  }
-  return result
-}
-
 /// Various helper implementations for _BridgedStoredNSError
-public extension _BridgedStoredNSError
-    where Code: RawRepresentable, Code.RawValue: SignedInteger {
-  // FIXME: Generalize to Integer.
+extension _BridgedStoredNSError {
   public var code: Code {
-    return Code(rawValue: numericCast(_nsError.code))!
+    return Code(rawValue: unsafeBinaryIntegerFromInt(_nsError.code))!
   }
 
   /// Initialize an error within this domain with the given ``code``
   /// and ``userInfo``.
   public init(_ code: Code, userInfo: [String : Any] = [:]) {
-    self.init(_nsError: NSError(domain: Self._nsErrorDomain,
-                                code: numericCast(code.rawValue),
-                                userInfo: _stringDictToAnyHashableDict(userInfo)))
+    self.init(_nsError: NSError(domain: Self.errorDomain,
+                                code: unsafeBinaryIntegerToInt(code.rawValue),
+                                userInfo: userInfo))
   }
 
   /// The user-info dictionary for an error that was bridged from
   /// NSError.
-  var userInfo: [String : Any] { return errorUserInfo }
+  public var userInfo: [String : Any] { return errorUserInfo }
 }
 
-/// Various helper implementations for _BridgedStoredNSError
-public extension _BridgedStoredNSError
-    where Code: RawRepresentable, Code.RawValue: UnsignedInteger {
-  // FIXME: Generalize to Integer.
-  public var code: Code {
-    return Code(rawValue: numericCast(_nsError.code))!
-  }
-
-  /// Initialize an error within this domain with the given ``code``
-  /// and ``userInfo``.
-  public init(_ code: Code, userInfo: [String : Any] = [:]) {
-    self.init(_nsError: NSError(domain: Self._nsErrorDomain,
-                                code: numericCast(code.rawValue),
-                                userInfo: _stringDictToAnyHashableDict(userInfo)))
-  }
-}
-
-/// Implementation of __BridgedNSError for all _BridgedStoredNSErrors.
-public extension _BridgedStoredNSError {
-  /// Default implementation of ``init(_bridgedNSError)`` to provide
+/// Implementation of _ObjectiveCBridgeableError for all _BridgedStoredNSErrors.
+extension _BridgedStoredNSError {
+  /// Default implementation of ``init(_bridgedNSError:)`` to provide
   /// bridging from NSError.
   public init?(_bridgedNSError error: NSError) {
-    if error.domain != Self._nsErrorDomain {
+    if error.domain != Self.errorDomain {
       return nil
     }
 
@@ -539,15 +465,15 @@ public extension _BridgedStoredNSError {
   // FIXME: Would prefer to have a clear "extract an NSError
   // directly" operation.
 
-  static var errorDomain: String { return _nsErrorDomain }
+  // Synthesized by the compiler.
+  // static var errorDomain: String
 
   var errorCode: Int { return _nsError.code }
 
   var errorUserInfo: [String : Any] {
     var result: [String : Any] = [:]
     for (key, value) in _nsError.userInfo {
-      guard let stringKey = key.base as? String else { continue }
-      result[stringKey] = value
+      result[key] = value
     }
     return result
   }
@@ -563,20 +489,15 @@ public extension _BridgedStoredNSError {
 /// Describes the code of an error.
 public protocol _ErrorCodeProtocol : Equatable {
   /// The corresponding error code.
-  associatedtype _ErrorType
-
-  // FIXME: We want _ErrorType to be _BridgedStoredNSError and have its
-  // Code match Self, but we cannot express those requirements yet.
+  associatedtype _ErrorType: _BridgedStoredNSError where _ErrorType.Code == Self
 }
 
-extension _ErrorCodeProtocol where Self._ErrorType: _BridgedStoredNSError {
+extension _ErrorCodeProtocol {
   /// Allow one to match an error code against an arbitrary error.
   public static func ~=(match: Self, error: Error) -> Bool {
     guard let specificError = error as? Self._ErrorType else { return false }
 
-    // FIXME: Work around IRGen crash when we set Code == Code._ErrorType.Code.
-    let specificCode = specificError.code as! Self
-    return match == specificCode
+    return match == specificError.code
   }
 }
 
@@ -591,6 +512,39 @@ extension _BridgedStoredNSError {
   }
 }
 
+extension _SwiftNewtypeWrapper where Self.RawValue == Error {
+  @inlinable // FIXME(sil-serialize-all)
+  public func _bridgeToObjectiveC() -> NSError {
+    return rawValue as NSError
+  }
+
+  @inlinable // FIXME(sil-serialize-all)
+  public static func _forceBridgeFromObjectiveC(
+    _ source: NSError,
+    result: inout Self?
+  ) {
+    result = Self(rawValue: source)
+  }
+
+  @inlinable // FIXME(sil-serialize-all)
+  public static func _conditionallyBridgeFromObjectiveC(
+    _ source: NSError,
+    result: inout Self?
+  ) -> Bool {
+    result = Self(rawValue: source)
+    return result != nil
+  }
+
+  @inlinable // FIXME(sil-serialize-all)
+  @_effects(readonly)
+  public static func _unconditionallyBridgeFromObjectiveC(
+    _ source: NSError?
+  ) -> Self {
+    return Self(rawValue: _convertNSErrorToError(source))!
+  }
+}
+
+
 @available(*, unavailable, renamed: "CocoaError")
 public typealias NSCocoaError = CocoaError
 
@@ -603,16 +557,20 @@ public struct CocoaError : _BridgedStoredNSError {
     self._nsError = error
   }
 
-  public static var _nsErrorDomain: String { return NSCocoaErrorDomain }
+  public static var errorDomain: String { return NSCocoaErrorDomain }
 
   /// The error code itself.
-  public struct Code : RawRepresentable, _ErrorCodeProtocol {
+  public struct Code : RawRepresentable, Hashable, _ErrorCodeProtocol {
     public typealias _ErrorType = CocoaError
 
     public let rawValue: Int
 
     public init(rawValue: Int) {
       self.rawValue = rawValue
+    }
+    
+    public var hashValue: Int {
+      return self.rawValue
     }
   }
 }
@@ -644,6 +602,16 @@ public extension CocoaError {
   }
 }
 
+extension CocoaError {
+    public static func error(_ code: CocoaError.Code, userInfo: [AnyHashable : Any]? = nil, url: URL? = nil) -> Error {
+        var info: [String : Any] = userInfo as? [String : Any] ?? [:]
+        if let url = url {
+            info[NSURLErrorKey] = url
+        }
+        return NSError(domain: NSCocoaErrorDomain, code: code.rawValue, userInfo: info)
+    }
+}
+
 extension CocoaError.Code {
   public static var fileNoSuchFile: CocoaError.Code {
     return CocoaError.Code(rawValue: 4)
@@ -673,12 +641,12 @@ extension CocoaError.Code {
     return CocoaError.Code(rawValue: 262)
   }
 
-  @available(OSX, introduced: 10.5) @available(iOS, introduced: 2.0)
+  @available(macOS, introduced: 10.5) @available(iOS, introduced: 2.0)
   public static var fileReadTooLarge: CocoaError.Code {
     return CocoaError.Code(rawValue: 263)
   }
 
-  @available(OSX, introduced: 10.5) @available(iOS, introduced: 2.0)
+  @available(macOS, introduced: 10.5) @available(iOS, introduced: 2.0)
   public static var fileReadUnknownStringEncoding: CocoaError.Code {
     return CocoaError.Code(rawValue: 264)
   }
@@ -693,7 +661,7 @@ extension CocoaError.Code {
     return CocoaError.Code(rawValue: 514)
   }
 
-  @available(OSX, introduced: 10.7) @available(iOS, introduced: 5.0)
+  @available(macOS, introduced: 10.7) @available(iOS, introduced: 5.0)
   public static var fileWriteFileExists: CocoaError.Code {
     return CocoaError.Code(rawValue: 516)
   }
@@ -708,17 +676,17 @@ extension CocoaError.Code {
     return CocoaError.Code(rawValue: 640)
   }
 
-  @available(OSX, introduced: 10.6) @available(iOS, introduced: 4.0)
+  @available(macOS, introduced: 10.6) @available(iOS, introduced: 4.0)
   public static var fileWriteVolumeReadOnly: CocoaError.Code {
     return CocoaError.Code(rawValue: 642)
   }
 
-  @available(OSX, introduced: 10.11) @available(iOS, unavailable)
+  @available(macOS, introduced: 10.11) @available(iOS, unavailable)
   public static var fileManagerUnmountUnknown: CocoaError.Code {
     return CocoaError.Code(rawValue: 768)
   }
 
-  @available(OSX, introduced: 10.11) @available(iOS, unavailable)
+  @available(macOS, introduced: 10.11) @available(iOS, unavailable)
   public static var fileManagerUnmountBusy: CocoaError.Code {
     return CocoaError.Code(rawValue: 769)
   }
@@ -733,119 +701,123 @@ extension CocoaError.Code {
     return CocoaError.Code(rawValue: 3072)
   }
 
-  @available(OSX, introduced: 10.8) @available(iOS, introduced: 6.0)
+  @available(macOS, introduced: 10.8) @available(iOS, introduced: 6.0)
   public static var featureUnsupported: CocoaError.Code {
     return CocoaError.Code(rawValue: 3328)
   }
 
-  @available(OSX, introduced: 10.5) @available(iOS, introduced: 2.0)
+  @available(macOS, introduced: 10.5) @available(iOS, introduced: 2.0)
   public static var executableNotLoadable: CocoaError.Code {
     return CocoaError.Code(rawValue: 3584)
   }
 
-  @available(OSX, introduced: 10.5) @available(iOS, introduced: 2.0)
+  @available(macOS, introduced: 10.5) @available(iOS, introduced: 2.0)
   public static var executableArchitectureMismatch: CocoaError.Code {
     return CocoaError.Code(rawValue: 3585)
   }
 
-  @available(OSX, introduced: 10.5) @available(iOS, introduced: 2.0)
+  @available(macOS, introduced: 10.5) @available(iOS, introduced: 2.0)
   public static var executableRuntimeMismatch: CocoaError.Code {
     return CocoaError.Code(rawValue: 3586)
   }
 
-  @available(OSX, introduced: 10.5) @available(iOS, introduced: 2.0)
+  @available(macOS, introduced: 10.5) @available(iOS, introduced: 2.0)
   public static var executableLoad: CocoaError.Code {
     return CocoaError.Code(rawValue: 3587)
   }
 
-  @available(OSX, introduced: 10.5) @available(iOS, introduced: 2.0)
+  @available(macOS, introduced: 10.5) @available(iOS, introduced: 2.0)
   public static var executableLink: CocoaError.Code {
     return CocoaError.Code(rawValue: 3588)
   }
 
-  @available(OSX, introduced: 10.6) @available(iOS, introduced: 4.0)
+  @available(macOS, introduced: 10.6) @available(iOS, introduced: 4.0)
   public static var propertyListReadCorrupt: CocoaError.Code {
     return CocoaError.Code(rawValue: 3840)
   }
 
-  @available(OSX, introduced: 10.6) @available(iOS, introduced: 4.0)
+  @available(macOS, introduced: 10.6) @available(iOS, introduced: 4.0)
   public static var propertyListReadUnknownVersion: CocoaError.Code {
     return CocoaError.Code(rawValue: 3841)
   }
 
-  @available(OSX, introduced: 10.6) @available(iOS, introduced: 4.0)
+  @available(macOS, introduced: 10.6) @available(iOS, introduced: 4.0)
   public static var propertyListReadStream: CocoaError.Code {
     return CocoaError.Code(rawValue: 3842)
   }
 
-  @available(OSX, introduced: 10.6) @available(iOS, introduced: 4.0)
+  @available(macOS, introduced: 10.6) @available(iOS, introduced: 4.0)
   public static var propertyListWriteStream: CocoaError.Code {
     return CocoaError.Code(rawValue: 3851)
   }
 
-  @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
+  @available(macOS, introduced: 10.10) @available(iOS, introduced: 8.0)
   public static var propertyListWriteInvalid: CocoaError.Code {
     return CocoaError.Code(rawValue: 3852)
   }
 
-  @available(OSX, introduced: 10.8) @available(iOS, introduced: 6.0)
+  @available(macOS, introduced: 10.8) @available(iOS, introduced: 6.0)
   public static var xpcConnectionInterrupted: CocoaError.Code {
     return CocoaError.Code(rawValue: 4097)
   }
 
-  @available(OSX, introduced: 10.8) @available(iOS, introduced: 6.0)
+  @available(macOS, introduced: 10.8) @available(iOS, introduced: 6.0)
   public static var xpcConnectionInvalid: CocoaError.Code {
     return CocoaError.Code(rawValue: 4099)
   }
 
-  @available(OSX, introduced: 10.8) @available(iOS, introduced: 6.0)
+  @available(macOS, introduced: 10.8) @available(iOS, introduced: 6.0)
   public static var xpcConnectionReplyInvalid: CocoaError.Code {
     return CocoaError.Code(rawValue: 4101)
   }
 
-  @available(OSX, introduced: 10.9) @available(iOS, introduced: 7.0)
+  @available(macOS, introduced: 10.9) @available(iOS, introduced: 7.0)
   public static var ubiquitousFileUnavailable: CocoaError.Code {
     return CocoaError.Code(rawValue: 4353)
   }
 
-  @available(OSX, introduced: 10.9) @available(iOS, introduced: 7.0)
+  @available(macOS, introduced: 10.9) @available(iOS, introduced: 7.0)
   public static var ubiquitousFileNotUploadedDueToQuota: CocoaError.Code {
     return CocoaError.Code(rawValue: 4354)
   }
 
-  @available(OSX, introduced: 10.9) @available(iOS, introduced: 7.0)
+  @available(macOS, introduced: 10.9) @available(iOS, introduced: 7.0)
   public static var ubiquitousFileUbiquityServerNotAvailable: CocoaError.Code {
     return CocoaError.Code(rawValue: 4355)
   }
 
-  @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
+  @available(macOS, introduced: 10.10) @available(iOS, introduced: 8.0)
   public static var userActivityHandoffFailed: CocoaError.Code {
     return CocoaError.Code(rawValue: 4608)
   }
 
-  @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
+  @available(macOS, introduced: 10.10) @available(iOS, introduced: 8.0)
   public static var userActivityConnectionUnavailable: CocoaError.Code {
     return CocoaError.Code(rawValue: 4609)
   }
 
-  @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
+  @available(macOS, introduced: 10.10) @available(iOS, introduced: 8.0)
   public static var userActivityRemoteApplicationTimedOut: CocoaError.Code {
     return CocoaError.Code(rawValue: 4610)
   }
 
-  @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
+  @available(macOS, introduced: 10.10) @available(iOS, introduced: 8.0)
   public static var userActivityHandoffUserInfoTooLarge: CocoaError.Code {
     return CocoaError.Code(rawValue: 4611)
   }
 
-  @available(OSX, introduced: 10.11) @available(iOS, introduced: 9.0)
+  @available(macOS, introduced: 10.11) @available(iOS, introduced: 9.0)
   public static var coderReadCorrupt: CocoaError.Code {
     return CocoaError.Code(rawValue: 4864)
   }
 
-  @available(OSX, introduced: 10.11) @available(iOS, introduced: 9.0)
+  @available(macOS, introduced: 10.11) @available(iOS, introduced: 9.0)
   public static var coderValueNotFound: CocoaError.Code {
     return CocoaError.Code(rawValue: 4865)
+  }
+
+  public static var coderInvalidValue: CocoaError.Code {
+    return CocoaError.Code(rawValue: 4866)
   }
 }
 
@@ -887,13 +859,13 @@ extension CocoaError.Code {
     return CocoaError.Code(rawValue: 262)
   }
 
-  @available(OSX, introduced: 10.5) @available(iOS, introduced: 2.0)
+  @available(macOS, introduced: 10.5) @available(iOS, introduced: 2.0)
   @available(*, deprecated, renamed: "fileReadTooLarge")
   public static var fileReadTooLargeError: CocoaError.Code {
     return CocoaError.Code(rawValue: 263)
   }
 
-  @available(OSX, introduced: 10.5) @available(iOS, introduced: 2.0)
+  @available(macOS, introduced: 10.5) @available(iOS, introduced: 2.0)
   @available(*, deprecated, renamed: "fileReadUnknownStringEncoding")
   public static var fileReadUnknownStringEncodingError: CocoaError.Code {
     return CocoaError.Code(rawValue: 264)
@@ -914,7 +886,7 @@ extension CocoaError.Code {
     return CocoaError.Code(rawValue: 514)
   }
 
-  @available(OSX, introduced: 10.7) @available(iOS, introduced: 5.0)
+  @available(macOS, introduced: 10.7) @available(iOS, introduced: 5.0)
   @available(*, deprecated, renamed: "fileWriteFileExists")
   public static var fileWriteFileExistsError: CocoaError.Code {
     return CocoaError.Code(rawValue: 516)
@@ -935,19 +907,19 @@ extension CocoaError.Code {
     return CocoaError.Code(rawValue: 640)
   }
 
-  @available(OSX, introduced: 10.6) @available(iOS, introduced: 4.0)
+  @available(macOS, introduced: 10.6) @available(iOS, introduced: 4.0)
   @available(*, deprecated, renamed: "fileWriteVolumeReadOnly")
   public static var fileWriteVolumeReadOnlyError: CocoaError.Code {
     return CocoaError.Code(rawValue: 642)
   }
 
-  @available(OSX, introduced: 10.11) @available(iOS, unavailable)
+  @available(macOS, introduced: 10.11) @available(iOS, unavailable)
   @available(*, deprecated, renamed: "fileManagerUnmountUnknown")
   public static var fileManagerUnmountUnknownError: CocoaError.Code {
     return CocoaError.Code(rawValue: 768)
   }
 
-  @available(OSX, introduced: 10.11) @available(iOS, unavailable)
+  @available(macOS, introduced: 10.11) @available(iOS, unavailable)
   @available(*, deprecated, renamed: "fileManagerUnmountBusy")
   public static var fileManagerUnmountBusyError: CocoaError.Code {
     return CocoaError.Code(rawValue: 769)
@@ -968,115 +940,115 @@ extension CocoaError.Code {
     return CocoaError.Code(rawValue: 3072)
   }
 
-  @available(OSX, introduced: 10.8) @available(iOS, introduced: 6.0)
+  @available(macOS, introduced: 10.8) @available(iOS, introduced: 6.0)
   @available(*, deprecated, renamed: "featureUnsupported")
   public static var featureUnsupportedError: CocoaError.Code {
     return CocoaError.Code(rawValue: 3328)
   }
 
-  @available(OSX, introduced: 10.5) @available(iOS, introduced: 2.0)
+  @available(macOS, introduced: 10.5) @available(iOS, introduced: 2.0)
   @available(*, deprecated, renamed: "executableNotLoadable")
   public static var executableNotLoadableError: CocoaError.Code {
     return CocoaError.Code(rawValue: 3584)
   }
 
-  @available(OSX, introduced: 10.5) @available(iOS, introduced: 2.0)
+  @available(macOS, introduced: 10.5) @available(iOS, introduced: 2.0)
   @available(*, deprecated, renamed: "executableArchitectureMismatch")
   public static var executableArchitectureMismatchError: CocoaError.Code {
     return CocoaError.Code(rawValue: 3585)
   }
 
-  @available(OSX, introduced: 10.5) @available(iOS, introduced: 2.0)
+  @available(macOS, introduced: 10.5) @available(iOS, introduced: 2.0)
   @available(*, deprecated, renamed: "executableRuntimeMismatch")
   public static var executableRuntimeMismatchError: CocoaError.Code {
     return CocoaError.Code(rawValue: 3586)
   }
 
-  @available(OSX, introduced: 10.5) @available(iOS, introduced: 2.0)
+  @available(macOS, introduced: 10.5) @available(iOS, introduced: 2.0)
   @available(*, deprecated, renamed: "executableLoad")
   public static var executableLoadError: CocoaError.Code {
     return CocoaError.Code(rawValue: 3587)
   }
 
-  @available(OSX, introduced: 10.5) @available(iOS, introduced: 2.0)
+  @available(macOS, introduced: 10.5) @available(iOS, introduced: 2.0)
   @available(*, deprecated, renamed: "executableLink")
   public static var executableLinkError: CocoaError.Code {
     return CocoaError.Code(rawValue: 3588)
   }
 
-  @available(OSX, introduced: 10.6) @available(iOS, introduced: 4.0)
+  @available(macOS, introduced: 10.6) @available(iOS, introduced: 4.0)
   @available(*, deprecated, renamed: "propertyListReadCorrupt")
   public static var propertyListReadCorruptError: CocoaError.Code {
     return CocoaError.Code(rawValue: 3840)
   }
 
-  @available(OSX, introduced: 10.6) @available(iOS, introduced: 4.0)
+  @available(macOS, introduced: 10.6) @available(iOS, introduced: 4.0)
   @available(*, deprecated, renamed: "propertyListReadUnknownVersion")
   public static var propertyListReadUnknownVersionError: CocoaError.Code {
     return CocoaError.Code(rawValue: 3841)
   }
 
-  @available(OSX, introduced: 10.6) @available(iOS, introduced: 4.0)
+  @available(macOS, introduced: 10.6) @available(iOS, introduced: 4.0)
   @available(*, deprecated, renamed: "propertyListReadStream")
   public static var propertyListReadStreamError: CocoaError.Code {
     return CocoaError.Code(rawValue: 3842)
   }
 
-  @available(OSX, introduced: 10.6) @available(iOS, introduced: 4.0)
+  @available(macOS, introduced: 10.6) @available(iOS, introduced: 4.0)
   @available(*, deprecated, renamed: "propertyListWriteStream")
   public static var propertyListWriteStreamError: CocoaError.Code {
     return CocoaError.Code(rawValue: 3851)
   }
 
-  @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
+  @available(macOS, introduced: 10.10) @available(iOS, introduced: 8.0)
   @available(*, deprecated, renamed: "propertyListWriteInvalid")
   public static var propertyListWriteInvalidError: CocoaError.Code {
     return CocoaError.Code(rawValue: 3852)
   }
 
-  @available(OSX, introduced: 10.9) @available(iOS, introduced: 7.0)
+  @available(macOS, introduced: 10.9) @available(iOS, introduced: 7.0)
   @available(*, deprecated, renamed: "ubiquitousFileUnavailable")
   public static var ubiquitousFileUnavailableError: CocoaError.Code {
     return CocoaError.Code(rawValue: 4353)
   }
 
-  @available(OSX, introduced: 10.9) @available(iOS, introduced: 7.0)
+  @available(macOS, introduced: 10.9) @available(iOS, introduced: 7.0)
   @available(*, deprecated, renamed: "ubiquitousFileNotUploadedDueToQuota")
   public static var ubiquitousFileNotUploadedDueToQuotaError: CocoaError.Code {
     return CocoaError.Code(rawValue: 4354)
   }
 
-  @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
+  @available(macOS, introduced: 10.10) @available(iOS, introduced: 8.0)
   @available(*, deprecated, renamed: "userActivityHandoffFailed")
   public static var userActivityHandoffFailedError: CocoaError.Code {
     return CocoaError.Code(rawValue: 4608)
   }
 
-  @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
+  @available(macOS, introduced: 10.10) @available(iOS, introduced: 8.0)
   @available(*, deprecated, renamed: "userActivityConnectionUnavailable")
   public static var userActivityConnectionUnavailableError: CocoaError.Code {
     return CocoaError.Code(rawValue: 4609)
   }
 
-  @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
+  @available(macOS, introduced: 10.10) @available(iOS, introduced: 8.0)
   @available(*, deprecated, renamed: "userActivityRemoteApplicationTimedOut")
   public static var userActivityRemoteApplicationTimedOutError: CocoaError.Code {
     return CocoaError.Code(rawValue: 4610)
   }
 
-  @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
+  @available(macOS, introduced: 10.10) @available(iOS, introduced: 8.0)
   @available(*, deprecated, renamed: "userActivityHandoffUserInfoTooLarge")
   public static var userActivityHandoffUserInfoTooLargeError: CocoaError.Code {
     return CocoaError.Code(rawValue: 4611)
   }
 
-  @available(OSX, introduced: 10.11) @available(iOS, introduced: 9.0)
+  @available(macOS, introduced: 10.11) @available(iOS, introduced: 9.0)
   @available(*, deprecated, renamed: "coderReadCorrupt")
   public static var coderReadCorruptError: CocoaError.Code {
     return CocoaError.Code(rawValue: 4864)
   }
 
-  @available(OSX, introduced: 10.11) @available(iOS, introduced: 9.0)
+  @available(macOS, introduced: 10.11) @available(iOS, introduced: 9.0)
   @available(*, deprecated, renamed: "coderValueNotFound")
   public static var coderValueNotFoundError: CocoaError.Code {
     return CocoaError.Code(rawValue: 4865)
@@ -1112,12 +1084,12 @@ extension CocoaError {
     return CocoaError.Code(rawValue: 262)
   }
 
-  @available(OSX, introduced: 10.5) @available(iOS, introduced: 2.0)
+  @available(macOS, introduced: 10.5) @available(iOS, introduced: 2.0)
   public static var fileReadTooLarge: CocoaError.Code {
     return CocoaError.Code(rawValue: 263)
   }
 
-  @available(OSX, introduced: 10.5) @available(iOS, introduced: 2.0)
+  @available(macOS, introduced: 10.5) @available(iOS, introduced: 2.0)
   public static var fileReadUnknownStringEncoding: CocoaError.Code {
     return CocoaError.Code(rawValue: 264)
   }
@@ -1132,7 +1104,7 @@ extension CocoaError {
     return CocoaError.Code(rawValue: 514)
   }
 
-  @available(OSX, introduced: 10.7) @available(iOS, introduced: 5.0)
+  @available(macOS, introduced: 10.7) @available(iOS, introduced: 5.0)
   public static var fileWriteFileExists: CocoaError.Code {
     return CocoaError.Code(rawValue: 516)
   }
@@ -1147,17 +1119,17 @@ extension CocoaError {
     return CocoaError.Code(rawValue: 640)
   }
 
-  @available(OSX, introduced: 10.6) @available(iOS, introduced: 4.0)
+  @available(macOS, introduced: 10.6) @available(iOS, introduced: 4.0)
   public static var fileWriteVolumeReadOnly: CocoaError.Code {
     return CocoaError.Code(rawValue: 642)
   }
 
-  @available(OSX, introduced: 10.11) @available(iOS, unavailable)
+  @available(macOS, introduced: 10.11) @available(iOS, unavailable)
   public static var fileManagerUnmountUnknown: CocoaError.Code {
     return CocoaError.Code(rawValue: 768)
   }
 
-  @available(OSX, introduced: 10.11) @available(iOS, unavailable)
+  @available(macOS, introduced: 10.11) @available(iOS, unavailable)
   public static var fileManagerUnmountBusy: CocoaError.Code {
     return CocoaError.Code(rawValue: 769)
   }
@@ -1172,119 +1144,123 @@ extension CocoaError {
     return CocoaError.Code(rawValue: 3072)
   }
 
-  @available(OSX, introduced: 10.8) @available(iOS, introduced: 6.0)
+  @available(macOS, introduced: 10.8) @available(iOS, introduced: 6.0)
   public static var featureUnsupported: CocoaError.Code {
     return CocoaError.Code(rawValue: 3328)
   }
 
-  @available(OSX, introduced: 10.5) @available(iOS, introduced: 2.0)
+  @available(macOS, introduced: 10.5) @available(iOS, introduced: 2.0)
   public static var executableNotLoadable: CocoaError.Code {
     return CocoaError.Code(rawValue: 3584)
   }
 
-  @available(OSX, introduced: 10.5) @available(iOS, introduced: 2.0)
+  @available(macOS, introduced: 10.5) @available(iOS, introduced: 2.0)
   public static var executableArchitectureMismatch: CocoaError.Code {
     return CocoaError.Code(rawValue: 3585)
   }
 
-  @available(OSX, introduced: 10.5) @available(iOS, introduced: 2.0)
+  @available(macOS, introduced: 10.5) @available(iOS, introduced: 2.0)
   public static var executableRuntimeMismatch: CocoaError.Code {
     return CocoaError.Code(rawValue: 3586)
   }
 
-  @available(OSX, introduced: 10.5) @available(iOS, introduced: 2.0)
+  @available(macOS, introduced: 10.5) @available(iOS, introduced: 2.0)
   public static var executableLoad: CocoaError.Code {
     return CocoaError.Code(rawValue: 3587)
   }
 
-  @available(OSX, introduced: 10.5) @available(iOS, introduced: 2.0)
+  @available(macOS, introduced: 10.5) @available(iOS, introduced: 2.0)
   public static var executableLink: CocoaError.Code {
     return CocoaError.Code(rawValue: 3588)
   }
 
-  @available(OSX, introduced: 10.6) @available(iOS, introduced: 4.0)
+  @available(macOS, introduced: 10.6) @available(iOS, introduced: 4.0)
   public static var propertyListReadCorrupt: CocoaError.Code {
     return CocoaError.Code(rawValue: 3840)
   }
 
-  @available(OSX, introduced: 10.6) @available(iOS, introduced: 4.0)
+  @available(macOS, introduced: 10.6) @available(iOS, introduced: 4.0)
   public static var propertyListReadUnknownVersion: CocoaError.Code {
     return CocoaError.Code(rawValue: 3841)
   }
 
-  @available(OSX, introduced: 10.6) @available(iOS, introduced: 4.0)
+  @available(macOS, introduced: 10.6) @available(iOS, introduced: 4.0)
   public static var propertyListReadStream: CocoaError.Code {
     return CocoaError.Code(rawValue: 3842)
   }
 
-  @available(OSX, introduced: 10.6) @available(iOS, introduced: 4.0)
+  @available(macOS, introduced: 10.6) @available(iOS, introduced: 4.0)
   public static var propertyListWriteStream: CocoaError.Code {
     return CocoaError.Code(rawValue: 3851)
   }
 
-  @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
+  @available(macOS, introduced: 10.10) @available(iOS, introduced: 8.0)
   public static var propertyListWriteInvalid: CocoaError.Code {
     return CocoaError.Code(rawValue: 3852)
   }
 
-  @available(OSX, introduced: 10.8) @available(iOS, introduced: 6.0)
+  @available(macOS, introduced: 10.8) @available(iOS, introduced: 6.0)
   public static var xpcConnectionInterrupted: CocoaError.Code {
     return CocoaError.Code(rawValue: 4097)
   }
 
-  @available(OSX, introduced: 10.8) @available(iOS, introduced: 6.0)
+  @available(macOS, introduced: 10.8) @available(iOS, introduced: 6.0)
   public static var xpcConnectionInvalid: CocoaError.Code {
     return CocoaError.Code(rawValue: 4099)
   }
 
-  @available(OSX, introduced: 10.8) @available(iOS, introduced: 6.0)
+  @available(macOS, introduced: 10.8) @available(iOS, introduced: 6.0)
   public static var xpcConnectionReplyInvalid: CocoaError.Code {
     return CocoaError.Code(rawValue: 4101)
   }
 
-  @available(OSX, introduced: 10.9) @available(iOS, introduced: 7.0)
+  @available(macOS, introduced: 10.9) @available(iOS, introduced: 7.0)
   public static var ubiquitousFileUnavailable: CocoaError.Code {
     return CocoaError.Code(rawValue: 4353)
   }
 
-  @available(OSX, introduced: 10.9) @available(iOS, introduced: 7.0)
+  @available(macOS, introduced: 10.9) @available(iOS, introduced: 7.0)
   public static var ubiquitousFileNotUploadedDueToQuota: CocoaError.Code {
     return CocoaError.Code(rawValue: 4354)
   }
 
-  @available(OSX, introduced: 10.9) @available(iOS, introduced: 7.0)
+  @available(macOS, introduced: 10.9) @available(iOS, introduced: 7.0)
   public static var ubiquitousFileUbiquityServerNotAvailable: CocoaError.Code {
     return CocoaError.Code(rawValue: 4355)
   }
 
-  @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
+  @available(macOS, introduced: 10.10) @available(iOS, introduced: 8.0)
   public static var userActivityHandoffFailed: CocoaError.Code {
     return CocoaError.Code(rawValue: 4608)
   }
 
-  @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
+  @available(macOS, introduced: 10.10) @available(iOS, introduced: 8.0)
   public static var userActivityConnectionUnavailable: CocoaError.Code {
     return CocoaError.Code(rawValue: 4609)
   }
 
-  @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
+  @available(macOS, introduced: 10.10) @available(iOS, introduced: 8.0)
   public static var userActivityRemoteApplicationTimedOut: CocoaError.Code {
     return CocoaError.Code(rawValue: 4610)
   }
 
-  @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
+  @available(macOS, introduced: 10.10) @available(iOS, introduced: 8.0)
   public static var userActivityHandoffUserInfoTooLarge: CocoaError.Code {
     return CocoaError.Code(rawValue: 4611)
   }
 
-  @available(OSX, introduced: 10.11) @available(iOS, introduced: 9.0)
+  @available(macOS, introduced: 10.11) @available(iOS, introduced: 9.0)
   public static var coderReadCorrupt: CocoaError.Code {
     return CocoaError.Code(rawValue: 4864)
   }
 
-  @available(OSX, introduced: 10.11) @available(iOS, introduced: 9.0)
+  @available(macOS, introduced: 10.11) @available(iOS, introduced: 9.0)
   public static var coderValueNotFound: CocoaError.Code {
     return CocoaError.Code(rawValue: 4865)
+  }
+
+  public static var coderInvalidValue: CocoaError.Code {
+    return CocoaError.Code(rawValue: 4866)
   }
 }
 
@@ -1326,13 +1302,13 @@ extension CocoaError {
     return CocoaError.Code(rawValue: 262)
   }
 
-  @available(OSX, introduced: 10.5) @available(iOS, introduced: 2.0)
+  @available(macOS, introduced: 10.5) @available(iOS, introduced: 2.0)
   @available(*, deprecated, renamed: "fileReadTooLarge")
   public static var fileReadTooLargeError: CocoaError.Code {
     return CocoaError.Code(rawValue: 263)
   }
 
-  @available(OSX, introduced: 10.5) @available(iOS, introduced: 2.0)
+  @available(macOS, introduced: 10.5) @available(iOS, introduced: 2.0)
   @available(*, deprecated, renamed: "fileReadUnknownStringEncoding")
   public static var fileReadUnknownStringEncodingError: CocoaError.Code {
     return CocoaError.Code(rawValue: 264)
@@ -1353,7 +1329,7 @@ extension CocoaError {
     return CocoaError.Code(rawValue: 514)
   }
 
-  @available(OSX, introduced: 10.7) @available(iOS, introduced: 5.0)
+  @available(macOS, introduced: 10.7) @available(iOS, introduced: 5.0)
   @available(*, deprecated, renamed: "fileWriteFileExists")
   public static var fileWriteFileExistsError: CocoaError.Code {
     return CocoaError.Code(rawValue: 516)
@@ -1374,19 +1350,19 @@ extension CocoaError {
     return CocoaError.Code(rawValue: 640)
   }
 
-  @available(OSX, introduced: 10.6) @available(iOS, introduced: 4.0)
+  @available(macOS, introduced: 10.6) @available(iOS, introduced: 4.0)
   @available(*, deprecated, renamed: "fileWriteVolumeReadOnly")
   public static var fileWriteVolumeReadOnlyError: CocoaError.Code {
     return CocoaError.Code(rawValue: 642)
   }
 
-  @available(OSX, introduced: 10.11) @available(iOS, unavailable)
+  @available(macOS, introduced: 10.11) @available(iOS, unavailable)
   @available(*, deprecated, renamed: "fileManagerUnmountUnknown")
   public static var fileManagerUnmountUnknownError: CocoaError.Code {
     return CocoaError.Code(rawValue: 768)
   }
 
-  @available(OSX, introduced: 10.11) @available(iOS, unavailable)
+  @available(macOS, introduced: 10.11) @available(iOS, unavailable)
   @available(*, deprecated, renamed: "fileManagerUnmountBusy")
   public static var fileManagerUnmountBusyError: CocoaError.Code {
     return CocoaError.Code(rawValue: 769)
@@ -1407,115 +1383,115 @@ extension CocoaError {
     return CocoaError.Code(rawValue: 3072)
   }
 
-  @available(OSX, introduced: 10.8) @available(iOS, introduced: 6.0)
+  @available(macOS, introduced: 10.8) @available(iOS, introduced: 6.0)
   @available(*, deprecated, renamed: "featureUnsupported")
   public static var featureUnsupportedError: CocoaError.Code {
     return CocoaError.Code(rawValue: 3328)
   }
 
-  @available(OSX, introduced: 10.5) @available(iOS, introduced: 2.0)
+  @available(macOS, introduced: 10.5) @available(iOS, introduced: 2.0)
   @available(*, deprecated, renamed: "executableNotLoadable")
   public static var executableNotLoadableError: CocoaError.Code {
     return CocoaError.Code(rawValue: 3584)
   }
 
-  @available(OSX, introduced: 10.5) @available(iOS, introduced: 2.0)
+  @available(macOS, introduced: 10.5) @available(iOS, introduced: 2.0)
   @available(*, deprecated, renamed: "executableArchitectureMismatch")
   public static var executableArchitectureMismatchError: CocoaError.Code {
     return CocoaError.Code(rawValue: 3585)
   }
 
-  @available(OSX, introduced: 10.5) @available(iOS, introduced: 2.0)
+  @available(macOS, introduced: 10.5) @available(iOS, introduced: 2.0)
   @available(*, deprecated, renamed: "executableRuntimeMismatch")
   public static var executableRuntimeMismatchError: CocoaError.Code {
     return CocoaError.Code(rawValue: 3586)
   }
 
-  @available(OSX, introduced: 10.5) @available(iOS, introduced: 2.0)
+  @available(macOS, introduced: 10.5) @available(iOS, introduced: 2.0)
   @available(*, deprecated, renamed: "executableLoad")
   public static var executableLoadError: CocoaError.Code {
     return CocoaError.Code(rawValue: 3587)
   }
 
-  @available(OSX, introduced: 10.5) @available(iOS, introduced: 2.0)
+  @available(macOS, introduced: 10.5) @available(iOS, introduced: 2.0)
   @available(*, deprecated, renamed: "executableLink")
   public static var executableLinkError: CocoaError.Code {
     return CocoaError.Code(rawValue: 3588)
   }
 
-  @available(OSX, introduced: 10.6) @available(iOS, introduced: 4.0)
+  @available(macOS, introduced: 10.6) @available(iOS, introduced: 4.0)
   @available(*, deprecated, renamed: "propertyListReadCorrupt")
   public static var propertyListReadCorruptError: CocoaError.Code {
     return CocoaError.Code(rawValue: 3840)
   }
 
-  @available(OSX, introduced: 10.6) @available(iOS, introduced: 4.0)
+  @available(macOS, introduced: 10.6) @available(iOS, introduced: 4.0)
   @available(*, deprecated, renamed: "propertyListReadUnknownVersion")
   public static var propertyListReadUnknownVersionError: CocoaError.Code {
     return CocoaError.Code(rawValue: 3841)
   }
 
-  @available(OSX, introduced: 10.6) @available(iOS, introduced: 4.0)
+  @available(macOS, introduced: 10.6) @available(iOS, introduced: 4.0)
   @available(*, deprecated, renamed: "propertyListReadStream")
   public static var propertyListReadStreamError: CocoaError.Code {
     return CocoaError.Code(rawValue: 3842)
   }
 
-  @available(OSX, introduced: 10.6) @available(iOS, introduced: 4.0)
+  @available(macOS, introduced: 10.6) @available(iOS, introduced: 4.0)
   @available(*, deprecated, renamed: "propertyListWriteStream")
   public static var propertyListWriteStreamError: CocoaError.Code {
     return CocoaError.Code(rawValue: 3851)
   }
 
-  @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
+  @available(macOS, introduced: 10.10) @available(iOS, introduced: 8.0)
   @available(*, deprecated, renamed: "propertyListWriteInvalid")
   public static var propertyListWriteInvalidError: CocoaError.Code {
     return CocoaError.Code(rawValue: 3852)
   }
 
-  @available(OSX, introduced: 10.9) @available(iOS, introduced: 7.0)
+  @available(macOS, introduced: 10.9) @available(iOS, introduced: 7.0)
   @available(*, deprecated, renamed: "ubiquitousFileUnavailable")
   public static var ubiquitousFileUnavailableError: CocoaError.Code {
     return CocoaError.Code(rawValue: 4353)
   }
 
-  @available(OSX, introduced: 10.9) @available(iOS, introduced: 7.0)
+  @available(macOS, introduced: 10.9) @available(iOS, introduced: 7.0)
   @available(*, deprecated, renamed: "ubiquitousFileNotUploadedDueToQuota")
   public static var ubiquitousFileNotUploadedDueToQuotaError: CocoaError.Code {
     return CocoaError.Code(rawValue: 4354)
   }
 
-  @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
+  @available(macOS, introduced: 10.10) @available(iOS, introduced: 8.0)
   @available(*, deprecated, renamed: "userActivityHandoffFailed")
   public static var userActivityHandoffFailedError: CocoaError.Code {
     return CocoaError.Code(rawValue: 4608)
   }
 
-  @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
+  @available(macOS, introduced: 10.10) @available(iOS, introduced: 8.0)
   @available(*, deprecated, renamed: "userActivityConnectionUnavailable")
   public static var userActivityConnectionUnavailableError: CocoaError.Code {
     return CocoaError.Code(rawValue: 4609)
   }
 
-  @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
+  @available(macOS, introduced: 10.10) @available(iOS, introduced: 8.0)
   @available(*, deprecated, renamed: "userActivityRemoteApplicationTimedOut")
   public static var userActivityRemoteApplicationTimedOutError: CocoaError.Code {
     return CocoaError.Code(rawValue: 4610)
   }
 
-  @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
+  @available(macOS, introduced: 10.10) @available(iOS, introduced: 8.0)
   @available(*, deprecated, renamed: "userActivityHandoffUserInfoTooLarge")
   public static var userActivityHandoffUserInfoTooLargeError: CocoaError.Code {
     return CocoaError.Code(rawValue: 4611)
   }
 
-  @available(OSX, introduced: 10.11) @available(iOS, introduced: 9.0)
+  @available(macOS, introduced: 10.11) @available(iOS, introduced: 9.0)
   @available(*, deprecated, renamed: "coderReadCorrupt")
   public static var coderReadCorruptError: CocoaError.Code {
     return CocoaError.Code(rawValue: 4864)
   }
 
-  @available(OSX, introduced: 10.11) @available(iOS, introduced: 9.0)
+  @available(macOS, introduced: 10.11) @available(iOS, introduced: 9.0)
   @available(*, deprecated, renamed: "coderValueNotFound")
   public static var coderValueNotFoundError: CocoaError.Code {
     return CocoaError.Code(rawValue: 4865)
@@ -1523,12 +1499,12 @@ extension CocoaError {
 }
 
 extension CocoaError {
-  @available(OSX, introduced: 10.11) @available(iOS, introduced: 9.0)
+  @available(macOS, introduced: 10.11) @available(iOS, introduced: 9.0)
   public var isCoderError: Bool {
     return code.rawValue >= 4864 && code.rawValue <= 4991
   }
 
-  @available(OSX, introduced: 10.5) @available(iOS, introduced: 2.0)
+  @available(macOS, introduced: 10.5) @available(iOS, introduced: 2.0)
   public var isExecutableError: Bool {
     return code.rawValue >= 3584 && code.rawValue <= 3839
   }
@@ -1541,17 +1517,17 @@ extension CocoaError {
     return code.rawValue >= 2048 && code.rawValue <= 2559
   }
 
-  @available(OSX, introduced: 10.6) @available(iOS, introduced: 4.0)
+  @available(macOS, introduced: 10.6) @available(iOS, introduced: 4.0)
   public var isPropertyListError: Bool {
     return code.rawValue >= 3840 && code.rawValue <= 4095
   }
 
-  @available(OSX, introduced: 10.9) @available(iOS, introduced: 7.0)
+  @available(macOS, introduced: 10.9) @available(iOS, introduced: 7.0)
   public var isUbiquitousFileError: Bool {
     return code.rawValue >= 4352 && code.rawValue <= 4607
   }
 
-  @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
+  @available(macOS, introduced: 10.10) @available(iOS, introduced: 8.0)
   public var isUserActivityError: Bool {
     return code.rawValue >= 4608 && code.rawValue <= 4863
   }
@@ -1560,7 +1536,7 @@ extension CocoaError {
     return code.rawValue >= 1024 && code.rawValue <= 2047
   }
 
-  @available(OSX, introduced: 10.8) @available(iOS, introduced: 6.0)
+  @available(macOS, introduced: 10.8) @available(iOS, introduced: 6.0)
   public var isXPCConnectionError: Bool {
     return code.rawValue >= 4096 && code.rawValue <= 4224
   }
@@ -1812,81 +1788,188 @@ public struct URLError : _BridgedStoredNSError {
     self._nsError = error
   }
 
-  public static var _nsErrorDomain: String { return NSURLErrorDomain }
+  public static var errorDomain: String { return NSURLErrorDomain }
 
-  @objc public enum Code : Int, _ErrorCodeProtocol {
+  /// The error code itself.
+  public struct Code : RawRepresentable, Hashable, _ErrorCodeProtocol {
     public typealias _ErrorType = URLError
 
-    case unknown = -1
-    case cancelled = -999
-    case badURL = -1000
-    case timedOut = -1001
-    case unsupportedURL = -1002
-    case cannotFindHost = -1003
-    case cannotConnectToHost = -1004
-    case networkConnectionLost = -1005
-    case dnsLookupFailed = -1006
-    case httpTooManyRedirects = -1007
-    case resourceUnavailable = -1008
-    case notConnectedToInternet = -1009
-    case redirectToNonExistentLocation = -1010
-    case badServerResponse = -1011
-    case userCancelledAuthentication = -1012
-    case userAuthenticationRequired = -1013
-    case zeroByteResource = -1014
-    case cannotDecodeRawData = -1015
-    case cannotDecodeContentData = -1016
-    case cannotParseResponse = -1017
-    case fileDoesNotExist = -1100
-    case fileIsDirectory = -1101
-    case noPermissionsToReadFile = -1102
-    case secureConnectionFailed = -1200
-    case serverCertificateHasBadDate = -1201
-    case serverCertificateUntrusted = -1202
-    case serverCertificateHasUnknownRoot = -1203
-    case serverCertificateNotYetValid = -1204
-    case clientCertificateRejected = -1205
-    case clientCertificateRequired = -1206
-    case cannotLoadFromNetwork = -2000
-    case cannotCreateFile = -3000
-    case cannotOpenFile = -3001
-    case cannotCloseFile = -3002
-    case cannotWriteToFile = -3003
-    case cannotRemoveFile = -3004
-    case cannotMoveFile = -3005
-    case downloadDecodingFailedMidStream = -3006
-    case downloadDecodingFailedToComplete = -3007
+    public let rawValue: Int
 
-    @available(OSX, introduced: 10.7) @available(iOS, introduced: 3.0)
-    case internationalRoamingOff = -1018
-
-    @available(OSX, introduced: 10.7) @available(iOS, introduced: 3.0)
-    case callIsActive = -1019
-
-    @available(OSX, introduced: 10.7) @available(iOS, introduced: 3.0)
-    case dataNotAllowed = -1020
-
-    @available(OSX, introduced: 10.7) @available(iOS, introduced: 3.0)
-    case requestBodyStreamExhausted = -1021
-
-    @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
-    static var backgroundSessionRequiresSharedContainer: Code {
-      return Code(rawValue: -995)!
+    public init(rawValue: Int) {
+      self.rawValue = rawValue
     }
 
-    @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
-    static var backgroundSessionInUseByAnotherProcess: Code {
-      return Code(rawValue: -996)!
-    }
-
-    @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
-    static var backgroundSessionWasDisconnected: Code {
-      return Code(rawValue: -997)!
+    public var hashValue: Int {
+      return self.rawValue
     }
   }
 }
 
-public extension URLError {
+extension URLError.Code {
+  public static var unknown: URLError.Code {
+    return URLError.Code(rawValue: -1)
+  }
+  public static var cancelled: URLError.Code {
+    return URLError.Code(rawValue: -999)
+  }
+  public static var badURL: URLError.Code {
+    return URLError.Code(rawValue: -1000)
+  }
+  public static var timedOut: URLError.Code {
+    return URLError.Code(rawValue: -1001)
+  }
+  public static var unsupportedURL: URLError.Code {
+    return URLError.Code(rawValue: -1002)
+  }
+  public static var cannotFindHost: URLError.Code {
+    return URLError.Code(rawValue: -1003)
+  }
+  public static var cannotConnectToHost: URLError.Code {
+    return URLError.Code(rawValue: -1004)
+  }
+  public static var networkConnectionLost: URLError.Code {
+    return URLError.Code(rawValue: -1005)
+  }
+  public static var dnsLookupFailed: URLError.Code {
+    return URLError.Code(rawValue: -1006)
+  }
+  public static var httpTooManyRedirects: URLError.Code {
+    return URLError.Code(rawValue: -1007)
+  }
+  public static var resourceUnavailable: URLError.Code {
+    return URLError.Code(rawValue: -1008)
+  }
+  public static var notConnectedToInternet: URLError.Code {
+    return URLError.Code(rawValue: -1009)
+  }
+  public static var redirectToNonExistentLocation: URLError.Code {
+    return URLError.Code(rawValue: -1010)
+  }
+  public static var badServerResponse: URLError.Code {
+    return URLError.Code(rawValue: -1011)
+  }
+  public static var userCancelledAuthentication: URLError.Code {
+    return URLError.Code(rawValue: -1012)
+  }
+  public static var userAuthenticationRequired: URLError.Code {
+    return URLError.Code(rawValue: -1013)
+  }
+  public static var zeroByteResource: URLError.Code {
+    return URLError.Code(rawValue: -1014)
+  }
+  public static var cannotDecodeRawData: URLError.Code {
+    return URLError.Code(rawValue: -1015)
+  }
+  public static var cannotDecodeContentData: URLError.Code {
+    return URLError.Code(rawValue: -1016)
+  }
+  public static var cannotParseResponse: URLError.Code {
+    return URLError.Code(rawValue: -1017)
+  }
+  @available(macOS, introduced: 10.11) @available(iOS, introduced: 9.0)
+  public static var appTransportSecurityRequiresSecureConnection: URLError.Code {
+    return URLError.Code(rawValue: -1022)
+  }
+  public static var fileDoesNotExist: URLError.Code {
+    return URLError.Code(rawValue: -1100)
+  }
+  public static var fileIsDirectory: URLError.Code {
+    return URLError.Code(rawValue: -1101)
+  }
+  public static var noPermissionsToReadFile: URLError.Code {
+    return URLError.Code(rawValue: -1102)
+  }
+  @available(macOS, introduced: 10.5) @available(iOS, introduced: 2.0)
+  public static var dataLengthExceedsMaximum: URLError.Code {
+    return URLError.Code(rawValue: -1103)
+  }
+  public static var secureConnectionFailed: URLError.Code {
+    return URLError.Code(rawValue: -1200)
+  }
+  public static var serverCertificateHasBadDate: URLError.Code {
+    return URLError.Code(rawValue: -1201)
+  }
+  public static var serverCertificateUntrusted: URLError.Code {
+    return URLError.Code(rawValue: -1202)
+  }
+  public static var serverCertificateHasUnknownRoot: URLError.Code {
+    return URLError.Code(rawValue: -1203)
+  }
+  public static var serverCertificateNotYetValid: URLError.Code {
+    return URLError.Code(rawValue: -1204)
+  }
+  public static var clientCertificateRejected: URLError.Code {
+    return URLError.Code(rawValue: -1205)
+  }
+  public static var clientCertificateRequired: URLError.Code {
+    return URLError.Code(rawValue: -1206)
+  }
+  public static var cannotLoadFromNetwork: URLError.Code {
+    return URLError.Code(rawValue: -2000)
+  }
+  public static var cannotCreateFile: URLError.Code {
+    return URLError.Code(rawValue: -3000)
+  }
+  public static var cannotOpenFile: URLError.Code {
+    return URLError.Code(rawValue: -3001)
+  }
+  public static var cannotCloseFile: URLError.Code {
+    return URLError.Code(rawValue: -3002)
+  }
+  public static var cannotWriteToFile: URLError.Code {
+    return URLError.Code(rawValue: -3003)
+  }
+  public static var cannotRemoveFile: URLError.Code {
+    return URLError.Code(rawValue: -3004)
+  }
+  public static var cannotMoveFile: URLError.Code {
+    return URLError.Code(rawValue: -3005)
+  }
+  public static var downloadDecodingFailedMidStream: URLError.Code {
+    return URLError.Code(rawValue: -3006)
+  }
+  public static var downloadDecodingFailedToComplete: URLError.Code {
+    return URLError.Code(rawValue: -3007)
+  }
+
+  @available(macOS, introduced: 10.7) @available(iOS, introduced: 3.0)
+  public static var internationalRoamingOff: URLError.Code {
+    return URLError.Code(rawValue: -1018)
+  }
+
+  @available(macOS, introduced: 10.7) @available(iOS, introduced: 3.0)
+  public static var callIsActive: URLError.Code {
+    return URLError.Code(rawValue: -1019)
+  }
+
+  @available(macOS, introduced: 10.7) @available(iOS, introduced: 3.0)
+  public static var dataNotAllowed: URLError.Code {
+    return URLError.Code(rawValue: -1020)
+  }
+
+  @available(macOS, introduced: 10.7) @available(iOS, introduced: 3.0)
+  public static var requestBodyStreamExhausted: URLError.Code {
+    return URLError.Code(rawValue: -1021)
+  }
+
+  @available(macOS, introduced: 10.10) @available(iOS, introduced: 8.0)
+  public static var backgroundSessionRequiresSharedContainer: URLError.Code {
+    return URLError.Code(rawValue: -995)
+  }
+
+  @available(macOS, introduced: 10.10) @available(iOS, introduced: 8.0)
+  public static var backgroundSessionInUseByAnotherProcess: URLError.Code {
+    return URLError.Code(rawValue: -996)
+  }
+
+  @available(macOS, introduced: 10.10) @available(iOS, introduced: 8.0)
+  public static var backgroundSessionWasDisconnected: URLError.Code {
+    return URLError.Code(rawValue: -997)
+  }
+}
+
+extension URLError {
   private var _nsUserInfo: [AnyHashable : Any] {
     return (self as NSError).userInfo
   }
@@ -1911,7 +1994,7 @@ public extension URLError {
   }
 }
 
-public extension URLError {
+extension URLError {
   public static var unknown: URLError.Code {
     return .unknown
   }
@@ -1992,6 +2075,11 @@ public extension URLError {
     return .cannotParseResponse
   }
 
+  @available(macOS, introduced: 10.11) @available(iOS, introduced: 9.0)
+  public static var appTransportSecurityRequiresSecureConnection: URLError.Code {
+    return .appTransportSecurityRequiresSecureConnection
+  }
+
   public static var fileDoesNotExist: URLError.Code {
     return .fileDoesNotExist
   }
@@ -2002,6 +2090,11 @@ public extension URLError {
 
   public static var noPermissionsToReadFile: URLError.Code {
     return .noPermissionsToReadFile
+  }
+
+  @available(macOS, introduced: 10.5) @available(iOS, introduced: 2.0)
+  public static var dataLengthExceedsMaximum: URLError.Code {
+    return .dataLengthExceedsMaximum
   }
 
   public static var secureConnectionFailed: URLError.Code {
@@ -2068,37 +2161,37 @@ public extension URLError {
     return .downloadDecodingFailedToComplete
   }
 
-  @available(OSX, introduced: 10.7) @available(iOS, introduced: 3.0)
+  @available(macOS, introduced: 10.7) @available(iOS, introduced: 3.0)
   public static var internationalRoamingOff: URLError.Code {
     return .internationalRoamingOff
   }
 
-  @available(OSX, introduced: 10.7) @available(iOS, introduced: 3.0)
+  @available(macOS, introduced: 10.7) @available(iOS, introduced: 3.0)
   public static var callIsActive: URLError.Code {
     return .callIsActive
   }
 
-  @available(OSX, introduced: 10.7) @available(iOS, introduced: 3.0)
+  @available(macOS, introduced: 10.7) @available(iOS, introduced: 3.0)
   public static var dataNotAllowed: URLError.Code {
     return .dataNotAllowed
   }
 
-  @available(OSX, introduced: 10.7) @available(iOS, introduced: 3.0)
+  @available(macOS, introduced: 10.7) @available(iOS, introduced: 3.0)
   public static var requestBodyStreamExhausted: URLError.Code {
     return .requestBodyStreamExhausted
   }
 
-  @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
+  @available(macOS, introduced: 10.10) @available(iOS, introduced: 8.0)
   public static var backgroundSessionRequiresSharedContainer: Code {
     return .backgroundSessionRequiresSharedContainer
   }
 
-  @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
+  @available(macOS, introduced: 10.10) @available(iOS, introduced: 8.0)
   public static var backgroundSessionInUseByAnotherProcess: Code {
     return .backgroundSessionInUseByAnotherProcess
   }
 
-  @available(OSX, introduced: 10.10) @available(iOS, introduced: 8.0)
+  @available(macOS, introduced: 10.10) @available(iOS, introduced: 8.0)
   public static var backgroundSessionWasDisconnected: Code {
     return .backgroundSessionWasDisconnected
   }
@@ -2205,6 +2298,11 @@ extension URLError {
     fatalError("unavailable accessor can't be called")
   }
 
+  @available(*, unavailable, renamed: "appTransportSecurityRequiresSecureConnection")
+  public static var AppTransportSecurityRequiresSecureConnection: URLError.Code {
+    fatalError("unavailable accessor can't be called")
+  }
+
   @available(*, unavailable, renamed: "fileDoesNotExist")
   public static var FileDoesNotExist: URLError.Code {
     fatalError("unavailable accessor can't be called")
@@ -2217,6 +2315,11 @@ extension URLError {
 
   @available(*, unavailable, renamed: "noPermissionsToReadFile")
   public static var NoPermissionsToReadFile: URLError.Code {
+    fatalError("unavailable accessor can't be called")
+  }
+
+  @available(*, unavailable, renamed: "dataLengthExceedsMaximum")
+  public static var DataLengthExceedsMaximum: URLError.Code {
     fatalError("unavailable accessor can't be called")
   }
 
@@ -2345,7 +2448,7 @@ public struct POSIXError : _BridgedStoredNSError {
     self._nsError = error
   }
 
-  public static var _nsErrorDomain: String { return NSPOSIXErrorDomain }
+  public static var errorDomain: String { return NSPOSIXErrorDomain }
 
   public typealias Code = POSIXErrorCode
 }
@@ -2831,7 +2934,7 @@ public struct MachError : _BridgedStoredNSError {
     self._nsError = error
   }
 
-  public static var _nsErrorDomain: String { return NSMachErrorDomain }
+  public static var errorDomain: String { return NSMachErrorDomain }
 
   public typealias Code = MachErrorCode
 }
@@ -3135,6 +3238,7 @@ extension MachError {
 }
 
 public struct ErrorUserInfoKey : RawRepresentable, _SwiftNewtypeWrapper, Equatable, Hashable, _ObjectiveCBridgeable {
+  public typealias _ObjectiveCType = NSString
   public init(rawValue: String) { self.rawValue = rawValue }
   public var rawValue: String
 }

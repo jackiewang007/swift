@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -35,7 +35,15 @@ namespace swift {
     StringRef ModuleLinkName;
     ArrayRef<std::string> ExtraClangOptions;
 
+    struct FileDependency {
+      uint64_t Size;
+      uint64_t Hash;
+      std::string Path;
+    };
+    ArrayRef<FileDependency> Dependencies;
+
     bool AutolinkForceLoad = false;
+    bool EnableNestedTypeLookupTable = false;
     bool SerializeAllSIL = false;
     bool SerializeOptionsForDebugging = false;
     bool IsSIB = false;

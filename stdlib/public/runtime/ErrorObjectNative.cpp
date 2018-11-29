@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -46,7 +46,7 @@ _getErrorAllocatedSizeAndAlignmentMask(const Metadata *type) {
 }
 
 /// Destructor for an Error box.
-static void _destroyErrorObject(HeapObject *obj) {
+static SWIFT_CC(swift) void _destroyErrorObject(SWIFT_CONTEXT HeapObject *obj) {
   auto error = static_cast<SwiftError *>(obj);
   
   // Destroy the value inside.
@@ -60,13 +60,11 @@ static void _destroyErrorObject(HeapObject *obj) {
 
 /// Heap metadata for Error boxes.
 static const FullMetadata<HeapMetadata> ErrorMetadata{
-  HeapMetadataHeader{{_destroyErrorObject}, {&_TWVBo}},
-  Metadata{MetadataKind::ErrorObject},
+  HeapMetadataHeader{{_destroyErrorObject}, {&VALUE_WITNESS_SYM(Bo)}},
+  HeapMetadata(MetadataKind::ErrorObject),
 };
 
-SWIFT_CC(swift) SWIFT_RUNTIME_EXPORT
-extern "C"
-BoxPair::Return
+BoxPair
 swift::swift_allocError(const swift::Metadata *type,
                         const swift::WitnessTable *errorConformance,
                         OpaqueValue *initialValue,
@@ -96,7 +94,7 @@ swift::swift_allocError(const swift::Metadata *type,
 void
 swift::swift_deallocError(SwiftError *error, const Metadata *type) {
   auto sizeAndAlign = _getErrorAllocatedSizeAndAlignmentMask(type);
-  swift_deallocObject(error, sizeAndAlign.first, sizeAndAlign.second);
+  swift_deallocUninitializedObject(error, sizeAndAlign.first, sizeAndAlign.second);
 }
 
 void
@@ -108,6 +106,11 @@ swift::swift_getErrorValue(const SwiftError *errorObject,
   out->errorConformance = errorObject->errorConformance;
 }
 
-void swift::swift_willThrow(SwiftError *object) { }
+/// Breakpoint hook for debuggers.
+SWIFT_CC(swift) void
+swift::swift_willThrow(SWIFT_CONTEXT void *unused,
+                       SWIFT_ERROR_RESULT SwiftError **error) {
+  // do nothing
+}
 
 #endif

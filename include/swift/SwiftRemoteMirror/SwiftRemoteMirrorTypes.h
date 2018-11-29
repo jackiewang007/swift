@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 ///
@@ -35,12 +35,35 @@ typedef struct swift_reflection_section {
 /// \brief Represents the set of Swift reflection sections of an image.
 /// Not all sections may be present.
 typedef struct swift_reflection_info {
-  swift_reflection_section_t fieldmd;
-  swift_reflection_section_t assocty;
-  swift_reflection_section_t builtin;
-  swift_reflection_section_t capture;
-  swift_reflection_section_t typeref;
-  swift_reflection_section_t reflstr;
+  struct {
+    swift_reflection_section_t section;
+    uintptr_t offset;
+  } field;
+
+  struct {
+    swift_reflection_section_t section;
+    uintptr_t offset;
+  } associated_types;
+
+  struct {
+    swift_reflection_section_t section;
+    uintptr_t offset;
+  } builtin_types;
+
+  struct {
+    swift_reflection_section_t section;
+    uintptr_t offset;
+  } capture;
+
+  struct {
+    swift_reflection_section_t section;
+    uintptr_t offset;
+  } type_references;
+
+  struct {
+    swift_reflection_section_t section;
+    uintptr_t offset;
+  } reflection_strings;
 
   // Start address in local and remote address spaces.
   uintptr_t LocalStartAddress;

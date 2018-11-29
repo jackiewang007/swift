@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -162,9 +162,21 @@ void EnumPayload::insertValue(IRGenFunction &IGF, llvm::Value *value,
         subvalue = IGF.Builder.CreateLShr(subvalue,
                                llvm::ConstantInt::get(valueIntTy, valueOffset));
       subvalue = IGF.Builder.CreateZExtOrTrunc(subvalue, payloadIntTy);
+#if defined(__BIG_ENDIAN__)
+      if ((valueBitWidth == 32 || valueBitWidth == 16 || valueBitWidth == 8 || valueBitWidth == 1) &&
+          payloadBitWidth > (payloadValueOffset + valueBitWidth)) {
+        unsigned shiftBitWidth = valueBitWidth;
+        if (valueBitWidth == 1) {
+          shiftBitWidth = 8;
+        }
+        subvalue = IGF.Builder.CreateShl(subvalue,
+          llvm::ConstantInt::get(payloadIntTy, (payloadBitWidth - shiftBitWidth) - payloadValueOffset));
+      }
+#else
       if (payloadValueOffset > 0)
         subvalue = IGF.Builder.CreateShl(subvalue,
                       llvm::ConstantInt::get(payloadIntTy, payloadValueOffset));
+#endif
       
       // If there hasn't yet been a value stored here, we can use the adjusted
       // value directly.
@@ -218,9 +230,21 @@ llvm::Value *EnumPayload::extractValue(IRGenFunction &IGF, llvm::Type *type,
         llvm::IntegerType::get(IGF.IGM.getLLVMContext(), payloadBitWidth);
 
       value = IGF.Builder.CreateBitOrPointerCast(value, payloadIntTy);
+#if defined(__BIG_ENDIAN__)
+      if ((valueBitWidth == 32 || valueBitWidth == 16 || valueBitWidth == 8 || valueBitWidth == 1) &&
+          payloadBitWidth > (payloadValueOffset + valueBitWidth)) {
+        unsigned shiftBitWidth = valueBitWidth;
+        if (valueBitWidth == 1) {
+          shiftBitWidth = 8;
+        }
+        value = IGF.Builder.CreateLShr(value,
+          llvm::ConstantInt::get(value->getType(), (payloadBitWidth - shiftBitWidth) - payloadValueOffset));
+      }
+#else
       if (payloadValueOffset > 0)
         value = IGF.Builder.CreateLShr(value,
                   llvm::ConstantInt::get(value->getType(), payloadValueOffset));
+#endif
       if (valueBitWidth > payloadBitWidth)
         value = IGF.Builder.CreateZExt(value, valueIntTy);
       if (valueOffset > 0)
@@ -355,7 +379,7 @@ struct ult {
     return a.ult(b);
   }
 };
-}
+} // end anonymous namespace
 
 static void emitSubSwitch(IRGenFunction &IGF,
                     MutableArrayRef<EnumPayload::LazyValue> values,

@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -39,6 +39,10 @@ enum class ObjCClassFlags : uint32_t {
 
   /// This class has the exception attribute.
   Exception            = 0x00020,
+
+  /// This class provides a metadata update callback trailing the ro-data.
+  /// Note that we're re-using the obsolete flag above.
+  HasMetadataUpdateCallback = 0x00040,
 
   /// (Obsolete) ARC-specific: this class has a .release_ivars method.
   HasIvarReleaser      = 0x00040,

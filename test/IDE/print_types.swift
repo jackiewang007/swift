@@ -1,12 +1,12 @@
 // This file should not have any syntax or type checker errors.
-// RUN: %target-parse-verify-swift
+// RUN: %target-typecheck-verify-swift
 
 // RUN: %target-swift-ide-test -print-types -source-filename %s -fully-qualified-types=false | %FileCheck %s -strict-whitespace
 // RUN: %target-swift-ide-test -print-types -source-filename %s -fully-qualified-types=true | %FileCheck %s -check-prefix=FULL -strict-whitespace
 
 typealias MyInt = Int
 // CHECK: TypeAliasDecl '''MyInt''' MyInt.Type{{$}}
-// FULL:  TypeAliasDecl '''MyInt''' swift_ide_test.MyInt.Type{{$}}
+// FULL:  TypeAliasDecl '''MyInt''' MyInt.Type{{$}}
 
 func testVariableTypes(_ param: Int, param2: inout Double) {
 // CHECK: FuncDecl '''testVariableTypes''' (Int, inout Double) -> (){{$}}
@@ -14,57 +14,57 @@ func testVariableTypes(_ param: Int, param2: inout Double) {
 
   var a1 = 42
 // CHECK: VarDecl '''a1''' Int{{$}}
-// CHECK:         IntegerLiteralExpr:[[@LINE-2]] '''42''' Int2048{{$}}
+// CHECK:         IntegerLiteralExpr:[[@LINE-2]] '''42''' Builtin.IntLiteral{{$}}
 // FULL:  VarDecl '''a1''' Swift.Int{{$}}
-// FULL:          IntegerLiteralExpr:[[@LINE-4]] '''42''' Builtin.Int2048{{$}}
+// FULL:          IntegerLiteralExpr:[[@LINE-4]] '''42''' Builtin.IntLiteral{{$}}
   a1 = 17; _ = a1
 
   
   var a2 : Int = 42
 // CHECK: VarDecl '''a2''' Int{{$}}
-// CHECK:         IntegerLiteralExpr:[[@LINE-2]] '''42''' Int2048{{$}}
+// CHECK:         IntegerLiteralExpr:[[@LINE-2]] '''42''' Builtin.IntLiteral{{$}}
 // FULL:  VarDecl '''a2''' Swift.Int{{$}}
-// FULL:          IntegerLiteralExpr:[[@LINE-4]] '''42''' Builtin.Int2048{{$}}
+// FULL:          IntegerLiteralExpr:[[@LINE-4]] '''42''' Builtin.IntLiteral{{$}}
   a2 = 17; _ = a2
 
   var a3 = Int16(42)
 // CHECK: VarDecl '''a3''' Int16{{$}}
-// CHECK:         IntegerLiteralExpr:[[@LINE-2]] '''42''' Int2048{{$}}
+// CHECK:         IntegerLiteralExpr:[[@LINE-2]] '''42''' Builtin.IntLiteral{{$}}
 // FULL:  VarDecl '''a3''' Swift.Int16{{$}}
-// FULL:          IntegerLiteralExpr:[[@LINE-4]] '''42''' Builtin.Int2048{{$}}
+// FULL:          IntegerLiteralExpr:[[@LINE-4]] '''42''' Builtin.IntLiteral{{$}}
   a3 = 17; _ = a3
 
 
   var a4 = Int32(42)
 // CHECK: VarDecl '''a4''' Int32{{$}}
-// CHECK:         IntegerLiteralExpr:[[@LINE-2]] '''42''' Int2048{{$}}
+// CHECK:         IntegerLiteralExpr:[[@LINE-2]] '''42''' Builtin.IntLiteral{{$}}
 // FULL:  VarDecl '''a4''' Swift.Int32{{$}}
-// FULL:          IntegerLiteralExpr:[[@LINE-4]] '''42''' Builtin.Int2048{{$}}
+// FULL:          IntegerLiteralExpr:[[@LINE-4]] '''42''' Builtin.IntLiteral{{$}}
   a4 = 17; _ = a4
 
   var a5 : Int64 = 42
 // CHECK: VarDecl '''a5''' Int64{{$}}
-// CHECK:         IntegerLiteralExpr:[[@LINE-2]] '''42''' Int2048{{$}}
+// CHECK:         IntegerLiteralExpr:[[@LINE-2]] '''42''' Builtin.IntLiteral{{$}}
 // FULL:  VarDecl '''a5''' Swift.Int64{{$}}
-// FULL:          IntegerLiteralExpr:[[@LINE-4]] '''42''' Builtin.Int2048{{$}}
+// FULL:          IntegerLiteralExpr:[[@LINE-4]] '''42''' Builtin.IntLiteral{{$}}
   a5 = 17; _ = a5
 
   var typealias1 : MyInt = 42
 // CHECK: VarDecl '''typealias1''' MyInt{{$}}
-// CHECK:         IntegerLiteralExpr:[[@LINE-2]] '''42''' Int2048{{$}}
-// FULL:  VarDecl '''typealias1''' swift_ide_test.MyInt{{$}}
-// FULL:          IntegerLiteralExpr:[[@LINE-4]] '''42''' Builtin.Int2048{{$}}
+// CHECK:         IntegerLiteralExpr:[[@LINE-2]] '''42''' Builtin.IntLiteral{{$}}
+// FULL:  VarDecl '''typealias1''' MyInt{{$}}
+// FULL:          IntegerLiteralExpr:[[@LINE-4]] '''42''' Builtin.IntLiteral{{$}}
   _ = typealias1 ; typealias1 = 1
 
   var optional1 = Optional<Int>.none
-// CHECK: VarDecl '''optional1''' Optional<Int>{{$}}
-// FULL:  VarDecl '''optional1''' Swift.Optional<Swift.Int>{{$}}
+// CHECK: VarDecl '''optional1''' Int?{{$}}
+// FULL:  VarDecl '''optional1''' Swift.Int?{{$}}
   _ = optional1 ; optional1 = nil
 
   var optional2 = Optional<[Int]>.none
   _ = optional2 ; optional2 = nil
-// CHECK: VarDecl '''optional2''' Optional<[Int]>{{$}}
-// FULL:  VarDecl '''optional2''' Swift.Optional<[Swift.Int]>{{$}}
+// CHECK: VarDecl '''optional2''' [Int]?{{$}}
+// FULL:  VarDecl '''optional2''' [Swift.Int]?{{$}}
 }
 
 func testFuncType1() {}
@@ -77,11 +77,11 @@ func testFuncType2() -> () {}
 
 func testFuncType3() -> Void {}
 // CHECK: FuncDecl '''testFuncType3''' () -> Void{{$}}
-// FULL:  FuncDecl '''testFuncType3''' () -> Swift.Void{{$}}
+// FULL:  FuncDecl '''testFuncType3''' () -> Void{{$}}
 
 func testFuncType4() -> MyInt {}
 // CHECK: FuncDecl '''testFuncType4''' () -> MyInt{{$}}
-// FULL:  FuncDecl '''testFuncType4''' () -> swift_ide_test.MyInt{{$}}
+// FULL:  FuncDecl '''testFuncType4''' () -> MyInt{{$}}
 
 func testFuncType5() -> (Int) {}
 // CHECK: FuncDecl '''testFuncType5''' () -> (Int){{$}}
@@ -134,7 +134,7 @@ func testInGenericFunc1<A, B : FooProtocol, C : FooProtocol & BarProtocol>(_ a: 
 // FULL:          ConstructorRefCallExpr:[[@LINE-7]] '''GenericStruct<A, B>''' () -> swift_ide_test.GenericStruct<A, B>
 }
 
-func testInGenericFunc2<T : QuxProtocol, U : QuxProtocol>() where T.Qux == U.Qux {}
-// CHECK: FuncDecl '''testInGenericFunc2''' <T, U where T : QuxProtocol, U : QuxProtocol, T.Qux == U.Qux> () -> (){{$}}
-// FULL:  FuncDecl '''testInGenericFunc2''' <T, U where T : QuxProtocol, U : QuxProtocol, T.Qux == U.Qux> () -> (){{$}}
+func testInGenericFunc2<T : QuxProtocol, U : QuxProtocol>(_: T, _: U) where T.Qux == U.Qux {}
+// CHECK: FuncDecl '''testInGenericFunc2''' <T, U where T : QuxProtocol, U : QuxProtocol, T.Qux == U.Qux> (T, U) -> (){{$}}
+// FULL:  FuncDecl '''testInGenericFunc2''' <T, U where T : QuxProtocol, U : QuxProtocol, T.Qux == U.Qux> (T, U) -> (){{$}}
 

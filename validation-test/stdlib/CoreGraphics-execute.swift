@@ -48,6 +48,17 @@ CoreGraphicsTests.test("CGColor.components") {
   expectEqual(components[3], 1)
 }
 
+CoreGraphicsTests.test("CGColor/ExpressibleByColorLiteral") {
+  let colorLit: CGColor = #colorLiteral(red: 0.25, green: 0.5, blue: 0.75,
+                                        alpha: 1.0)
+  let components = colorLit.components!
+  expectEqual(components.count, 4)
+  expectEqual(components[0], 0.25)
+  expectEqual(components[1], 0.50)
+  expectEqual(components[2], 0.75)
+  expectEqual(components[3], 1.0)
+}
+
 //===----------------------------------------------------------------------===//
 // CGPoint
 //===----------------------------------------------------------------------===//
@@ -107,7 +118,7 @@ CoreGraphicsTests.test("CGPoint.dictionaryRepresentation, CGPoint.init(dictionar
   let point = CGPoint(x: 1, y: 2)
   let dict = point.dictionaryRepresentation
   let newPoint = CGPoint(dictionaryRepresentation: dict)
-  expectOptionalEqual(point, newPoint)
+  expectEqual(point, newPoint)
 }
 
 CoreGraphicsTests.test("CGPoint.zero") {
@@ -174,7 +185,7 @@ CoreGraphicsTests.test("CGSize.dictionaryRepresentation, CGSize.init(dictionaryR
   let size = CGSize(width: 3, height: 4)
   let dict = size.dictionaryRepresentation
   let newSize = CGSize(dictionaryRepresentation: dict)
-  expectOptionalEqual(size, newSize)
+  expectEqual(size, newSize)
 }
 
 CoreGraphicsTests.test("CGSize.zero") {
@@ -258,7 +269,7 @@ CoreGraphicsTests.test("CGRect.dictionaryRepresentation, CGRect.init(dictionaryR
   let rect = CGRect(origin: point, size: size)
   let dict = rect.dictionaryRepresentation
   let newRect = CGRect(dictionaryRepresentation: dict)
-  expectOptionalEqual(rect, newRect)
+  expectEqual(rect, newRect)
 }
 
 CoreGraphicsTests.test("CGRect.isNull") {

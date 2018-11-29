@@ -1,4 +1,4 @@
-// RUN: %target-parse-verify-swift
+// RUN: %target-typecheck-verify-swift
 
 // XFAIL: linux
 
@@ -7,32 +7,19 @@ import Foundation
 // Common pitfall: trying to subscript a string with integers.
 func testIntSubscripting(s: String, i: Int) {
   // FIXME swift-3-indexing-model: test new overloads of ..<, ...
-  _ = s[i] // expected-error{{'subscript' is unavailable: cannot subscript String with an Int, see the documentation comment for discussion}}
-  _ = s[17] // expected-error{{'subscript' is unavailable: cannot subscript String with an Int, see the documentation comment for discussion}}
-  _ = s[i...i] // expected-error{{subscript' is unavailable: cannot subscript String with a CountableClosedRange<Int>, see the documentation comment for discussion}}
-  _ = s[17..<20] // expected-error{{subscript' is unavailable: cannot subscript String with a CountableRange<Int>, see the documentation comment for discussion}}
-  _ = s[17...20] // expected-error{{subscript' is unavailable: cannot subscript String with a CountableClosedRange<Int>, see the documentation comment for discussion}}
+  _ = s[i] // expected-error{{'subscript(_:)' is unavailable: cannot subscript String with an Int, see the documentation comment for discussion}}
+  _ = s[17] // expected-error{{'subscript(_:)' is unavailable: cannot subscript String with an Int, see the documentation comment for discussion}}
+  _ = s[i...i] // expected-error{{'subscript(_:)' is unavailable: cannot subscript String with an integer range, see the documentation comment for discussion}}
+  _ = s[17..<20] // expected-error{{'subscript(_:)' is unavailable: cannot subscript String with an integer range, see the documentation comment for discussion}}
+  _ = s[17...20] // expected-error{{'subscript(_:)' is unavailable: cannot subscript String with an integer range, see the documentation comment for discussion}}
 
-  _ = s[Range(i...i)] // expected-error{{subscript' is unavailable: cannot subscript String with a Range<Int>, see the documentation comment for discussion}}
-  _ = s[Range(17..<20)] // expected-error{{subscript' is unavailable: cannot subscript String with a Range<Int>, see the documentation comment for discussion}}
-  _ = s[Range(17...20)] // expected-error{{subscript' is unavailable: cannot subscript String with a Range<Int>, see the documentation comment for discussion}}
+  _ = s[Range(i...i)] // expected-error{{'subscript(_:)' is unavailable: cannot subscript String with an integer range, see the documentation comment for discussion}}
+  _ = s[Range(17..<20)] // expected-error{{'subscript(_:)' is unavailable: cannot subscript String with an integer range, see the documentation comment for discussion}}
+  _ = s[Range(17...20)] // expected-error{{'subscript(_:)' is unavailable: cannot subscript String with an integer range, see the documentation comment for discussion}}
 
-  _ = s[CountableRange(i...i)] // expected-error{{subscript' is unavailable: cannot subscript String with a CountableRange<Int>, see the documentation comment for discussion}}
-  _ = s[CountableRange(17..<20)] // expected-error{{subscript' is unavailable: cannot subscript String with a CountableRange<Int>, see the documentation comment for discussion}}
-  _ = s[CountableRange(17...20)] // expected-error{{subscript' is unavailable: cannot subscript String with a CountableRange<Int>, see the documentation comment for discussion}}
-
-  _ = s[ClosedRange(i...i)] // expected-error{{subscript' is unavailable: cannot subscript String with a ClosedRange<Int>, see the documentation comment for discussion}}
-  _ = s[ClosedRange(17..<20)] // expected-error{{subscript' is unavailable: cannot subscript String with a ClosedRange<Int>, see the documentation comment for discussion}}
-  _ = s[ClosedRange(17...20)] // expected-error{{subscript' is unavailable: cannot subscript String with a ClosedRange<Int>, see the documentation comment for discussion}}
-
-  _ = s[CountableClosedRange(i...i)] // expected-error{{subscript' is unavailable: cannot subscript String with a CountableClosedRange<Int>, see the documentation comment for discussion}}
-  _ = s[CountableClosedRange(17..<20)] // expected-error{{subscript' is unavailable: cannot subscript String with a CountableClosedRange<Int>, see the documentation comment for discussion}}
-  _ = s[CountableClosedRange(17...20)] // expected-error{{subscript' is unavailable: cannot subscript String with a CountableClosedRange<Int>, see the documentation comment for discussion}}
-}
-
-// Common pitfall: trying to access `String.count`.
-func testStringCount(s: String) {
-  _ = s.count // expected-error{{'count' is unavailable: there is no universally good answer, see the documentation comment for discussion}}
+  _ = s[Range(i...i)] // expected-error{{'subscript(_:)' is unavailable: cannot subscript String with an integer range, see the documentation comment for discussion}}
+  _ = s[Range(17..<20)] // expected-error{{'subscript(_:)' is unavailable: cannot subscript String with an integer range, see the documentation comment for discussion}}
+  _ = s[Range(17...20)] // expected-error{{'subscript(_:)' is unavailable: cannot subscript String with an integer range, see the documentation comment for discussion}}
 }
 
 func testNonAmbiguousStringComparisons() {
@@ -58,20 +45,17 @@ func testAmbiguousStringComparisons(s: String) {
   let a10 = nsString <= s // expected-error{{'NSString' is not implicitly convertible to 'String'; did you mean to use 'as' to explicitly convert?}} {{21-21= as String}}
   let a11 = nsString >= s // expected-error{{'NSString' is not implicitly convertible to 'String'; did you mean to use 'as' to explicitly convert?}} {{21-21= as String}}
   let a12 = nsString > s // expected-error{{'NSString' is not implicitly convertible to 'String'; did you mean to use 'as' to explicitly convert?}} {{21-21= as String}}
-}
-
-func acceptsSequence<S : Sequence>(_ sequence: S) {}
-
-func testStringIsNotASequence(s: String) {
-  acceptsSequence(s) // expected-error {{argument type 'String' does not conform to expected type 'Sequence'}}
+  
+  // Shouldn't suggest 'as' in a pattern-matching context, as opposed to all these other situations
+  if case nsString = "" {} // expected-error{{expression pattern of type 'NSString' cannot match values of type 'String'}}
 }
 
 func testStringDeprecation(hello: String) {
   let hello2 = hello
-    .addingPercentEscapes(using: .utf8) // expected-warning{{'addingPercentEscapes(using:)' is deprecated}}
+    .addingPercentEscapes(using: .utf8) // expected-error{{'addingPercentEscapes(using:)' is unavailable}}
 
   _ = hello2?
-    .replacingPercentEscapes(using: .utf8) // expected-warning{{'replacingPercentEscapes(using:)' is deprecated}}
+    .replacingPercentEscapes(using: .utf8) // expected-error{{'replacingPercentEscapes(using:)' is unavailable}}
 }
 
 // Positive and negative tests for String collection types. Testing the complete
@@ -82,19 +66,26 @@ func acceptsRandomAccessCollection<C: RandomAccessCollection>(_: C) {}
 
 func testStringCollectionTypes(s: String) {
   acceptsCollection(s.utf8)
-  acceptsBidirectionalCollection(s.utf8) // expected-error{{argument type 'String.UTF8View' does not conform to expected type 'BidirectionalCollection'}}
+  acceptsBidirectionalCollection(s.utf8) 
   acceptsRandomAccessCollection(s.utf8) // expected-error{{argument type 'String.UTF8View' does not conform to expected type 'RandomAccessCollection'}}
 
-  // UTF16View.Collection is random-access with Foundation, bidirectional without
-  acceptsCollection(s.utf16)
+  acceptsCollection(s.utf16) 
   acceptsBidirectionalCollection(s.utf16)
-  acceptsRandomAccessCollection(s.utf16)
+  acceptsRandomAccessCollection(s.utf16) // expected-error{{argument type 'String.UTF16View' does not conform to expected type 'RandomAccessCollection'}}
 
   acceptsCollection(s.unicodeScalars)
   acceptsBidirectionalCollection(s.unicodeScalars)
   acceptsRandomAccessCollection(s.unicodeScalars) // expected-error{{argument type 'String.UnicodeScalarView' does not conform to expected type 'RandomAccessCollection'}}
 
-  acceptsCollection(s.characters)
-  acceptsBidirectionalCollection(s.characters)
-  acceptsRandomAccessCollection(s.characters) // expected-error{{argument type 'String.CharacterView' does not conform to expected type 'RandomAccessCollection'}}
+  acceptsCollection(s)
+  acceptsBidirectionalCollection(s)
+  acceptsRandomAccessCollection(s) // expected-error{{argument type 'String' does not conform to expected type 'RandomAccessCollection'}}
+}
+
+// In previous versions of Swift, code would accidentally select
+// init(stringInterpolationSegment:) when String.init was used in the context
+// of a CustomStringConvertible type. This checks that we still have an
+// unambiguous overload for them to select.
+func testStringInitWithCustomStringConvertible() {
+  _ = [(1..<10)].map(String.init)
 }

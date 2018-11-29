@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -57,35 +57,35 @@ public:
   enum EpilogueARCKind { Retain = 0, Release = 1 };
 
 private:
+  /// Current post-order we are using.
+  LazyFunctionInfo<PostOrderAnalysis, PostOrderFunctionInfo> PO;
+
+  /// Current alias analysis we are using.
+  AliasAnalysis *AA;
+
+  /// Current rc-identity we are using.
+  LazyFunctionInfo<RCIdentityAnalysis, RCIdentityFunctionInfo> RCFI;
+
+  // All state below this line must always be cleared by the reset routine.
+  //
   // Are we finding retains or releases.
   EpilogueARCKind Kind;
 
   // The argument we are looking for epilogue ARC instruction for.
   SILValue Arg;
 
-  /// The allocator we are currently using.
-  llvm::SpecificBumpPtrAllocator<EpilogueARCBlockState> BPA;
-
-  /// Current function we are analyzing.
-  SILFunction *F;
-
-  /// Current post-order we are using.
-  PostOrderFunctionInfo *PO;
-
-  /// Current alias analysis we are using.
-  AliasAnalysis *AA;
-
-  /// Current rc-identity we are using.
-  RCIdentityFunctionInfo *RCFI;
+  /// A map from a block's post order index to block state.
+  std::vector<EpilogueARCBlockState> IndexToStateMap;
 
   /// The epilogue retains or releases.
   llvm::SmallSetVector<SILInstruction *, 1> EpilogueARCInsts; 
 
-  /// All the retain/release block state for all the basic blocks in the function. 
-  llvm::DenseMap<SILBasicBlock *, EpilogueARCBlockState *> EpilogueARCBlockStates;
-
   /// The exit blocks of the function.
   llvm::SmallPtrSet<SILBasicBlock *, 2> ExitBlocks;
+
+  EpilogueARCBlockState &getState(SILBasicBlock *BB) {
+    return IndexToStateMap[*PO->getPONumber(BB)];
+  }
 
   /// Return true if this is a function exiting block this epilogue ARC
   /// matcher is interested in. 
@@ -112,8 +112,8 @@ private:
     return isa<ReleaseValueInst>(II) || isa<StrongReleaseInst>(II);
   }
 
-  SILValue getArg(SILBasicBlock *B) {
-    SILValue A = EpilogueARCBlockStates[B]->LocalArg;
+  SILValue getArg(SILBasicBlock *BB) {
+    SILValue A = getState(BB).LocalArg;
     if (A)
       return A;
     return Arg;
@@ -121,13 +121,15 @@ private:
 
 public:
   /// Constructor.
-  EpilogueARCContext(EpilogueARCKind Kind, SILValue Arg, SILFunction *F,
-                     PostOrderFunctionInfo *PO, AliasAnalysis *AA,
-                     RCIdentityFunctionInfo *RCFI)
-    : Kind(Kind), Arg(Arg), F(F), PO(PO), AA(AA), RCFI(RCFI) {}
+  EpilogueARCContext(SILFunction *F, PostOrderAnalysis *PO, AliasAnalysis *AA,
+                     RCIdentityAnalysis *RCIA)
+      : PO(F, PO), AA(AA), RCFI(F, RCIA) {}
 
   /// Run the data flow to find the epilogue retains or releases.
-  bool run() {
+  bool run(EpilogueARCKind NewKind, SILValue NewArg) {
+    Kind = NewKind;
+    Arg = NewArg;
+
     // Initialize the epilogue arc data flow context.
     initializeDataflow();
     // Converge the data flow.
@@ -138,9 +140,15 @@ public:
   }
 
   /// Reset the epilogue arc instructions. 
-  void resetEpilogueARCInsts() { EpilogueARCInsts.clear(); }
   llvm::SmallSetVector<SILInstruction *, 1> getEpilogueARCInsts() {
     return EpilogueARCInsts;
+  }
+
+  void reset() {
+    IndexToStateMap.clear();
+    EpilogueARCInsts.clear();
+    ExitBlocks.clear();
+    EpilogueARCInsts.clear();
   }
 
   /// Initialize the data flow.
@@ -161,7 +169,7 @@ public:
       return true;
     // Handle self-recursion. A self-recursion can be considered a +1 on the
     // current argument.
-    if (ApplyInst *AI = dyn_cast<ApplyInst>(II))
+    if (auto *AI = dyn_cast<ApplyInst>(II))
      if (AI->getCalleeFunction() == II->getParent()->getParent())
        return true;
     return false;
@@ -172,9 +180,7 @@ public:
   bool mayBlockEpilogueRelease(SILInstruction *II, SILValue Ptr) { 
     // Check whether this instruction read reference count, i.e. uniqueness
     // check. Moving release past that may result in additional COW.
-   if (II->mayReleaseOrReadRefCount())
-      return true;
-    return false;
+    return II->mayReleaseOrReadRefCount();
   } 
 
   /// Does this instruction block the interested ARC instruction ?
@@ -194,7 +200,7 @@ public:
     // We are checking for retain. If this is a self-recursion. call
     // to the function (which returns an owned value) can be treated as
     // the retain instruction.
-    if (ApplyInst *AI = dyn_cast<ApplyInst>(II))
+    if (auto *AI = dyn_cast<ApplyInst>(II))
      if (AI->getCalleeFunction() == II->getParent()->getParent())
        return true;
     // Check whether this is a retain instruction and the argument it
@@ -207,26 +213,18 @@ public:
 
 /// This class is a simple wrapper around an identity cache.
 class EpilogueARCFunctionInfo {
-  /// Current function we are analyzing.
-  SILFunction *F;
-
-  /// Current post-order we are using.
-  PostOrderAnalysis *PO;
-
-  /// Current alias analysis we are using.
-  AliasAnalysis *AA;
-
-  /// Current rc-identity we are using.
-  RCIdentityAnalysis *RC;
-
   using ARCInstructions = llvm::SmallSetVector<SILInstruction *, 1>;
+
+  EpilogueARCContext Context;
+
   /// The epilogue retain cache.
   llvm::DenseMap<SILValue, ARCInstructions> EpilogueRetainInstCache;
+
   /// The epilogue release cache.
   llvm::DenseMap<SILValue, ARCInstructions> EpilogueReleaseInstCache;
 
 public:
-  void handleDeleteNotification(ValueBase *V) {
+  void handleDeleteNotification(SILNode *node) {
     // Being conservative and clear everything for now.
     EpilogueRetainInstCache.clear();
     EpilogueReleaseInstCache.clear();
@@ -235,28 +233,31 @@ public:
   /// Constructor.
   EpilogueARCFunctionInfo(SILFunction *F, PostOrderAnalysis *PO,
                           AliasAnalysis *AA, RCIdentityAnalysis *RC)
-    : F(F), PO(PO), AA(AA), RC(RC) {}
+      : Context(F, PO, AA, RC) {}
 
   /// Find the epilogue ARC instruction based on the given \p Kind and given
   /// \p Arg.
   llvm::SmallSetVector<SILInstruction *, 1>
   computeEpilogueARCInstructions(EpilogueARCContext::EpilogueARCKind Kind,
                                  SILValue Arg) {
-    auto ARCCache = Kind == EpilogueARCContext::EpilogueARCKind::Retain ?
+    auto &ARCCache = Kind == EpilogueARCContext::EpilogueARCKind::Retain ?
                  EpilogueRetainInstCache :
                  EpilogueReleaseInstCache;
     auto Iter = ARCCache.find(Arg);
     if (Iter != ARCCache.end())
       return Iter->second;
 
-    EpilogueARCContext CM(Kind, Arg, F, PO->get(F), AA, RC->get(F));
     // Initialize and run the data flow. Clear the epilogue arc instructions if the
     // data flow is aborted in middle.
-   if (!CM.run()) { 
-     CM.resetEpilogueARCInsts();
-     return CM.getEpilogueARCInsts();
+    if (!Context.run(Kind, Arg)) {
+      Context.reset();
+      return llvm::SmallSetVector<SILInstruction *, 1>();
     }
-    return ARCCache[Arg] = CM.getEpilogueARCInsts();
+
+    auto Result = Context.getEpilogueARCInsts();
+    Context.reset();
+    ARCCache[Arg] = Result;
+    return Result;
   }
 };
 
@@ -270,32 +271,38 @@ class EpilogueARCAnalysis : public FunctionAnalysisBase<EpilogueARCFunctionInfo>
 
 public:
   EpilogueARCAnalysis(SILModule *)
-    : FunctionAnalysisBase<EpilogueARCFunctionInfo>(AnalysisKind::EpilogueARC),
-      PO(nullptr), AA(nullptr), RC(nullptr) {}
+      : FunctionAnalysisBase<EpilogueARCFunctionInfo>(
+            SILAnalysisKind::EpilogueARC),
+        PO(nullptr), AA(nullptr), RC(nullptr) {}
 
   EpilogueARCAnalysis(const EpilogueARCAnalysis &) = delete;
   EpilogueARCAnalysis &operator=(const EpilogueARCAnalysis &) = delete;
 
-  virtual void handleDeleteNotification(ValueBase *V) override {
+  virtual void handleDeleteNotification(SILNode *node) override {
     // If the parent function of this instruction was just turned into an
     // external declaration, bail. This happens during SILFunction destruction.
-    SILFunction *F = V->getFunction();
+    SILFunction *F = node->getFunction();
     if (F->isExternalDeclaration()) {
       return;
     }
-    get(F)->handleDeleteNotification(V);
+
+    // If we do have an analysis, tell it to handle its delete notifications.
+    if (auto A = maybeGet(F)) {
+      A.get()->handleDeleteNotification(node);
+    }
   }
 
   virtual bool needsNotifications() override { return true; }
 
   static bool classof(const SILAnalysis *S) {
-    return S->getKind() == AnalysisKind::EpilogueARC;
+    return S->getKind() == SILAnalysisKind::EpilogueARC;
   }
 
   virtual void initialize(SILPassManager *PM) override;
   
-  virtual EpilogueARCFunctionInfo *newFunctionAnalysis(SILFunction *F) override {
-    return new EpilogueARCFunctionInfo(F, PO, AA, RC);
+  virtual std::unique_ptr<EpilogueARCFunctionInfo>
+  newFunctionAnalysis(SILFunction *F) override {
+    return llvm::make_unique<EpilogueARCFunctionInfo>(F, PO, AA, RC);
   }
 
   virtual bool shouldInvalidate(SILAnalysis::InvalidationKind K) override {

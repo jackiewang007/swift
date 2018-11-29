@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -37,6 +37,12 @@ template <typename K, typename V> class TreeScopedHashTableVal {
   TreeScopedHashTableVal(const K &Key, const V &Val) : Key(Key), Val(Val) {}
 
 public:
+  ~TreeScopedHashTableVal() = default;
+  TreeScopedHashTableVal(const TreeScopedHashTableVal &) = delete;
+  TreeScopedHashTableVal(TreeScopedHashTableVal &&) = delete;
+  TreeScopedHashTableVal &operator=(const TreeScopedHashTableVal &) = delete;
+  TreeScopedHashTableVal &operator=(TreeScopedHashTableVal &&) = delete;
+
   const K &getKey() const { return Key; }
   const V &getValue() const { return Val; }
   V &getValue() { return Val; }
@@ -144,6 +150,11 @@ class TreeScopedHashTableDetachedScope {
   const ImplTy *getImpl() { return DetachedImpl; }
 
 public:
+  TreeScopedHashTableDetachedScope &operator=(
+                            const TreeScopedHashTableDetachedScope &) = default;
+  TreeScopedHashTableDetachedScope &operator=(
+                                 TreeScopedHashTableDetachedScope &&) = default;
+
   TreeScopedHashTableDetachedScope() : DetachedImpl(0) {}
 
   TreeScopedHashTableDetachedScope(TreeScopedHashTableDetachedScope &&Other)

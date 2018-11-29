@@ -1,13 +1,12 @@
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
-// RUN: rm -rf %t
-// RUN: mkdir -p %t
+// RUN: %empty-directory(%t)
 //
 // RUN: %target-clang %S/Inputs/FoundationBridge/FoundationBridge.m -c -o %t/FoundationBridgeObjC.o -g
 // RUN: %target-build-swift %s -I %S/Inputs/FoundationBridge/ -Xlinker %t/FoundationBridgeObjC.o -o %t/TestCalendar
@@ -15,6 +14,11 @@
 // RUN: %target-run %t/TestCalendar > %t.txt
 // REQUIRES: executable_test
 // REQUIRES: objc_interop
+
+// FIXME: rdar://problem/31207060
+// UNSUPPORTED: OS=ios
+// UNSUPPORTED: OS=tvos
+// UNSUPPORTED: OS=watchos
 
 import Foundation
 import FoundationBridgeObjC
@@ -178,7 +182,10 @@ class TestCalendar : TestCalendarSuper {
             
             expectEqual(Date(timeIntervalSince1970: 1468652400.0), c.startOfDay(for: d))
             
-            expectEqual(.orderedSame, c.compare(d, to: d + 10, toGranularity: .minute))
+            if #available(iOS 8, macOS 10.10, *) {
+              // Mac OS X 10.9 and iOS 7 had a bug in NSCalendar for hour, minute, and second granularities.
+              expectEqual(.orderedSame, c.compare(d, to: d + 10, toGranularity: .minute))
+            }
             
             expectFalse(c.isDate(d, equalTo: d + 10, toGranularity: .second))
             expectTrue(c.isDate(d, equalTo: d + 10, toGranularity: .day))

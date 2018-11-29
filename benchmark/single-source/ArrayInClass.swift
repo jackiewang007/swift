@@ -2,13 +2,23 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
+
+import TestsUtils
+public let ArrayInClass = BenchmarkInfo(
+  name: "ArrayInClass",
+  runFunction: run_ArrayInClass,
+  tags: [.validation, .api, .Array],
+  setUpFunction: { ac = ArrayContainer() },
+  tearDownFunction: { ac = nil })
+
+var ac: ArrayContainer!
 
 class ArrayContainer {
   final var arr : [Int]
@@ -27,12 +37,7 @@ class ArrayContainer {
 }
 
 @inline(never)
-func getArrayContainer() -> ArrayContainer {
-  return ArrayContainer()
-}
-
-@inline(never)
 public func run_ArrayInClass(_ N: Int) {
-  let a = getArrayContainer()
+  let a = ac!
   a.runLoop(N)
 }

@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -18,6 +18,11 @@
 import Foundation
 import TestsUtils
 
+public let RGBHistogram = [
+  BenchmarkInfo(name: "RGBHistogram", runFunction: run_RGBHistogram, tags: [.validation, .algorithm]),
+  BenchmarkInfo(name: "RGBHistogramOfObjects", runFunction: run_RGBHistogramOfObjects, tags: [.validation, .algorithm]),
+]
+
 @inline(never)
 public func run_RGBHistogram(_ N: Int) {
     var histogram = [(key: rrggbb_t, value: Int)]()
@@ -27,8 +32,7 @@ public func run_RGBHistogram(_ N: Int) {
             break
         }
     }
-    CheckResults(isCorrectHistogram(histogram),
-                 "Incorrect results in histogram")
+    CheckResults(isCorrectHistogram(histogram))
 }
 
 typealias rrggbb_t = UInt32
@@ -95,7 +99,7 @@ func isCorrectHistogram(_ histogram: [(key: rrggbb_t, value: Int)]) -> Bool {
 func createSortedSparseRGBHistogram<S : Sequence>(
   _ samples: S
 ) -> [(key: rrggbb_t, value: Int)]
-  where S.Iterator.Element == rrggbb_t
+  where S.Element == rrggbb_t
 {
     var histogram = Dictionary<rrggbb_t, Int>()
 
@@ -120,11 +124,11 @@ class Box<T : Hashable> : Hashable {
     value = v
   }
 
-  var hashValue: Int {
-    return value.hashValue
+  func hash(into hasher: inout Hasher) {
+    hasher.combine(value)
   }
 
-  static func ==<T: Equatable>(lhs: Box<T>, rhs: Box<T>) -> Bool {
+  static func ==(lhs: Box, rhs: Box) -> Bool {
     return lhs.value == rhs.value
   }
 }
@@ -138,7 +142,7 @@ func isCorrectHistogramOfObjects(_ histogram: [(key: Box<rrggbb_t>, value: Box<I
 func createSortedSparseRGBHistogramOfObjects<S : Sequence>(
   _ samples: S
 ) -> [(key: Box<rrggbb_t>, value: Box<Int>)]
-  where S.Iterator.Element == rrggbb_t
+  where S.Element == rrggbb_t
 {
     var histogram = Dictionary<Box<rrggbb_t>, Box<Int>>()
 
@@ -166,8 +170,7 @@ public func run_RGBHistogramOfObjects(_ N: Int) {
             break
         }
     }
-    CheckResults(isCorrectHistogramOfObjects(histogram),
-                 "Incorrect results in histogram")
+    CheckResults(isCorrectHistogramOfObjects(histogram))
 }
 
 

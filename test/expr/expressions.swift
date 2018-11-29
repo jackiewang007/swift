@@ -1,4 +1,4 @@
-// RUN: %target-parse-verify-swift
+// RUN: %target-typecheck-verify-swift
 
 //===----------------------------------------------------------------------===//
 // Tests and samples.
@@ -21,9 +21,9 @@ func1()
 _ = 4+7
 
 var bind_test1 : () -> () = func1
-var bind_test2 : Int = 4; func1 // expected-error {{expression resolves to an unused l-value}}
+var bind_test2 : Int = 4; func1 // expected-error {{expression resolves to an unused variable}}
 
-(func1, func2) // expected-error {{expression resolves to an unused l-value}}
+(func1, func2) // expected-error {{expression resolves to an unused variable}}
 
 func basictest() {
   // Simple integer variables.
@@ -40,7 +40,7 @@ func basictest() {
 
   //var x6 : Float = 4+5
 
-  var x7 = 4; 5 // expected-warning {{result of call to 'init(_builtinIntegerLiteral:)' is unused}}
+  var x7 = 4; 5 // expected-warning {{integer literal is unused}}
 
   // Test implicit conversion of integer literal to non-Int64 type.
   var x8 : Int8 = 4
@@ -79,6 +79,31 @@ func basictest() {
   bind_test2() // expected-error {{cannot call value of non-function type 'Int'}}{{13-15=}}
 }
 
+// <https://bugs.swift.org/browse/SR-3522>
+func testUnusedLiterals_SR3522() {
+  42 // expected-warning {{integer literal is unused}}
+  2.71828 // expected-warning {{floating-point literal is unused}}
+  true // expected-warning {{boolean literal is unused}}
+  false // expected-warning {{boolean literal is unused}}
+  "Hello" // expected-warning {{string literal is unused}}
+  "Hello \(42)" // expected-warning {{string literal is unused}}
+  #file // expected-warning {{#file literal is unused}}
+  (#line) // expected-warning {{#line literal is unused}}
+  #column // expected-warning {{#column literal is unused}}
+  #function // expected-warning {{#function literal is unused}}
+  #dsohandle // expected-warning {{#dsohandle literal is unused}}
+  __FILE__ // expected-error {{__FILE__ has been replaced with #file in Swift 3}} expected-warning {{#file literal is unused}}
+  __LINE__ // expected-error {{__LINE__ has been replaced with #line in Swift 3}} expected-warning {{#line literal is unused}}
+  __COLUMN__ // expected-error {{__COLUMN__ has been replaced with #column in Swift 3}} expected-warning {{#column literal is unused}}
+  __FUNCTION__ // expected-error {{__FUNCTION__ has been replaced with #function in Swift 3}} expected-warning {{#function literal is unused}}
+  __DSO_HANDLE__ // expected-error {{__DSO_HANDLE__ has been replaced with #dsohandle in Swift 3}} expected-warning {{#dsohandle literal is unused}}
+
+  nil // expected-error {{'nil' requires a contextual type}}
+  #fileLiteral(resourceName: "what.txt") // expected-error {{could not infer type of file reference literal}} expected-note * {{}}
+  #imageLiteral(resourceName: "hello.png") // expected-error {{could not infer type of image literal}} expected-note * {{}}
+  #colorLiteral(red: 1, green: 0, blue: 0, alpha: 1) // expected-error {{could not infer type of color literal}} expected-note * {{}}
+}
+
 // Infix operators and attribute lists.
 infix operator %% : MinPrecedence
 precedencegroup MinPrecedence {
@@ -113,9 +138,9 @@ func funcdecl7(_ a: Int, b: (c: Int, d: Int), third: (c: Int, d: Int)) -> Int {
 }
 
 // Error recovery.
-func testfunc2 (_: (((), Int)) -> Int) -> Int {}
+func testfunc2 (_: ((), Int) -> Int) -> Int {}
 func errorRecovery() {
-  testfunc2({ $0 + 1 }) // expected-error {{binary operator '+' cannot be applied to operands of type '((), Int)' and 'Int'}} expected-note {{expected an argument list of type '(Int, Int)'}}
+  testfunc2({ $0 + 1 }) // expected-error {{contextual closure type '((), Int) -> Int' expects 2 arguments, but 1 was used in closure body}}
 
   enum union1 {
     case bar
@@ -211,7 +236,7 @@ func test_as_1() {
 }
 func test_as_2() {
   let x: Int = 1
-  x as [] // expected-error {{expected element type}}
+  x as [] // expected-error {{expected element type}} {{9-9= <#type#>}}
 }
 
 func test_lambda() {
@@ -231,9 +256,9 @@ func test_lambda() {
 
 func test_lambda2() {
   { () -> protocol<Int> in
-    // expected-warning @-1 {{'protocol<...>' composition syntax is deprecated and not needed here}} {{11-24=Int}}
-    // expected-error @-2 {{non-protocol type 'Int' cannot be used within a protocol composition}}
-    // expected-warning @-3 {{result of call is unused}}
+    // expected-error @-1 {{'protocol<...>' composition syntax has been removed and is not needed here}} {{11-24=Int}}
+    // expected-error @-2 {{non-protocol, non-class type 'Int' cannot be used within a protocol-constrained type}}
+    // expected-warning @-3 {{result of call to closure returning 'Any' is unused}}
     return 1
   }()
 }
@@ -297,11 +322,22 @@ var oct_literal_test: Int64 = 0123
 assert(oct_literal_test == 123)
 
 // ensure that we swallow random invalid chars after the first invalid char
-var invalid_num_literal: Int64 = 0QWERTY  // expected-error{{expected a digit after integer literal prefix}}
-var invalid_bin_literal: Int64 = 0bQWERTY // expected-error{{expected a digit after integer literal prefix}}
-var invalid_hex_literal: Int64 = 0xQWERTY // expected-error{{expected a digit after integer literal prefix}}
-var invalid_oct_literal: Int64 = 0oQWERTY // expected-error{{expected a digit after integer literal prefix}}
-var invalid_exp_literal: Double = 1.0e+QWERTY // expected-error{{expected a digit in floating point exponent}}
+var invalid_num_literal: Int64 = 0QWERTY  // expected-error{{'Q' is not a valid digit in integer literal}}
+var invalid_bin_literal: Int64 = 0bQWERTY // expected-error{{'Q' is not a valid binary digit (0 or 1) in integer literal}}
+var invalid_hex_literal: Int64 = 0xQWERTY // expected-error{{'Q' is not a valid hexadecimal digit (0-9, A-F) in integer literal}}
+var invalid_oct_literal: Int64 = 0oQWERTY // expected-error{{'Q' is not a valid octal digit (0-7) in integer literal}}
+var invalid_exp_literal: Double = 1.0e+QWERTY // expected-error{{'Q' is not a valid digit in floating point exponent}}
+var invalid_fp_exp_literal: Double = 0x1p+QWERTY // expected-error{{'Q' is not a valid digit in floating point exponent}}
+
+// don't emit a partial integer literal if the invalid char is valid for identifiers.
+var invalid_num_literal_prefix: Int64 = 0a1234567 // expected-error{{'a' is not a valid digit in integer literal}}
+var invalid_num_literal_middle: Int64 = 0123A5678 // expected-error{{'A' is not a valid digit in integer literal}}
+var invalid_bin_literal_middle: Int64 = 0b1020101 // expected-error{{'2' is not a valid binary digit (0 or 1) in integer literal}}
+var invalid_oct_literal_middle: Int64 = 0o1357864 // expected-error{{'8' is not a valid octal digit (0-7) in integer literal}}
+var invalid_hex_literal_middle: Int64 = 0x147ADG0 // expected-error{{'G' is not a valid hexadecimal digit (0-9, A-F) in integer literal}}
+
+var invalid_hex_literal_exponent_ = 0xffp+12abc // expected-error{{'a' is not a valid digit in floating point exponent}}
+var invalid_float_literal_exponent = 12e1abc // expected-error{{'a' is not a valid digit in floating point exponent}}
 
 // rdar://11088443
 var negative_int32: Int32 = -1
@@ -402,8 +438,8 @@ var fl_separator6: Double = 1_000.200_001e1_000
 var fl_separator7: Double = 0x1_.0FFF_p1_
 var fl_separator8: Double = 0x1_0000.0FFF_ABCDp10_001
 
-var fl_bad_separator1: Double = 1e_ // expected-error {{expected a digit in floating point exponent}}
-var fl_bad_separator2: Double = 0x1p_ // expected-error {{expected a digit in floating point exponent}} expected-error{{'_' can only appear in a pattern or on the left side of an assignment}} expected-error {{consecutive statements on a line must be separated by ';'}} {{37-37=;}}
+var fl_bad_separator1: Double = 1e_ // expected-error {{'_' is not a valid first character in floating point exponent}}
+var fl_bad_separator2: Double = 0x1p_ // expected-error {{'_' is not a valid first character in floating point exponent}}
 
 //===----------------------------------------------------------------------===//
 // String Literals
@@ -431,7 +467,7 @@ func stringliterals(_ d: [String: Int]) {
 
   // rdar://11385385
   let x = 4
-  "Hello \(x+1) world"  // expected-warning {{expression of type 'String' is unused}}
+  "Hello \(x+1) world"  // expected-warning {{string literal is unused}}
   
   "Error: \(x+1"; // expected-error {{unterminated string literal}}
   
@@ -469,6 +505,9 @@ func testSingleQuoteStringLiterals() {
   _ = 'ab\nc' // expected-error{{single-quoted string literal found, use '"'}}{{7-14="ab\\nc"}}
 
   _ = "abc\('def')" // expected-error{{single-quoted string literal found, use '"'}}{{13-18="def"}}
+  _ = 'ab\("c")' // expected-error{{single-quoted string literal found, use '"'}}{{7-17="ab\\("c")"}}
+  _ = 'a\('b')c' // expected-error{{single-quoted string literal found, use '"'}}{{7-17="a\\('b')c"}}
+                 // expected-error@-1{{single-quoted string literal found, use '"'}}{{11-14="b"}}
 
   _ = "abc' // expected-error{{unterminated string literal}}
   _ = 'abc" // expected-error{{unterminated string literal}}
@@ -497,10 +536,8 @@ func testInOut(_ arg: inout Int) {
   takesExplicitInt(x) // expected-error{{passing value of type 'Int' to an inout parameter requires explicit '&'}} {{20-20=&}}
   takesExplicitInt(&x)
   takesInt(&x) // expected-error{{'&' used with non-inout argument of type 'Int'}}
-  var y = &x // expected-error{{'&' can only appear immediately in a call argument list}} \
-             // expected-error {{type 'inout Int' of variable is not materializable}}
-  var z = &arg // expected-error{{'&' can only appear immediately in a call argument list}} \
-             // expected-error {{type 'inout Int' of variable is not materializable}}
+  var y = &x //expected-error {{use of extraneous '&'}}
+  var z = &arg //expected-error {{use of extraneous '&'}}
 
   takesExplicitInt(5) // expected-error {{cannot pass immutable value as inout argument: literals are not mutable}}
 }
@@ -516,8 +553,8 @@ struct SpecialPi {} // Type with no implicit construction.
 
 var pi_s: SpecialPi
 
-func getPi() -> Float {} // expected-note 3 {{found this candidate}}
-func getPi() -> Double {} // expected-note 3 {{found this candidate}}
+func getPi() -> Float {}
+func getPi() -> Double {}
 func getPi() -> SpecialPi {}
 
 enum Empty { }
@@ -539,17 +576,17 @@ func conversionTest(_ a: inout Double, b: inout Int) {
   var pi_d1 = Double(pi_d)
   var pi_s1 = SpecialPi(pi_s) // expected-error {{argument passed to call that takes no arguments}}
 
-  var pi_f2 = Float(getPi()) // expected-error {{ambiguous use of 'getPi()'}}
-  var pi_d2 = Double(getPi()) // expected-error {{ambiguous use of 'getPi()'}}
+  var pi_f2 = Float(getPi()) // expected-error {{ambiguous use of 'init(_:)'}}
+  var pi_d2 = Double(getPi()) // expected-error {{ambiguous use of 'init(_:)'}}
   var pi_s2: SpecialPi = getPi() // no-warning
   
   var float = Float.self
-  var pi_f3 = float.init(getPi()) // expected-error {{ambiguous use of 'getPi()'}}
+  var pi_f3 = float.init(getPi()) // expected-error {{ambiguous use of 'init(_:)'}}
   var pi_f4 = float.init(pi_f)
 
-  var e = Empty(f)
+  var e = Empty(f) // expected-warning {{variable 'e' inferred to have type 'Empty', which is an enum with no cases}} expected-note {{add an explicit type annotation to silence this warning}}
   var e2 = Empty(d) // expected-error{{cannot convert value of type 'Double' to expected argument type 'Float'}}
-  var e3 = Empty(Float(d))
+  var e3 = Empty(Float(d)) // expected-warning {{variable 'e3' inferred to have type 'Empty', which is an enum with no cases}} expected-note {{add an explicit type annotation to silence this warning}}
 }
 
 struct Rule { // expected-note {{'init(target:dependencies:)' declared here}}
@@ -580,7 +617,7 @@ func unaryOps(_ i8: inout Int8, i64: inout Int64) {
   i64 += 1
   i8 -= 1
 
-  Int64(5) += 1 // expected-error{{left side of mutating operator isn't mutable: function call returns immutable value}}
+  Int64(5) += 1 // expected-error{{left side of mutating operator has immutable type 'Int64'}}
   
   // <rdar://problem/17691565> attempt to modify a 'let' variable with ++ results in typecheck error not being able to apply ++ to Float
   let a = i8 // expected-note {{change 'let' to 'var' to make it mutable}} {{3-6=var}}
@@ -635,7 +672,7 @@ func lvalue_processing() {
 
   var n = 42
   fn(n, 12)  // expected-error {{passing value of type 'Int' to an inout parameter requires explicit '&'}} {{6-6=&}}
-  fn(&n, 12) // expected-warning {{result of call is unused, but produces 'Int'}}
+  fn(&n, 12) // expected-warning {{result of call to function returning 'Int' is unused}}
 
   n +-+= 12
 
@@ -645,13 +682,16 @@ func lvalue_processing() {
 
 struct Foo {
   func method() {}
+  mutating func mutatingMethod() {}
 }
 
 func test() {
   var x = Foo()
+  let y = Foo()
 
   // rdar://15708430
-  (&x).method()  // expected-error {{'inout Foo' is not convertible to 'Foo'}}
+  (&x).method()  // expected-error {{use of extraneous '&'}}
+  (&x).mutatingMethod() // expected-error {{use of extraneous '&'}}
 }
 
 
@@ -698,25 +738,24 @@ func invalidDictionaryLiteral() {
   var g = [1: "one", 2: ;] // expected-error {{expected value in dictionary literal}}
 }
 
-    
-// FIXME: The issue here is a type compatibility problem, there is no ambiguity.
-[4].joined(separator: [1]) // expected-error {{type of expression is ambiguous without more context}}
-[4].joined(separator: [[[1]]]) // expected-error {{type of expression is ambiguous without more context}}
+
+[4].joined(separator: [1]) // expected-error {{referencing instance method 'joined(separator:)' on 'Sequence' requires that 'Int' conform to 'StringProtocol'}}
+[4].joined(separator: [[[1]]]) // expected-error {{referencing instance method 'joined(separator:)' on 'Sequence' requires that 'Int' conform to 'StringProtocol'}}
 
 //===----------------------------------------------------------------------===//
 // nil/metatype comparisons
 //===----------------------------------------------------------------------===//
-_ = Int.self == nil  // expected-warning {{comparing non-optional value of type 'Any.Type' to nil always returns false}}
-_ = nil == Int.self  // expected-warning {{comparing non-optional value of type 'Any.Type' to nil always returns false}}
-_ = Int.self != nil  // expected-warning {{comparing non-optional value of type 'Any.Type' to nil always returns true}}
-_ = nil != Int.self  // expected-warning {{comparing non-optional value of type 'Any.Type' to nil always returns true}}
+_ = Int.self == nil  // expected-warning {{comparing non-optional value of type 'Any.Type' to 'nil' always returns false}}
+_ = nil == Int.self  // expected-warning {{comparing non-optional value of type 'Any.Type' to 'nil' always returns false}}
+_ = Int.self != nil  // expected-warning {{comparing non-optional value of type 'Any.Type' to 'nil' always returns true}}
+_ = nil != Int.self  // expected-warning {{comparing non-optional value of type 'Any.Type' to 'nil' always returns true}}
 
 // <rdar://problem/19032294> Disallow postfix ? when not chaining
 func testOptionalChaining(_ a : Int?, b : Int!, c : Int??) {
   _ = a?    // expected-error {{optional chain has no effect, expression already produces 'Int?'}} {{8-9=}}
   _ = a?.customMirror
 
-  _ = b?   // expected-error {{'?' must be followed by a call, member lookup, or subscript}}
+  _ = b?   // expected-error {{optional chain has no effect, expression already produces 'Int?'}}
   _ = b?.customMirror
 
   var _: Int? = c?   // expected-error {{'?' must be followed by a call, member lookup, or subscript}}
@@ -724,7 +763,7 @@ func testOptionalChaining(_ a : Int?, b : Int!, c : Int??) {
 
 
 // <rdar://problem/19657458> Nil Coalescing operator (??) should have a higher precedence
-func testNilCoalescePrecedence(cond: Bool, a: Int?, r: CountableClosedRange<Int>?) {
+func testNilCoalescePrecedence(cond: Bool, a: Int?, r: ClosedRange<Int>?) {
   // ?? should have higher precedence than logical operators like || and comparisons.
   if cond || (a ?? 42 > 0) {}  // Ok.
   if (cond || a) ?? 42 > 0 {}  // expected-error {{cannot be used as a boolean}} {{15-15=(}} {{16-16= != nil)}}
@@ -735,7 +774,7 @@ func testNilCoalescePrecedence(cond: Bool, a: Int?, r: CountableClosedRange<Int>
 
   // ?? should have lower precedence than range and arithmetic operators.
   let r1 = r ?? (0...42) // ok
-  let r2 = (r ?? 0)...42 // not ok: expected-error {{cannot convert value of type 'Int' to expected argument type 'CountableClosedRange<Int>'}}
+  let r2 = (r ?? 0)...42 // not ok: expected-error {{cannot convert value of type 'Int' to expected argument type 'ClosedRange<Int>'}}
   let r3 = r ?? 0...42 // parses as the first one, not the second.
   
   
@@ -777,16 +816,16 @@ public struct TestPropMethodOverloadGroup {
 // <rdar://problem/18496742> Passing ternary operator expression as inout crashes Swift compiler
 func inoutTests(_ arr: inout Int) {
   var x = 1, y = 2
-  (true ? &x : &y)  // expected-error 2 {{'&' can only appear immediately in a call argument list}}
-  // expected-warning @-1 {{expression of type 'inout Int' is unused}}
-  let a = (true ? &x : &y)  // expected-error 2 {{'&' can only appear immediately in a call argument list}}
-  // expected-error @-1 {{type 'inout Int' of variable is not materializable}}
+  (true ? &x : &y) // expected-error {{use of extraneous '&'}}
+  let a = (true ? &x : &y) // expected-error {{use of extraneous '&'}}
 
-  inoutTests(true ? &x : &y);  // expected-error 2 {{'&' can only appear immediately in a call argument list}}
+  inoutTests(true ? &x : &y) // expected-error {{use of extraneous '&'}}
 
-  &_ // expected-error {{expression type 'inout _' is ambiguous without more context}}
+  &_ // expected-error {{use of extraneous '&'}}
 
-  inoutTests((&x))   // expected-error {{'&' can only appear immediately in a call argument list}}
+  inoutTests((&x, 24).0) // expected-error {{use of extraneous '&'}}
+
+  inoutTests((&x)) // expected-error {{use of extraneous '&'}}
   inoutTests(&x)
   
   // <rdar://problem/17489894> inout not rejected as operand to assignment operator
@@ -805,7 +844,7 @@ func inoutTests(_ arr: inout Int) {
 
 // <rdar://problem/20802757> Compiler crash in default argument & inout expr
 var g20802757 = 2
-func r20802757(_ z: inout Int = &g20802757) { // expected-error {{'&' can only appear immediately in a call argument list}}
+func r20802757(_ z: inout Int = &g20802757) { // expected-error {{use of extraneous '&'}}
   print(z)
 }
 
@@ -842,53 +881,51 @@ func r22913570() {
 }
 
 
-// <rdar://problem/23708702> Emit deprecation warnings for ++/-- in Swift 2.2
-func swift22_deprecation_increment_decrement() {
-  var i = 0
-  var f = 1.0
-
-  i++     // expected-error {{'++' is unavailable}} {{4-6= += 1}}
-  --i     // expected-error {{'--' is unavailable}} {{3-5=}} {{6-6= -= 1}}
-  _ = i++ // expected-error {{'++' is unavailable}}
-
-  ++f     // expected-error {{'++' is unavailable}} {{3-5=}} {{6-6= += 1}}
-  f--     // expected-error {{'--' is unavailable}} {{4-6= -= 1}}
-  _ = f-- // expected-error {{'--' is unavailable}} {{none}}
-
-  // <rdar://problem/24530312> Swift ++fix-it produces bad code in nested expressions
-  // This should not get a fixit hint.
-  var j = 2
-  i = ++j   // expected-error {{'++' is unavailable}} {{none}}
-}
-
 // SR-628 mixing lvalues and rvalues in tuple expression
 var x = 0
 var y = 1
 let _ = (x, x + 1).0
 let _ = (x, 3).1
 (x,y) = (2,3)
-(x,4) = (1,2) // expected-error {{cannot assign to value: literals are not mutable}}
+(x,4) = (1,2) // expected-error {{expression is not assignable: literals are not mutable}}
 (x,y).1 = 7 // expected-error {{cannot assign to immutable expression of type 'Int'}}
 x = (x,(3,y)).1.1
 
 
-// SE-0101 sizeof family functions are reconfigured into MemoryLayout
-protocol Pse0101 {
-  associatedtype Value
-  func getIt() -> Value
+// SR-3439 subscript with pound exprssions.
+Sr3439: do {
+  class B {
+    init() {}
+    subscript(x: Int) -> Int { return x }
+    subscript(x: String) -> String { return x }
+
+    func foo() {
+      _ = self[#line] // Ok.
+    }
+  }
+  class C : B {
+    func bar() {
+      _ = super[#file] // Ok.
+    }
+  }
+
+  let obj = C();
+  _ = obj[#column] // Ok.
 }
-class Cse0101<U> {
-  typealias T = U
-  var val: U { fatalError() }
-}
-func se0101<P: Pse0101>(x: Cse0101<P>) {
-  // Note: The first case is actually not allowed, but it is very common and can be compiled currently.
-  _ = sizeof(P) // expected-error {{'sizeof' is unavailable: use MemoryLayout<T>.size instead.}} {{7-14=MemoryLayout<}} {{15-16=>.size}} {{none}}
-                // expected-warning@-1 {{missing '.self' for reference to metatype of type 'P'}}
-  _ = sizeof(P.self) // expected-error {{'sizeof' is unavailable: use MemoryLayout<T>.size instead.}} {{7-14=MemoryLayout<}} {{15-21=>.size}} {{none}}
-  _ = sizeof(P.Value.self) // expected-error {{'sizeof' is unavailable: use MemoryLayout<T>.size instead.}} {{7-14=MemoryLayout<}} {{21-27=>.size}} {{none}}
-  _ = sizeof(Cse0101<P>.self) // expected-error {{'sizeof' is unavailable: use MemoryLayout<T>.size instead.}} {{7-14=MemoryLayout<}} {{24-30=>.size}} {{none}}
-  _ = alignof(Cse0101<P>.T.self) // expected-error {{'alignof' is unavailable: use MemoryLayout<T>.alignment instead.}} {{7-15=MemoryLayout<}} {{27-33=>.alignment}} {{none}}
-  _ = strideof(P.Type.self) // expected-error {{'strideof' is unavailable: use MemoryLayout<T>.stride instead.}} {{7-16=MemoryLayout<}} {{22-28=>.stride}} {{none}}
-  _ = sizeof(type(of: x)) // expected-error {{'sizeof' is unavailable: use MemoryLayout<T>.size instead.}} {{7-26=MemoryLayout<Cse0101<P>>.size}} {{none}}
-}
+
+// rdar://problem/23672697 - No way to express literal integers larger than Int without using type ascription
+let _: Int64 = 0xFFF_FFFF_FFFF_FFFF
+let _: Int64 = Int64(0xFFF_FFFF_FFFF_FFFF)
+let _: Int64 = 0xFFF_FFFF_FFFF_FFFF as Int64
+let _ = Int64(0xFFF_FFFF_FFFF_FFFF)
+let _ = 0xFFF_FFFF_FFFF_FFFF as Int64
+
+// rdar://problem/20289969 - string interpolation with comment containing ')' or '"'
+let _ = "foo \(42 /* ) " ) */)"
+let _ = "foo \(foo // )  " // expected-error {{unterminated string literal}}
+let _ = "foo \(42 /*
+                   * multiline comment
+                   */)end"
+// expected-error @-3 {{unterminated string literal}}
+// expected-error @-2 {{expected expression}}
+// expected-error @-3 {{unterminated string literal}}

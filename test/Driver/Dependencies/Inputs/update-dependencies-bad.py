@@ -3,17 +3,17 @@
 #
 # This source file is part of the Swift.org open source project
 #
-# Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+# Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 # Licensed under Apache License v2.0 with Runtime Library Exception
 #
-# See http://swift.org/LICENSE.txt for license information
-# See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+# See https://swift.org/LICENSE.txt for license information
+# See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 #
 # ----------------------------------------------------------------------------
 #
 # Fails if the input file is named "bad.swift" or "crash.swift"; otherwise
-# dispatches to update-dependencies.py. "crash.swift" gives an exit code
-# other than 1.
+# dispatches to update-dependencies.py. "crash.swift" results in an
+# exit-by-SIGKILL
 #
 # ----------------------------------------------------------------------------
 
@@ -21,6 +21,7 @@ from __future__ import print_function
 
 import os
 import shutil
+import signal
 import sys
 
 assert sys.argv[1] == '-frontend'
@@ -42,7 +43,8 @@ if (os.path.basename(primaryFile) == 'bad.swift' or
     if os.path.basename(primaryFile) == 'bad.swift':
         sys.exit(1)
     else:
-        sys.exit(129)
+        sys.stdout.flush()
+        os.kill(os.getpid(), signal.SIGKILL)
 
 execDir = os.path.dirname(os.path.abspath(__file__))
-execfile(os.path.join(execDir, "update-dependencies.py"))
+exec(open(os.path.join(execDir, "update-dependencies.py")).read())

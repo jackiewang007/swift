@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -71,10 +71,10 @@ unsigned CompactArrayBuilderImpl::getOffsetForString(StringRef Str) {
 
 std::unique_ptr<llvm::MemoryBuffer>
 CompactArrayBuilderImpl::createBuffer() const {
-  std::unique_ptr<llvm::MemoryBuffer> Buf;
-  Buf = llvm::MemoryBuffer::getNewUninitMemBuffer(sizeInBytes());
-  copyInto(const_cast<char *>(Buf->getBufferStart()), Buf->getBufferSize());
-  return Buf;
+  std::unique_ptr<llvm::WritableMemoryBuffer> Buf;
+  Buf = llvm::WritableMemoryBuffer::getNewUninitMemBuffer(sizeInBytes());
+  copyInto(Buf->getBufferStart(), Buf->getBufferSize());
+  return std::move(Buf);
 }
 
 void CompactArrayBuilderImpl::appendTo(SmallVectorImpl<char> &Buf) const {

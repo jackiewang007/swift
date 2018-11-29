@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -80,12 +80,16 @@ public extension URLResourceValues {
 
     /// Returns a dictionary of UIImage objects keyed by size.
     @available(iOS 8.0, *)
-    public var thumbnailDictionary : [URLThumbnailSizeKey : UIImage]? {
-        return allValues[URLResourceKey.thumbnailDictionaryKey] as? [URLThumbnailSizeKey : UIImage]
+    public var thumbnailDictionary : [URLThumbnailDictionaryItem : UIImage]? {
+        return allValues[URLResourceKey.thumbnailDictionaryKey] as? [URLThumbnailDictionaryItem : UIImage]
     }
 }
 
 // Bridge UIKit structs to NSValue.
 
 ${ ObjectiveCBridgeableImplementationForNSValue("UIEdgeInsets") }
+
+@available(iOS 11.0, tvOS 11.0, watchOS 4.0, *)
+${ ObjectiveCBridgeableImplementationForNSValue("NSDirectionalEdgeInsets") }
+
 ${ ObjectiveCBridgeableImplementationForNSValue("UIOffset") }

@@ -1,9 +1,15 @@
-add_swift_library(swiftFrontendTool STATIC
+add_swift_host_library(swiftFrontendTool STATIC
   FrontendTool.cpp
-  DEPENDS SwiftOptions
+  ImportedModules.cpp
+  ReferenceDependencies.cpp
+  TBD.cpp
+  DEPENDS
+    swift-syntax-generated-headers SwiftOptions
   LINK_LIBRARIES
+    swiftIndex
     swiftIDE
-    swiftIRGen swiftSIL swiftSILGen swiftSILOptimizer
+    swiftTBDGen swiftIRGen swiftSIL swiftSILGen swiftSILOptimizer
+    swiftDemangling
     swiftImmediate
     swiftSerialization
     swiftPrintAsObjC

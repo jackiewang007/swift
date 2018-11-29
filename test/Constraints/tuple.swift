@@ -1,4 +1,4 @@
-// RUN: %target-parse-verify-swift
+// RUN: %target-typecheck-verify-swift
 
 // Test various tuple constraints.
 
@@ -162,14 +162,14 @@ protocol Kingdom {
   associatedtype King
 }
 struct Victory<General> {
-  init<K: Kingdom>(_ king: K) where K.King == General {}
+  init<K: Kingdom>(_ king: K) where K.King == General {} // expected-note {{where 'General' = '(x: Int, y: Int)', 'K.King' = '(Int, Int)'}}
 }
 struct MagicKingdom<K> : Kingdom {
   typealias King = K
 }
 func magify<T>(_ t: T) -> MagicKingdom<T> { return MagicKingdom() }
 func foo(_ pair: (Int, Int)) -> Victory<(x: Int, y: Int)> {
-  return Victory(magify(pair)) // expected-error {{cannot convert return expression of type 'Victory<(Int, Int)>' to return type 'Victory<(x: Int, y: Int)>'}}
+  return Victory(magify(pair)) // expected-error {{initializer 'init(_:)' requires the types '(x: Int, y: Int)' and '(Int, Int)' be equivalent}}
 }
 
 
@@ -202,3 +202,53 @@ func f(a : r25271859<(Float, Int)>) {
   }
 }
 
+// LValue to rvalue conversions.
+
+func takesRValue(_: (Int, (Int, Int))) {}
+func takesAny(_: Any) {}
+
+var x = 0
+var y = 0
+
+let _ = (x, (y, 0))
+takesRValue((x, (y, 0)))
+takesAny((x, (y, 0)))
+
+// SR-2600 - Closure cannot infer tuple parameter names
+typealias Closure<A, B> = ((a: A, b: B)) -> String
+
+func invoke<A, B>(a: A, b: B, _ closure: Closure<A,B>) {
+  print(closure((a, b)))
+}
+
+invoke(a: 1, b: "B") { $0.b }
+
+invoke(a: 1, b: "B") { $0.1 }
+
+invoke(a: 1, b: "B") { (c: (a: Int, b: String)) in
+  return c.b
+}
+
+invoke(a: 1, b: "B") { c in
+  return c.b
+}
+
+// Crash with one-element tuple with labeled element
+class Dinner {}
+
+func microwave() -> Dinner? {
+  let d: Dinner? = nil
+  return (n: d) // expected-error{{cannot convert return expression of type '(n: Dinner?)' to return type 'Dinner?'}}
+}
+
+func microwave() -> Dinner {
+  let d: Dinner? = nil
+  return (n: d) // expected-error{{cannot convert return expression of type '(n: Dinner?)' to return type 'Dinner'}}
+}
+
+// Tuple conversion with an optional
+func f(b: Bool) -> (a: Int, b: String)? {
+  let x = 3
+  let y = ""
+  return b ? (x, y) : nil
+}

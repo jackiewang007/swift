@@ -5,7 +5,9 @@
   (eval let*
         ((x (dir-locals-find-file default-directory))
          (this-directory (if (listp x) (car x) (file-name-directory x))))
-        (unless (featurep 'swift-project-settings)
+        (unless (or (featurep 'swift-project-settings) 
+                    (and (fboundp 'tramp-tramp-file-p)
+                         (tramp-tramp-file-p this-directory)))
           (add-to-list 'load-path
                        (concat this-directory "utils")
                        :append)
@@ -18,7 +20,8 @@
   (fill-column . 80)
   (c-file-style . "swift"))
  (c++-mode
-  (whitespace-style face lines indentation:space))
+  (whitespace-style face lines indentation:space)
+  (flycheck-clang-language-standard . "c++14"))
  (c-mode
   (whitespace-style face lines indentation:space))
  (objc-mode

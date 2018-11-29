@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -63,6 +63,12 @@ public:
   bool isNoEscape() const { return Value.getInt() & IsNoEscape; }
 
   bool isDynamicSelfMetadata() const { return !Value.getPointer(); }
+
+  CapturedValue mergeFlags(CapturedValue cv) {
+    assert(Value.getPointer() == cv.Value.getPointer() &&
+           "merging flags on two different value decls");
+    return CapturedValue(Value.getPointer(), getFlags() & cv.getFlags());
+  }
 
   ValueDecl *getDecl() const {
     assert(Value.getPointer() && "dynamic Self metadata capture does not "

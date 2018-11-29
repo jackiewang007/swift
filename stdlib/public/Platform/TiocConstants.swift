@@ -2,18 +2,18 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
 // Tty ioctl request constants, needed only on Darwin and FreeBSD.
 
 // Constants available on all platforms, also available on Linux.
-#if os(OSX) || os(iOS) || os(tvOS) || os(watchOS) || os(FreeBSD)
+#if os(macOS) || os(iOS) || os(tvOS) || os(watchOS) || os(FreeBSD) || os(Haiku)
 
 /// Set exclusive use of tty.
 public var TIOCEXCL: UInt { return 0x2000740d }
@@ -115,7 +115,7 @@ public var TIOCGLTC: UInt { return 0x40067474 }
 
 
 // Darwin only constants, also available on Linux.
-#if os(OSX) || os(iOS) || os(tvOS) || os(watchOS)
+#if os(macOS) || os(iOS) || os(tvOS) || os(watchOS)
 
 /// Get termios struct.
 public var TIOCGETA: UInt { return 0x40487413 }
@@ -174,4 +174,3 @@ public var TIOCPTMASTER: UInt { return 0x2000741c }
 public var TIOCGSID: UInt { return 0x40047463 }
 
 #endif
-

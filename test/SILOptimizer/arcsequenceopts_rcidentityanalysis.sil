@@ -1,5 +1,5 @@
-// RUN: %target-sil-opt -assume-parsing-unqualified-ownership-sil -enable-sil-verify-all -enable-loop-arc=0 -arc-sequence-opts %s | %FileCheck %s
-// RUN: %target-sil-opt -assume-parsing-unqualified-ownership-sil -enable-sil-verify-all -enable-loop-arc=1 -arc-sequence-opts %s | %FileCheck %s
+// RUN: %target-sil-opt -assume-parsing-unqualified-ownership-sil -enable-sil-verify-all -enable-loop-arc=0 -arc-sequence-opts %s -module-name Swift | %FileCheck %s
+// RUN: %target-sil-opt -assume-parsing-unqualified-ownership-sil -enable-sil-verify-all -enable-loop-arc=1 -arc-sequence-opts %s -module-name Swift | %FileCheck %s
 
 sil_stage canonical
 
@@ -38,7 +38,7 @@ public enum FakeOptional<T> {
   case some(T)
 }
 
-public protocol AnyObject : class {}
+public typealias AnyObject = Builtin.AnyObject
 
 class C {
   init()
@@ -389,7 +389,7 @@ bb3(%3 : $FakeOptional<Builtin.NativeObject>):
 struct _SwiftEmptyArrayStorage {
 }
 
-sil_global [fragile] @_swiftEmptyArrayStorage : $_SwiftEmptyArrayStorage
+sil_global [serialized] @_swiftEmptyArrayStorage : $_SwiftEmptyArrayStorage
 
 // CHECK-LABEL: sil @dont_strip_rawpointer_to_address
 // CHECK: raw_pointer_to_ref

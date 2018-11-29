@@ -3,11 +3,13 @@
 #
 # This source file is part of the Swift.org open source project
 #
-# Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+# Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 # Licensed under Apache License v2.0 with Runtime Library Exception
 #
-# See http://swift.org/LICENSE.txt for license information
-# See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+# See https://swift.org/LICENSE.txt for license information
+# See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+
+from __future__ import print_function
 
 import argparse
 import logging
@@ -79,8 +81,8 @@ def main():
     args = parser.parse_args()
 
     for path in [args.swift_dir, args.coverage_db]:
-        assert(os.path.exists(path), "Unable to find %s. Try absolute paths." %
-               path)
+        assert os.path.exists(path), "Unable to find %s. Try absolute" \
+                                     " paths." % path
 
     console.setLevel(level=args.log.upper())
     logging.debug(args)
@@ -124,7 +126,7 @@ def main():
     covering_tests = set().union(*pool.map_async(
         worker,
         enumerate(relevant_changes)
-    ).get(9999999))
+    ).get(999999))
 
     logging.info('Combined covering tests:')
     for covering_test in covering_tests:
@@ -153,10 +155,11 @@ def diff():
     parser.add_argument('new_hex')
     parser.add_argument('new_mode')
     args = parser.parse_args()
-    print 'FILENAME', os.path.basename(args.new_file)
+    print('FILENAME', os.path.basename(args.new_file))
     sys.stdout.flush()
     subprocess.call(['diff', '-U0', args.old_file, args.new_file])
     return 0
+
 
 if __name__ == '__main__':
     if 'GIT_EXTERNAL_DIFF' in os.environ:

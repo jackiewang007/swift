@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -18,9 +18,13 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "swift/Runtime/Config.h"
+
+#if SWIFT_OBJC_INTEROP
 #include "SwiftObject.h"
 #include "SwiftValue.h"
 #include "swift/Basic/Lazy.h"
+#include "swift/Runtime/Casting.h"
 #include "swift/Runtime/HeapObject.h"
 #include "swift/Runtime/Metadata.h"
 #include "swift/Runtime/ObjCBridge.h"
@@ -30,31 +34,31 @@
 #include <objc/runtime.h>
 #include <Foundation/Foundation.h>
 
-#if !SWIFT_OBJC_INTEROP
-#error "This file should only be compiled when ObjC interop is enabled."
-#endif
-
 using namespace swift;
 using namespace swift::hashable_support;
 
 // TODO: Making this a SwiftObject subclass would let us use Swift refcounting,
-// but we would need to be able to emit _SwiftValue's Objective-C class object
+// but we would need to be able to emit __SwiftValue's Objective-C class object
 // with the Swift destructor pointer prefixed before it.
 //
-// The layout of `_SwiftValue` is:
+// The layout of `__SwiftValue` is:
 // - object header,
 // - `SwiftValueHeader` instance,
 // - the payload, tail-allocated (the Swift value contained in this box).
-@interface _SwiftValue : NSObject <NSCopying>
+//
+// NOTE: older runtimes called this _SwiftValue. The two must
+// coexist, so it was renamed. The old name must not be used in the new
+// runtime.
+@interface __SwiftValue : NSObject <NSCopying>
 
 - (id)copyWithZone:(NSZone *)zone;
 
 @end
 
-/// The fixed-size ivars of `_SwiftValue`.  The actual boxed value is
+/// The fixed-size ivars of `__SwiftValue`.  The actual boxed value is
 /// tail-allocated.
 struct SwiftValueHeader {
-  /// The type of the value contained in the `_SwiftValue` box.
+  /// The type of the value contained in the `__SwiftValue` box.
   const Metadata *type;
 
   /// The base type that introduces the `Hashable` conformance.
@@ -131,10 +135,10 @@ static constexpr const size_t SwiftValueMinAlignMask
  */
 
 static Class _getSwiftValueClass() {
-  auto theClass = [_SwiftValue class];
-  // Fixed instance size of _SwiftValue should be same as object header.
+  auto theClass = [__SwiftValue class];
+  // Fixed instance size of __SwiftValue should be same as object header.
   assert(class_getInstanceSize(theClass) == SwiftValueHeaderOffset
-         && "unexpected size of _SwiftValue?!");
+         && "unexpected size of __SwiftValue?!");
   return theClass;
 }
 
@@ -147,13 +151,13 @@ static constexpr size_t getSwiftValuePayloadOffset(size_t alignMask) {
          ~alignMask;
 }
 
-static SwiftValueHeader *getSwiftValueHeader(_SwiftValue *v) {
+static SwiftValueHeader *getSwiftValueHeader(__SwiftValue *v) {
   auto instanceBytes = reinterpret_cast<char *>(v);
   return reinterpret_cast<SwiftValueHeader *>(instanceBytes +
                                               SwiftValueHeaderOffset);
 }
 
-static OpaqueValue *getSwiftValuePayload(_SwiftValue *v, size_t alignMask) {
+static OpaqueValue *getSwiftValuePayload(__SwiftValue *v, size_t alignMask) {
   auto instanceBytes = reinterpret_cast<char *>(v);
   return reinterpret_cast<OpaqueValue *>(instanceBytes +
                                          getSwiftValuePayloadOffset(alignMask));
@@ -163,18 +167,18 @@ static size_t getSwiftValuePayloadAlignMask(const Metadata *type) {
   return type->getValueWitnesses()->getAlignmentMask() | SwiftValueMinAlignMask;
 }
 
-const Metadata *swift::getSwiftValueTypeMetadata(_SwiftValue *v) {
+const Metadata *swift::getSwiftValueTypeMetadata(__SwiftValue *v) {
   return getSwiftValueHeader(v)->type;
 }
 
 std::pair<const Metadata *, const OpaqueValue *>
-swift::getValueFromSwiftValue(_SwiftValue *v) {
+swift::getValueFromSwiftValue(__SwiftValue *v) {
   auto instanceType = getSwiftValueTypeMetadata(v);
   size_t alignMask = getSwiftValuePayloadAlignMask(instanceType);
   return {instanceType, getSwiftValuePayload(v, alignMask)};
 }
 
-_SwiftValue *swift::bridgeAnythingToSwiftValueObject(OpaqueValue *src,
+__SwiftValue *swift::bridgeAnythingToSwiftValueObject(OpaqueValue *src,
                                                     const Metadata *srcType,
                                                     bool consume) {
   size_t alignMask = getSwiftValuePayloadAlignMask(srcType);
@@ -183,7 +187,7 @@ _SwiftValue *swift::bridgeAnythingToSwiftValueObject(OpaqueValue *src,
       getSwiftValuePayloadOffset(alignMask) + srcType->getValueWitnesses()->size;
 
   void *instanceMemory = swift_slowAlloc(totalSize, alignMask);
-  _SwiftValue *instance
+  __SwiftValue *instance
     = objc_constructInstance(getSwiftValueClass(), instanceMemory);
   /* TODO: If we're able to become a SwiftObject subclass in the future,
    * change to this:
@@ -204,8 +208,8 @@ _SwiftValue *swift::bridgeAnythingToSwiftValueObject(OpaqueValue *src,
   return instance;
 }
 
-_SwiftValue *swift::getAsSwiftValue(id object) {
-  // _SwiftValue should have no subclasses or proxies. We can do an exact
+__SwiftValue *swift::getAsSwiftValue(id object) {
+  // __SwiftValue should have no subclasses or proxies. We can do an exact
   // class check.
   if (object_getClass(object) == getSwiftValueClass())
     return object;
@@ -213,52 +217,42 @@ _SwiftValue *swift::getAsSwiftValue(id object) {
 }
 
 bool
-swift::findSwiftValueConformances(const ProtocolDescriptorList &protocols,
+swift::findSwiftValueConformances(const ExistentialTypeMetadata *existentialType,
                                   const WitnessTable **tablesBuffer) {
+  // __SwiftValue never satisfies a superclass constraint.
+  if (existentialType->getSuperclassConstraint() != nullptr)
+    return false;
+
   Class cls = nullptr;
 
   // Note that currently we never modify tablesBuffer because
-  // _SwiftValue doesn't conform to any protocols that need witness tables.
+  // __SwiftValue doesn't conform to any protocols that need witness tables.
 
-  for (size_t i = 0, e = protocols.NumProtocols; i != e; ++i) {
-    auto protocol = protocols[i];
-
-    // _SwiftValue does conform to AnyObject.
-    switch (protocol->Flags.getSpecialProtocol()) {
-    case SpecialProtocol::AnyObject:
-      continue;
-
-    case SpecialProtocol::Error:
-      return false;
-
-    case SpecialProtocol::None:
-      break;
-    }
-
-    // Otherwise, it only conforms to ObjC protocols.  We specifically
-    // don't want to say that _SwiftValue conforms to the Swift protocols
+  for (auto protocol : existentialType->getProtocols()) {
+    // __SwiftValue only conforms to ObjC protocols.  We specifically
+    // don't want to say that __SwiftValue conforms to the Swift protocols
     // that NSObject conforms to because that would create a situation
     // where arguably an arbitrary type would conform to those protocols
-    // by way of coercion through _SwiftValue.  Eventually we want to
-    // change _SwiftValue to not be an NSObject subclass at all.
+    // by way of coercion through __SwiftValue.  Eventually we want to
+    // change __SwiftValue to not be an NSObject subclass at all.
 
-    if (protocol->Flags.getDispatchStrategy() != ProtocolDispatchStrategy::ObjC)
+    if (!protocol.isObjC())
       return false;
 
     if (!cls) cls = _getSwiftValueClass();
 
     // Check whether the class conforms to the protocol.
-    if (![cls conformsToProtocol: (Protocol*) protocol])
+    if (![cls conformsToProtocol: protocol.getObjCProtocol()])
       return false;
   }
 
   return true;
 }
 
-@implementation _SwiftValue
+@implementation __SwiftValue
 
 + (instancetype)allocWithZone:(NSZone *)zone {
-  swift::crash("_SwiftValue cannot be instantiated");
+  swift::crash("__SwiftValue cannot be instantiated");
 }
 
 - (id)copyWithZone:(NSZone *)zone {
@@ -322,7 +316,7 @@ swift::findSwiftValueConformances(const ProtocolDescriptorList &protocols,
     return NO;
   }
 
-  return swift_stdlib_Hashable_isEqual_indirect(
+  return _swift_stdlib_Hashable_isEqual_indirect(
       getSwiftValuePayload(self,
                            getSwiftValuePayloadAlignMask(selfHeader->type)),
       getSwiftValuePayload(other,
@@ -336,25 +330,25 @@ swift::findSwiftValueConformances(const ProtocolDescriptorList &protocols,
   if (!hashableConformance) {
     return (NSUInteger)self;
   }
-  return swift_stdlib_Hashable_hashValue_indirect(
+  return _swift_stdlib_Hashable_hashValue_indirect(
       getSwiftValuePayload(self,
                            getSwiftValuePayloadAlignMask(selfHeader->type)),
       selfHeader->type, hashableConformance);
 }
 
-static NSString *getValueDescription(_SwiftValue *self) {
-  String tmp;
+static NSString *getValueDescription(__SwiftValue *self) {
   const Metadata *type;
   const OpaqueValue *value;
   std::tie(type, value) = getValueFromSwiftValue(self);
 
   // Copy the value, since it will be consumed by getSummary.
   ValueBuffer copyBuf;
-  auto copy = type->vw_initializeBufferWithCopy(&copyBuf,
-                                              const_cast<OpaqueValue*>(value));
-  swift_getSummary(&tmp, copy, type);
-  type->vw_deallocateBuffer(&copyBuf);
-  return convertStringToNSString(&tmp);
+  auto copy = type->allocateBufferIn(&copyBuf);
+  type->vw_initializeWithCopy(copy, const_cast<OpaqueValue *>(value));
+
+  NSString *string = getDescription(copy, type);
+  type->deallocateBufferIn(&copyBuf);
+  return string;
 }
 
 - (NSString *)description {
@@ -370,17 +364,18 @@ static NSString *getValueDescription(_SwiftValue *self) {
   return getSwiftValueTypeMetadata(self);
 }
 - (NSString *)_swiftTypeName {
-  TwoWordPair<const char *, uintptr_t> typeName
+  TypeNamePair typeName
     = swift_getTypeName(getSwiftValueTypeMetadata(self), true);
 
-  return [NSString stringWithUTF8String: typeName.first];
+  return [NSString stringWithUTF8String: typeName.data];
 }
 - (const OpaqueValue *)_swiftValue {
   return getValueFromSwiftValue(self).second;
 }
 
 @end
+#endif
 
-// TODO: We could pick specialized _SwiftValue subclasses for trivial types
+// TODO: We could pick specialized __SwiftValue subclasses for trivial types
 // or for types with known size and alignment characteristics. Probably
 // not enough of a real perf bottleneck to be worth it...

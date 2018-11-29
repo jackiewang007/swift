@@ -64,7 +64,6 @@ func test4() {
 func test5() {
   S1(#^S1_PAREN_INIT^#
 }
-// S1_INIT: ()
 // S1_INIT: ({params:{t:Int}, {t:Int}})
 // S1_INIT: ({params:{n:a:}{t: Int}, {n:b:}{t: Int}})
 // S1_INIT: ({params:{n:c:}{t: Int}})
@@ -117,8 +116,6 @@ func test9(_ x: inout Int) {
 // INT_INNER_0: {name:x==}
 // INT_INNER_0: {name:x<}
 // INT_INNER_0: {name:x+}
-// INT_INNER_0: {name:x++}
-// INT_INNER_0: {name:x>>}
 // INT_INNER_0: {name:x..<}
 
 protocol P1 {

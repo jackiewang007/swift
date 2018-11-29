@@ -25,11 +25,11 @@ public func f(s : S) -> (() -> ()) {
   return { gg = s }
 }
 
-// CHECK-DAG: @"\01l__swift3_reflection_descriptor" = private constant {{.*}}, section ".sw3cptr"
-// CHECK-DAG: @{{[0-9]+}} = private constant [3 x i8] c"Sq\00", section ".sw3tyrf"
-// CHECK-DAG: @{{[0-9]+}} = private constant [5 x i8] c"none\00", section ".sw3rfst"
-// CHECK-DAG: @{{[0-9]+}} = private constant [5 x i8] c"some\00", section ".sw3rfst"
-// CHECK-DAG: @_TMRfSq = internal constant {{.*}}, section ".sw3flmd"
-// CHECK-DAG: @_TMRaVs1Ss1Ps = internal constant {{.*}}, section ".sw3asty"
-// CHECK-DAG: @_TMRbBo = internal constant {{.*}}, section ".sw3bltn"
+// CHECK-DAG: @"\01l__swift5_reflection_descriptor" = private constant {{.*}}, section ".sw5cptr$B"
+// CHECK-DAG: @"{{.*}}" = {{.*}} c"Sq", {{.*}} section ".sw5tyrf$B"
+// CHECK-DAG: @{{[0-9]+}} = {{.*}} c"none\00", section ".sw5rfst$B"
+// CHECK-DAG: @{{[0-9]+}} = {{.*}} c"some\00", section ".sw5rfst$B"
+// CHECK-DAG: @"$sSqMF" = internal constant {{.*}}, section ".sw5flmd$B"
+// CHECK-DAG: @"$ss1SVs1PsMA" = internal constant {{.*}}, section ".sw5asty$B"
+// CHECK-DAG: @"$sBoMB" = internal constant {{.*}}, section ".sw5bltn$B"
 

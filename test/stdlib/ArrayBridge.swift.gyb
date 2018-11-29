@@ -2,21 +2,21 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
-// RUN: rm -rf %t
-// RUN: mkdir -p %t
+// RUN: %empty-directory(%t)
 //
 // RUN: %gyb %s -o %t/ArrayBridge.swift
 // RUN: %target-clang %S/Inputs/ArrayBridge/ArrayBridge.m -c -o %t/ArrayBridgeObjC.o -g
-// RUN:  %line-directive %t/ArrayBridge.swift -- %target-build-swift %t/ArrayBridge.swift -I %S/Inputs/ArrayBridge/ -Xlinker %t/ArrayBridgeObjC.o -o %t/ArrayBridge --
+// RUN:  %line-directive %t/ArrayBridge.swift -- %target-build-swift %t/ArrayBridge.swift -I %S/Inputs/ArrayBridge/ -Xlinker %t/ArrayBridgeObjC.o -o %t/ArrayBridge -swift-version 4.2 --
 
+// RUN: %target-codesign %t/ArrayBridge
 // RUN: %target-run %t/ArrayBridge
 // REQUIRES: executable_test
 // REQUIRES: objc_interop
@@ -127,7 +127,7 @@ func == (lhs: BridgeableValue, rhs: BridgeableValue) -> Bool {
 
 // A class used to test various Objective-C thunks.
 class Thunks : NSObject {
-  func createSubclass(_ value: Int) -> AnyObject {
+  @objc func createSubclass(_ value: Int) -> AnyObject {
     return Subclass(value)
   }
 
@@ -296,8 +296,8 @@ tests.test("testExplicitlyBridged/${Any}") {
 
   let bridgeableValuesAsNSArray = bridgeableValues as NSArray
   expectEqual(2, bridgeableValuesAsNSArray.count)
-  expectEqual(42, (bridgeableValuesAsNSArray[0] as AnyObject).value)
-  expectEqual(17, (bridgeableValuesAsNSArray[1] as AnyObject).value)
+  expectEqual(42, (bridgeableValuesAsNSArray[0] as! Subclass).value)
+  expectEqual(17, (bridgeableValuesAsNSArray[1] as! Subclass).value)
 
   // Make sure we can bridge back.
   let roundTrippedValues = Swift._forceBridgeFromObjectiveC(
@@ -461,7 +461,7 @@ tests.test("testMutableArray") {
   let a = m as NSArray as! [NSString]
 
   // Create distinct array storage with a copy of the elements in a
-  let aCopy = a.map { $0 }
+  let aCopy = Array(a)
 
   // Modify the original mutable array
   m.add("goop")

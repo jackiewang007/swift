@@ -8,6 +8,7 @@ import AVFoundation
 import Newtype
 import objc_ext
 import TestProtocols
+import TypeAndValue
 
 import ObjCParseExtras
 import ObjCParseExtrasToo
@@ -44,7 +45,7 @@ func instanceMethods(_ b: B) {
   }
 
   // Renaming of redundant parameters.
-  b.performAdd(1, withValue:2, withValue2:3, withValue:4) // expected-error{{argument 'withValue' must precede argument 'withValue2'}}
+  b.performAdd(1, withValue:2, withValue2:3, withValue:4) // expected-error{{argument 'withValue' must precede argument 'withValue2'}} {{32-32=withValue:4, }} {{44-57=}}
   b.performAdd(1, withValue:2, withValue:4, withValue2: 3)
 
   b.performAdd(1, 2, 3, 4) // expected-error{{missing argument labels 'withValue:withValue:withValue2:' in call}} {{19-19=withValue: }} {{22-22=withValue: }} {{25-25=withValue2: }}
@@ -120,20 +121,26 @@ func properties(_ b: B) {
   // An informal property cannot be made formal in a subclass. The
   // formal property is simply ignored.
   b.informalMadeFormal()
-  b.informalMadeFormal = i // expected-error{{cannot assign to property: 'informalMadeFormal' is a method}}
+  b.informalMadeFormal = i // expected-error{{cannot assign to value: 'informalMadeFormal' is a method}}
   b.setInformalMadeFormal(5)
 
   b.overriddenProp = 17
 
   // Dynamic properties.
   var obj : AnyObject = b
-  var optStr = obj.nsstringProperty
+  var optStr = obj.nsstringProperty // optStr has type String??
   if optStr != nil {
-    var s : String = optStr!
+    var s : String = optStr! // expected-error{{value of optional type 'String?' must be unwrapped}}
+    // expected-note@-1{{coalesce}}
+    // expected-note@-2{{force-unwrap}}
+    var t : String = optStr!!
   }
 
   // Properties that are Swift keywords
   var prot = b.`protocol`
+
+  // Properties whose accessors run afoul of selector splitting.
+  _ = SelectorSplittingAccessors()
 }
 
 // Construction.
@@ -171,7 +178,7 @@ func keyedSubscripting(_ b: B, idx: A, a: A) {
   dict[NSString()] = a
   let value = dict[NSString()]
 
-  dict[nil] = a // expected-error {{ambiguous reference}}
+  dict[nil] = a // expected-error {{cannot assign value of type 'A' to type 'Any?'}}
   let q = dict[nil]  // expected-error {{ambiguous subscript}}
   _ = q
 }
@@ -210,7 +217,7 @@ func testProtocolMethods(_ b: B, p2m: P2.Type) {
 
 func testId(_ x: AnyObject) {
   x.perform!("foo:", with: x) // expected-warning{{no method declared with Objective-C selector 'foo:'}}
-  // expected-warning @-1 {{result of call is unused, but produces 'Unmanaged<AnyObject>!'}}
+  // expected-warning @-1 {{result of call to function returning 'Unmanaged<AnyObject>?' is unused}}
 
   _ = x.performAdd(1, withValue: 2, withValue: 3, withValue2: 4)
   _ = x.performAdd!(1, withValue: 2, withValue: 3, withValue2: 4)
@@ -236,7 +243,7 @@ func overridingTest(_ srs: SuperRefsSub) {
 }
 
 func almostSubscriptableValueMismatch(_ as1: AlmostSubscriptable, a: A) {
-  as1[a] // expected-error{{type 'AlmostSubscriptable' has no subscript members}}
+  as1[a] // expected-error{{value of type 'AlmostSubscriptable' has no subscripts}}
 }
 
 func almostSubscriptableKeyMismatch(_ bc: BadCollection, key: NSString) {
@@ -247,13 +254,13 @@ func almostSubscriptableKeyMismatch(_ bc: BadCollection, key: NSString) {
 
 func almostSubscriptableKeyMismatchInherited(_ bc: BadCollectionChild,
                                              key: String) {
-  var value : Any = bc[key] // no-warning, inherited from parent
+  var value : Any = bc[key]
   bc[key] = value // expected-error{{cannot assign through subscript: subscript is get-only}}
 }
 
 func almostSubscriptableKeyMismatchInherited(_ roc: ReadOnlyCollectionChild,
                                              key: String) {
-  var value : Any = roc[key] // no-warning, inherited from parent
+  var value : Any = roc[key]
   roc[key] = value // expected-error{{cannot assign through subscript: subscript is get-only}}
 }
 
@@ -263,7 +270,7 @@ func classAnyObject(_ obj: NSObject) {
 }
 
 // Protocol conformances
-class Wobbler : NSWobbling { // expected-note{{candidate has non-matching type '()'}}
+class Wobbler : NSWobbling {
   @objc func wobble() { }
 
   func returnMyself() -> Self { return self } // expected-error{{non-'@objc' method 'returnMyself()' does not satisfy requirement of '@objc' protocol 'NSWobbling'}}{{none}}
@@ -273,7 +280,7 @@ class Wobbler : NSWobbling { // expected-note{{candidate has non-matching type '
 extension Wobbler : NSMaybeInitWobble { // expected-error{{type 'Wobbler' does not conform to protocol 'NSMaybeInitWobble'}}
 }
 
-@objc class Wobbler2 : NSObject, NSWobbling { // expected-note{{candidate has non-matching type '()'}}
+@objc class Wobbler2 : NSObject, NSWobbling {
   func wobble() { }
   func returnMyself() -> Self { return self }
 }
@@ -283,7 +290,9 @@ extension Wobbler2 : NSMaybeInitWobble { // expected-error{{type 'Wobbler2' does
 
 func optionalMemberAccess(_ w: NSWobbling) {
   w.wobble()
-  w.wibble() // expected-error{{value of optional type '(() -> Void)?' not unwrapped; did you mean to use '!' or '?'?}} {{11-11=!}}
+  w.wibble() // expected-error{{value of optional type '(() -> Void)?' must be unwrapped}}
+  // expected-note@-1{{coalesce}}
+  // expected-note@-2{{force-unwrap}}
   let x = w[5]!!
   _ = x
 }
@@ -337,8 +346,8 @@ func testDynamicSelf(_ queen: Bee, wobbler: NSWobbling) {
   // Instance method on a base class with instancetype result, called on the
   // class itself.
   // FIXME: This should be accepted.
-  // FIXME: The error is lousy, too.
-  let baseClass: ObjCParseExtras.Base.Type = ObjCParseExtras.Base.returnMyself() // expected-error{{missing argument for parameter #1 in call}}
+  let baseClass: ObjCParseExtras.Base.Type = ObjCParseExtras.Base.returnMyself()
+  // expected-error@-1 {{instance member 'returnMyself' cannot be used on type 'Base'}}
 }
 
 func testRepeatedProtocolAdoption(_ w: NSWindow) {
@@ -356,14 +365,14 @@ class ProtocolAdopter2 : FooProto {
     set { /* do nothing! */ }
   }
 }
-class ProtocolAdopterBad1 : FooProto { // expected-error{{type 'ProtocolAdopterBad1' does not conform to protocol 'FooProto'}}
-  @objc var bar: Int = 0 // expected-note{{candidate has non-matching type 'Int'}}
+class ProtocolAdopterBad1 : FooProto { // expected-error {{type 'ProtocolAdopterBad1' does not conform to protocol 'FooProto'}}
+  @objc var bar: Int = 0 // expected-note {{candidate has non-matching type 'Int'}}
 }
-class ProtocolAdopterBad2 : FooProto { // expected-error{{type 'ProtocolAdopterBad2' does not conform to protocol 'FooProto'}}
-  let bar: CInt = 0 // expected-note{{candidate is not settable, but protocol requires it}}
+class ProtocolAdopterBad2 : FooProto { // expected-error {{type 'ProtocolAdopterBad2' does not conform to protocol 'FooProto'}}
+  let bar: CInt = 0 // expected-note {{candidate is not settable, but protocol requires it}}
 }
-class ProtocolAdopterBad3 : FooProto { // expected-error{{type 'ProtocolAdopterBad3' does not conform to protocol 'FooProto'}}
-  var bar: CInt { // expected-note{{candidate is not settable, but protocol requires it}}
+class ProtocolAdopterBad3 : FooProto { // expected-error {{type 'ProtocolAdopterBad3' does not conform to protocol 'FooProto'}}
+  var bar: CInt { // expected-note {{candidate is not settable, but protocol requires it}}
     return 42
   }
 }
@@ -374,7 +383,7 @@ func testPreferClassMethodToCurriedInstanceMethod(_ obj: NSObject) {
   // FIXME: We shouldn't need the ": Bool" type annotation here.
   // <rdar://problem/18006008>
   let _: Bool = NSObject.isEqual(obj)
-  _ = NSObject.isEqual(obj) as (NSObject!) -> Bool // no-warning
+  _ = NSObject.isEqual(obj) as (NSObject?) -> Bool // no-warning
 }
 
 
@@ -398,6 +407,23 @@ func testPropertyAndMethodCollision(_ obj: PropertyAndMethodCollision,
   value = type(of: obj).protoClassProp()
   value = type(of: obj).protoClassPropRO()
   _ = value
+}
+
+func testPropertyAndMethodCollisionInOneClass(
+  obj: PropertyAndMethodCollisionInOneClass,
+  rev: PropertyAndMethodReverseCollisionInOneClass
+) {
+  obj.object = nil
+  obj.object()
+
+  type(of: obj).classRef = nil
+  type(of: obj).classRef()
+
+  rev.object = nil
+  rev.object()
+
+  type(of: rev).classRef = nil
+  type(of: rev).classRef()
 }
 
 func testSubscriptAndPropertyRedeclaration(_ obj: SubscriptAndProperty) {
@@ -471,7 +497,7 @@ class IncompleteProtocolAdopter : Incomplete, IncompleteOptional { // expected-e
 
 func testNullarySelectorPieces(_ obj: AnyObject) {
   obj.foo(1, bar: 2, 3) // no-warning
-  obj.foo(1, 2, bar: 3) // expected-error{{cannot call value of non-function type 'Any?!'}}
+  obj.foo(1, 2, bar: 3) // expected-error{{cannot invoke 'foo' with an argument list of type '(Int, Int, bar: Int)'}}
 }
 
 func testFactoryMethodAvailability() {
@@ -501,8 +527,10 @@ func testUnusedResults(_ ur: UnusedResults) {
   ur.producesResult() // expected-warning{{result of call to 'producesResult()' is unused}}
 }
 
-func testCStyle() {
-  ExtraSelectors.cStyle(0, 1, 2) // expected-error{{type 'ExtraSelectors' has no member 'cStyle'}}
+func testStrangeSelectors(obj: StrangeSelectors) {
+  StrangeSelectors.cStyle(0, 1, 2) // expected-error{{type 'StrangeSelectors' has no member 'cStyle'}}
+  _ = StrangeSelectors(a: 0, b: 0) // okay
+  obj.empty(1, 2) // okay
 }
 
 func testProtocolQualified(_ obj: CopyableNSObject, cell: CopyableSomeCell,
@@ -514,11 +542,11 @@ func testProtocolQualified(_ obj: CopyableNSObject, cell: CopyableSomeCell,
 
   _ = cell as NSObject
   _ = cell as NSObjectProtocol
-  _ = cell as NSCopying // expected-error {{'CopyableSomeCell' (aka 'SomeCell') is not convertible to 'NSCopying'; did you mean to use 'as!' to force downcast?}} {{12-14=as!}}
+  _ = cell as NSCopying
   _ = cell as SomeCell
   
   _ = plainObj as CopyableNSObject // expected-error {{'NSObject' is not convertible to 'CopyableNSObject' (aka 'NSCopying & NSObjectProtocol'); did you mean to use 'as!' to force downcast?}} {{16-18=as!}}
-  _ = plainCell as CopyableSomeCell // FIXME: This is not really typesafe.
+  _ = plainCell as CopyableSomeCell // expected-error {{'SomeCell' is not convertible to 'CopyableSomeCell' (aka 'SomeCell & NSCopying'); did you mean to use 'as!' to force downcast?}}
 }
 
 extension Printing {
@@ -601,9 +629,58 @@ func testNSUInteger(_ obj: NSUIntegerTests, uint: UInt, int: Int) {
 }
 
 class NewtypeUser {
-  @objc func stringNewtype(a: SNTErrorDomain) {}
-  @objc func stringNewtypeOptional(a: SNTErrorDomain?) {}
+  @objc func stringNewtype(a: SNTErrorDomain) {} // expected-error {{'SNTErrorDomain' has been renamed to 'ErrorDomain'}}{{31-45=ErrorDomain}}
+  @objc func stringNewtypeOptional(a: SNTErrorDomain?) {} // expected-error {{'SNTErrorDomain' has been renamed to 'ErrorDomain'}}{{39-53=ErrorDomain}}
   @objc func intNewtype(a: MyInt) {}
   @objc func intNewtypeOptional(a: MyInt?) {} // expected-error {{method cannot be marked @objc because the type of the parameter cannot be represented in Objective-C}}
+  @objc func intNewtypeArray(a: [MyInt]) {} // expected-error {{method cannot be marked @objc because the type of the parameter cannot be represented in Objective-C}}
+  @objc func intNewtypeDictionary(a: [MyInt: NSObject]) {} // expected-error {{method cannot be marked @objc because the type of the parameter cannot be represented in Objective-C}}
+  @objc func cfNewtype(a: CFNewType) {}
+  @objc func cfNewtypeArray(a: [CFNewType]) {} // expected-error {{method cannot be marked @objc because the type of the parameter cannot be represented in Objective-C}}
+
+  typealias MyTuple = (Int, AnyObject?)
+  typealias MyNamedTuple = (a: Int, b: AnyObject?)
+  
+  @objc func blockWithTypealias(_ input: @escaping (MyTuple) -> MyInt) {}
+  // expected-error@-1{{method cannot be marked @objc because the type of the parameter cannot be represented in Objective-C}}
+  // expected-note@-2{{function types cannot be represented in Objective-C}}
+
+  @objc func blockWithTypealiasWithNames(_ input: (MyNamedTuple) -> MyInt) {}
+  // expected-error@-1{{method cannot be marked @objc because the type of the parameter cannot be represented in Objective-C}}
+  // expected-note@-2{{function types cannot be represented in Objective-C}}
 }
 
+func testTypeAndValue() {
+  _ = testStruct()
+  _ = testStruct(value: 0)
+  let _: (testStruct) -> Void = testStruct
+  let _: () -> testStruct = testStruct.init
+  let _: (CInt) -> testStruct = testStruct.init
+}
+
+// rdar://problem/34913507
+func testBridgedTypedef(bt: BridgedTypedefs) {
+  let _: Int = bt.arrayOfArrayOfStrings // expected-error{{'[[String]]'}}
+}
+
+func testBridgeFunctionPointerTypedefs(fptrTypedef: FPTypedef) {
+  // See also print_clang_bool_bridging.swift.
+  let _: Int = fptrTypedef // expected-error{{'@convention(c) (String) -> String'}}
+  let _: Int = getFP() // expected-error{{'@convention(c) (String) -> String'}}
+}
+
+func testNonTrivialStructs() {
+  _ = NonTrivialToCopy() // expected-error {{use of unresolved identifier 'NonTrivialToCopy'}}
+  _ = NonTrivialToCopyWrapper() // expected-error {{use of unresolved identifier 'NonTrivialToCopyWrapper'}}
+  _ = TrivialToCopy() // okay
+}
+
+func testErrorNewtype() {
+  _ = ErrorNewType(3) // expected-error {{argument type 'Int' does not conform to expected type 'Error'}}
+
+  // Since we import NSError as Error, and Error is not Hashable...we end up
+  // losing the types for these functions, even though the above assignment 
+  // works.
+  testErrorDictionary(3) // expected-error {{cannot convert value of type 'Int' to expected argument type '[AnyHashable : String]'}}
+  testErrorDictionaryNewtype(3) // expected-error {{cannot convert value of type 'Int' to expected argument type '[AnyHashable : String]'}}
+}

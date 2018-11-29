@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 // RUN: %target-run-simple-swift
@@ -40,7 +40,7 @@ extension ManagedBufferPointer
 
 struct CountAndCapacity {
   var count: LifetimeTracked
-  let capacity: Int
+  var capacity: Int
 }
 
 // An example of ManagedBuffer, very similar to what Array will use.
@@ -81,7 +81,7 @@ final class TestManagedBuffer<T> : ManagedBuffer<CountAndCapacity, T> {
     withUnsafeMutablePointerToElements {
       (x: UnsafeMutablePointer<T>) -> () in
       for i in stride(from: 0, to: count, by: 2) {
-        (x + i).deinitialize()
+        (x + i).deinitialize(count: 1)
       }
     }
   }
@@ -96,6 +96,23 @@ final class TestManagedBuffer<T> : ManagedBuffer<CountAndCapacity, T> {
     }
     self.count = count + 2
   }
+
+  class func tryGrow(_ buffer: inout TestManagedBuffer<T>, newCapacity: Int) -> Bool {
+    guard isKnownUniquelyReferenced(&buffer) else {
+      return false
+    }
+    guard newCapacity > buffer.capacity else {
+      return false
+    }
+
+    if tryReallocateUniquelyReferenced(buffer: &buffer,
+                                       newMinimumCapacity: newCapacity) {
+      buffer.header.capacity = newCapacity
+      return true
+    } else {
+      return false
+    }
+  }
 }
 
 class MyBuffer<T> {
@@ -104,7 +121,7 @@ class MyBuffer<T> {
     Manager(unsafeBufferObject: self).withUnsafeMutablePointers {
       (pointerToHeader, pointerToElements) -> Void in
       pointerToElements.deinitialize(count: self.count)
-      pointerToHeader.deinitialize()
+      pointerToHeader.deinitialize(count: 1)
     }
   }
 
@@ -191,7 +208,6 @@ tests.test("ManagedBufferPointer") {
     let s = buf!
     expectEqual(0, s.count)
     expectLE(10, s.capacity)
-    expectGE(12, s.capacity)  // allow some over-allocation but not too much
     
     expectEqual(s.count, mgr.header.count.value)
     expectEqual(s.capacity, mgr.header.capacity)
@@ -240,6 +256,37 @@ tests.test("isKnownUniquelyReferenced") {
 #endif
   _fixLifetime(s)
   _fixLifetime(s2)
+}
+
+tests.test("canGrowUsingRealloc") {
+  #if os(macOS) || os(iOS) || os(tvOS) || os(watchOS)
+  return // realloc currently unsupported on Darwin
+  #endif
+  func testGrow(_ buffer: inout TestManagedBuffer<LifetimeTracked>,
+                newCapacity: Int,
+                shouldSucceed: Bool = true) {
+    let s = TestManagedBuffer.tryGrow(&buffer, newCapacity: newCapacity)
+    expectEqual(s, shouldSucceed)
+    if shouldSucceed {
+      expectLE(newCapacity, buffer.myCapacity)
+      expectGE((newCapacity + 1) * 2, buffer.myCapacity)
+    }
+    repeat {
+      buffer.append(LifetimeTracked(buffer.count))
+    } while buffer.count < buffer.myCapacity - 2
+  }
+
+  var b = TestManagedBuffer<LifetimeTracked>.create(0)
+  // allow some over-allocation
+  expectLE(0, b.myCapacity)
+  expectGE(3, b.myCapacity)
+
+  testGrow(&b, newCapacity: 5)
+  testGrow(&b, newCapacity: 8)
+  testGrow(&b, newCapacity: 1000)
+  testGrow(&b, newCapacity: 16000)
+  var b2 = b
+  testGrow(&b, newCapacity: 2000, shouldSucceed: false)
 }
 
 runAllTests()

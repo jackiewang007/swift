@@ -1,6 +1,9 @@
 // RUN: %target-build-swift -Xfrontend -disable-access-control -module-name a %s -o %t.out
 // RUN: %target-run %t.out | %FileCheck %s
+// REQUIRES: stress_test
+// UNSUPPORTED: nonatomic_rc
 
+import SwiftPrivate
 import StdlibUnittest
 #if os(OSX) || os(iOS) || os(watchOS) || os(tvOS)
 import Darwin

@@ -1,4 +1,4 @@
-// RUN: %target-parse-verify-swift
+// RUN: %target-typecheck-verify-swift -swift-version 4
 
 @discardableResult
 func takeFunc(_ f: (Int) -> Int) -> Int {}
@@ -37,6 +37,30 @@ func notPostfix() {
   _ = 1 + takeFunc { $0 }
 }
 
+func notLiterals() {
+  struct SR3671 { // <https://bugs.swift.org/browse/SR-3671>
+    var v: Int = 1 { // expected-error {{variable with getter/setter cannot have an initial value}}
+      get {
+        return self.v
+      }
+    }
+  }
+
+  var x: Int? = nil { get { } } // expected-error {{variable with getter/setter cannot have an initial value}}
+  _ = 1 {}
+  // expected-error@-1 {{consecutive statements on a line must be separated by ';'}}
+  // expected-error@-2 {{closure expression is unused}} expected-note@-2 {{did you mean to use a 'do' statement?}} {{9-9=do }}
+  _ = "hello" {}
+  // expected-error@-1 {{consecutive statements on a line must be separated by ';'}}
+  // expected-error@-2 {{closure expression is unused}} expected-note@-2 {{did you mean to use a 'do' statement?}} {{15-15=do }}
+  _ = [42] {}
+  // expected-error@-1 {{consecutive statements on a line must be separated by ';'}}
+  // expected-error@-2 {{closure expression is unused}} expected-note@-2 {{did you mean to use a 'do' statement?}} {{12-12=do }}
+  _ = (6765, 10946, 17711) {}
+  // expected-error@-1 {{consecutive statements on a line must be separated by ';'}}
+  // expected-error@-2 {{closure expression is unused}} expected-note@-2 {{did you mean to use a 'do' statement?}} {{28-28=do }}
+}
+
 class C {
   func map(_ x: (Int) -> Int) -> C { return self }
   func filter(_ x: (Int) -> Bool) -> C { return self }
@@ -52,15 +76,15 @@ var c = C().map
   $0 + 1
 }
 
-var c2 = C().map // expected-note{{parsing trailing closure for this call}}
+var c2 = C().map // expected-note{{callee is here}}
 
-{ // expected-warning{{trailing closure is separated from call site}}
+{ // expected-warning{{braces here form a trailing closure separated from its callee by multiple newlines}}
   $0 + 1
 }
 
-var c3 = C().map // expected-note{{parsing trailing closure for this call}}
+var c3 = C().map // expected-note{{callee is here}}
 // blah blah blah
-{ // expected-warning{{trailing closure is separated from call site}}
+{ // expected-warning{{braces here form a trailing closure separated from its callee by multiple newlines}}
   $0 + 1
 }
 
@@ -69,7 +93,7 @@ var c3 = C().map // expected-note{{parsing trailing closure for this call}}
 // <rdar://problem/16835718> Ban multiple trailing closures
 func multiTrailingClosure(_ a : () -> (), b : () -> ()) {  // expected-note {{'multiTrailingClosure(_:b:)' declared here}}
   multiTrailingClosure({}) {} // ok
-  multiTrailingClosure {} {}   // expected-error {{missing argument for parameter #1 in call}} expected-error {{consecutive statements on a line must be separated by ';'}} {{26-26=;}} expected-error {{braced block of statements is an unused closure}} expected-error{{expression resolves to an unused function}}
+  multiTrailingClosure {} {}   // expected-error {{missing argument for parameter #1 in call}} expected-error {{consecutive statements on a line must be separated by ';'}} {{26-26=;}} expected-error {{closure expression is unused}} expected-note{{did you mean to use a 'do' statement?}} {{27-27=do }}
   
   
 }
@@ -84,7 +108,7 @@ func labeledArgumentAndTrailingClosure() {
 
   // Trailing closure binds to last parameter, always.
  takeTwoFuncsWithDefaults { "Hello, " + $0 }
-  takeTwoFuncsWithDefaults { $0 + 1 } // expected-error {{cannot convert value of type '(_) -> Int' to expected argument type '((String) -> String)?'}} 
+  takeTwoFuncsWithDefaults { $0 + 1 } // expected-error {{cannot convert value of type '(Int) -> Int' to expected argument type '((String) -> String)?'}} 
   takeTwoFuncsWithDefaults(f1: {$0 + 1 })
 }
 
@@ -247,4 +271,124 @@ func testOverloadAmbiguity() {
   overloadOnSomeDefaultArgsOnly(1) {} // expected-error {{ambiguous use of 'overloadOnSomeDefaultArgsOnly'}}
   overloadOnSomeDefaultArgsOnly2(1) {} // expected-error {{ambiguous use of 'overloadOnSomeDefaultArgsOnly2'}}
   overloadOnSomeDefaultArgsOnly3(1) {} // expected-error {{ambiguous use of 'overloadOnSomeDefaultArgsOnly3(_:x:a:)'}}
+}
+
+func overloadMismatch(a: () -> Void) -> Bool { return true}
+func overloadMismatch(x: Int = 0, a: () -> Void) -> Int { return 0 }
+
+func overloadMismatchLabel(a: () -> Void) -> Bool { return true}
+func overloadMismatchLabel(x: Int = 0, b: () -> Void) -> Int { return 0 }
+
+func overloadMismatchArgs(_: Int, a: () -> Void) -> Bool { return true}
+func overloadMismatchArgs(_: Int, x: Int = 0, a: () -> Void) -> Int { return 0 }
+
+func overloadMismatchArgsLabel(_: Int, a: () -> Void) -> Bool { return true}
+func overloadMismatchArgsLabel(_: Int, x: Int = 0, b: () -> Void) -> Int { return 0 }
+
+func overloadMismatchMultiArgs(_: Int, a: () -> Void) -> Bool { return true}
+func overloadMismatchMultiArgs(_: Int, x: Int = 0, y: Int = 1, a: () -> Void) -> Int { return 0 }
+
+func overloadMismatchMultiArgsLabel(_: Int, a: () -> Void) -> Bool { return true}
+func overloadMismatchMultiArgsLabel(_: Int, x: Int = 0, y: Int = 1, b: () -> Void) -> Int { return 0 }
+
+func overloadMismatchMultiArgs2(_: Int, z: Int = 0, a: () -> Void) -> Bool { return true}
+func overloadMismatchMultiArgs2(_: Int, x: Int = 0, y: Int = 1, a: () -> Void) -> Int { return 0 }
+
+func overloadMismatchMultiArgs2Label(_: Int, z: Int = 0, a: () -> Void) -> Bool { return true}
+func overloadMismatchMultiArgs2Label(_: Int, x: Int = 0, y: Int = 1, b: () -> Void) -> Int { return 0 }
+
+func testOverloadDefaultArgs() {
+  let a = overloadMismatch {}
+  _ = a as String // expected-error {{cannot convert value of type 'Bool' to type 'String'}}
+  let b = overloadMismatch() {}
+  _ = b as String // expected-error {{cannot convert value of type 'Bool' to type 'String'}}
+
+  let c = overloadMismatchLabel {}
+  _ = c as String // expected-error {{cannot convert value of type 'Bool' to type 'String'}}
+  let d = overloadMismatchLabel() {}
+  _ = d as String // expected-error {{cannot convert value of type 'Bool' to type 'String'}}
+
+  let e = overloadMismatchArgs(0) {}
+  _ = e as String // expected-error {{cannot convert value of type 'Bool' to type 'String'}}
+
+  let f = overloadMismatchArgsLabel(0) {}
+  _ = f as String // expected-error {{cannot convert value of type 'Bool' to type 'String'}}
+
+  let g = overloadMismatchMultiArgs(0) {}
+  _ = g as String // expected-error {{cannot convert value of type 'Bool' to type 'String'}}
+
+  let h = overloadMismatchMultiArgsLabel(0) {}
+  _ = h as String // expected-error {{cannot convert value of type 'Bool' to type 'String'}}
+
+  let i = overloadMismatchMultiArgs2(0) {}
+  _ = i as String // expected-error {{cannot convert value of type 'Bool' to type 'String'}}
+
+  let j = overloadMismatchMultiArgs2Label(0) {}
+  _ = j as String // expected-error {{cannot convert value of type 'Bool' to type 'String'}}
+}
+
+func variadic(_: (() -> Void)...) {}
+func variadicLabel(closures: (() -> Void)...) {}
+
+func variadicOverloadMismatch(_: (() -> Void)...) -> Bool { return true }
+func variadicOverloadMismatch(x: Int = 0, _: (() -> Void)...) -> Int { return 0 }
+
+func variadicOverloadMismatchLabel(a: (() -> Void)...) -> Bool { return true }
+func variadicOverloadMismatchLabel(x: Int = 0, b: (() -> Void)...) -> Int { return 0 }
+
+func variadicAndNonOverload(_: (() -> Void)) -> Bool { return false }
+func variadicAndNonOverload(_: (() -> Void)...) -> Int { return 0 }
+
+func variadicAndNonOverloadLabel(a: (() -> Void)) -> Bool { return false }
+func variadicAndNonOverloadLabel(b: (() -> Void)...) -> Int { return 0 }
+
+func testVariadic() {
+  variadic {}
+  variadic() {}
+  variadic({}) {} // expected-error {{extra argument in call}}
+
+  variadicLabel {}
+  variadicLabel() {}
+  variadicLabel(closures: {}) {} // expected-error {{extra argument 'closures' in call}}
+
+  let a1 = variadicOverloadMismatch {}
+  _ = a1 as String // expected-error {{cannot convert value of type 'Bool' to type 'String'}}
+  let a2 = variadicOverloadMismatch() {}
+  _ = a2 as String // expected-error {{cannot convert value of type 'Bool' to type 'String'}}
+
+  let b1 = variadicOverloadMismatchLabel {}
+  _ = b1 as String // expected-error {{cannot convert value of type 'Bool' to type 'String'}}
+  let b2 = variadicOverloadMismatchLabel() {}
+  _ = b2 as String // expected-error {{cannot convert value of type 'Bool' to type 'String'}}
+
+  let c1 = variadicAndNonOverloadLabel {}
+  _ = c1 as String // expected-error {{cannot convert value of type 'Bool' to type 'String'}}
+
+  let c2 = variadicAndNonOverload {}
+  _ = c2 as String // expected-error {{cannot convert value of type 'Bool' to type 'String'}}
+}
+
+// rdar://18426302
+
+class TrailingBase {
+  init(fn: () -> ()) {}
+  init(x: Int, fn: () -> ()) {}
+
+  convenience init() {
+    self.init {}
+  }
+
+  convenience init(x: Int) {
+    self.init(x: x) {}
+  }
+}
+
+class TrailingDerived : TrailingBase {
+  init(foo: ()) {
+    super.init {}
+  }
+
+  init(x: Int, foo: ()) {
+    super.init(x: x) {}
+  }
 }

@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -39,6 +39,10 @@ public:
     return Parts;
   }
 
+  ArrayRef<StringRef> getTags() const {
+    return llvm::makeArrayRef(Parts.Tags.begin(), Parts.Tags.end());
+  }
+
   Optional<const swift::markup::Paragraph *> getBrief() const {
     return Parts.Brief;
   }
@@ -57,6 +61,11 @@ public:
 
   ArrayRef<const swift::markup::MarkupASTNode *> getBodyNodes() const {
     return Parts.BodyNodes;
+  }
+
+  Optional<const markup::LocalizationKeyField *>
+  getLocalizationKeyField() const {
+    return Parts.LocalizationKeyField;
   }
 
   bool isEmpty() const {
@@ -86,6 +95,10 @@ Optional<DocComment *>getSingleDocComment(swift::markup::MarkupContext &Context,
 Optional<DocComment *> getCascadingDocComment(swift::markup::MarkupContext &MC,
                                              const Decl *D);
 
+/// Extract comments parts from the given Markup node.
+swift::markup::CommentParts
+extractCommentParts(swift::markup::MarkupContext &MC,
+                    swift::markup::MarkupASTNode *Node);
 } // namespace swift
 
 #endif // LLVM_SWIFT_AST_COMMENT_H

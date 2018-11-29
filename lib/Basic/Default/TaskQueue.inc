@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 ///
@@ -23,6 +23,8 @@
 #include "swift/Basic/TaskQueue.h"
 
 #include "swift/Basic/LLVM.h"
+
+#include "llvm/ADT/StringExtras.h"
 
 using namespace llvm::sys;
 
@@ -68,7 +70,11 @@ unsigned TaskQueue::getNumberOfParallelTasks() const {
 }
 
 void TaskQueue::addTask(const char *ExecPath, ArrayRef<const char *> Args,
-                        ArrayRef<const char *> Env, void *Context) {
+                        ArrayRef<const char *> Env, void *Context,
+                        bool SeparateErrors) {
+  // This implementation of TaskQueue ignores SeparateErrors.
+  // We need to reference SeparateErrors to avoid warnings, though.
+  (void)SeparateErrors;
   std::unique_ptr<Task> T(new Task(ExecPath, Args, Env, Context));
   QueuedTasks.push(std::move(T));
 }
@@ -88,14 +94,16 @@ bool TaskQueue::execute(TaskBeganCallback Began, TaskFinishedCallback Finished,
     SmallVector<const char *, 128> Argv;
     Argv.push_back(T->ExecPath);
     Argv.append(T->Args.begin(), T->Args.end());
-    Argv.push_back(0);
+    Argv.push_back(nullptr);
 
-    const char *const *envp = T->Env.empty() ? nullptr : T->Env.data();
+    llvm::Optional<llvm::ArrayRef<llvm::StringRef>> Envp =
+        T->Env.empty() ? decltype(Envp)(None)
+                       : decltype(Envp)(llvm::toStringRefArray(T->Env.data()));
 
     bool ExecutionFailed = false;
-    ProcessInfo PI = ExecuteNoWait(T->ExecPath, Argv.data(),
-                                   (const char **)envp,
-                                   /*redirects*/nullptr, /*memoryLimit*/0,
+    ProcessInfo PI = ExecuteNoWait(T->ExecPath,
+                                   llvm::toStringRefArray(Argv.data()), Envp,
+                                   /*redirects*/None, /*memoryLimit*/0,
                                    /*ErrMsg*/nullptr, &ExecutionFailed);
     if (ExecutionFailed) {
       return true;
@@ -112,8 +120,8 @@ bool TaskQueue::execute(TaskBeganCallback Began, TaskFinishedCallback Finished,
       // Wait() returning a return code of -2 indicates the process received
       // a signal during execution.
       if (Signalled) {
-        TaskFinishedResponse Response = Signalled(PI.Pid, ErrMsg, StringRef(),
-                                                  T->Context);
+        TaskFinishedResponse Response =
+            Signalled(PI.Pid, ErrMsg, StringRef(), StringRef(), T->Context, None, TaskProcessInformation(PI.Pid));
         ContinueExecution = Response != TaskFinishedResponse::StopExecution;
       } else {
         // If we don't have a Signalled callback, unconditionally stop.
@@ -124,7 +132,7 @@ bool TaskQueue::execute(TaskBeganCallback Began, TaskFinishedCallback Finished,
       // finished.
       if (Finished) {
         TaskFinishedResponse Response = Finished(PI.Pid, PI.ReturnCode,
-        StringRef(), T->Context);
+        StringRef(), StringRef(), TaskProcessInformation(PI.Pid), T->Context);
         ContinueExecution = Response != TaskFinishedResponse::StopExecution;
       } else if (PI.ReturnCode != 0) {
         ContinueExecution = false;

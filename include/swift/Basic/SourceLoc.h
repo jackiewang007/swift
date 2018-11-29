@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -18,6 +18,7 @@
 #define SWIFT_BASIC_SOURCELOC_H
 
 #include "swift/Basic/LLVM.h"
+#include "llvm/ADT/DenseMapInfo.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/SMLoc.h"
 #include <functional>
@@ -68,7 +69,8 @@ public:
   void print(raw_ostream &OS, const SourceManager &SM,
              unsigned &LastBufferID) const;
 
-  void printLineAndColumn(raw_ostream &OS, const SourceManager &SM) const;
+  void printLineAndColumn(raw_ostream &OS, const SourceManager &SM,
+                          unsigned BufferID = 0) const;
 
   void print(raw_ostream &OS, const SourceManager &SM) const {
     unsigned Tmp = ~0U;
@@ -95,6 +97,10 @@ public:
   
   bool isValid() const { return Start.isValid(); }
   bool isInvalid() const { return !isValid(); }
+
+  /// Extend this SourceRange to the smallest continuous SourceRange that
+  /// includes both this range and the other one.
+  void widen(SourceRange Other);
 
   bool operator==(const SourceRange &other) const {
     return Start == other.Start && End == other.End;
@@ -124,7 +130,7 @@ class CharSourceRange {
 
 public:
   /// \brief Constructs an invalid range.
-  CharSourceRange() {}
+  CharSourceRange() = default;
 
   CharSourceRange(SourceLoc Start, unsigned ByteLength)
     : Start(Start), ByteLength(ByteLength) {}
@@ -178,7 +184,8 @@ public:
   }
 
   bool overlaps(CharSourceRange Other) const {
-    return contains(Other.getStart()) || contains(Other.getEnd());
+    if (getByteLength() == 0 || Other.getByteLength() == 0) return false;
+    return contains(Other.getStart()) || Other.contains(getStart());
   }
 
   StringRef str() const {
@@ -208,5 +215,59 @@ public:
 };
 
 } // end namespace swift
+
+namespace llvm {
+template <typename T> struct DenseMapInfo;
+
+template <> struct DenseMapInfo<swift::SourceLoc> {
+  static swift::SourceLoc getEmptyKey() {
+    return swift::SourceLoc(
+        SMLoc::getFromPointer(DenseMapInfo<const char *>::getEmptyKey()));
+  }
+
+  static swift::SourceLoc getTombstoneKey() {
+    // Make this different from empty key. See for context:
+    // http://lists.llvm.org/pipermail/llvm-dev/2015-July/088744.html
+    return swift::SourceLoc(
+        SMLoc::getFromPointer(DenseMapInfo<const char *>::getTombstoneKey()));
+  }
+
+  static unsigned getHashValue(const swift::SourceLoc &Val) {
+    return DenseMapInfo<const void *>::getHashValue(
+        Val.getOpaquePointerValue());
+  }
+
+  static bool isEqual(const swift::SourceLoc &LHS,
+                      const swift::SourceLoc &RHS) {
+    return LHS == RHS;
+  }
+};
+
+template <> struct DenseMapInfo<swift::SourceRange> {
+  static swift::SourceRange getEmptyKey() {
+    return swift::SourceRange(swift::SourceLoc(
+        SMLoc::getFromPointer(DenseMapInfo<const char *>::getEmptyKey())));
+  }
+
+  static swift::SourceRange getTombstoneKey() {
+    // Make this different from empty key. See for context:
+    // http://lists.llvm.org/pipermail/llvm-dev/2015-July/088744.html
+    return swift::SourceRange(swift::SourceLoc(
+        SMLoc::getFromPointer(DenseMapInfo<const char *>::getTombstoneKey())));
+  }
+
+  static unsigned getHashValue(const swift::SourceRange &Val) {
+    return hash_combine(DenseMapInfo<const void *>::getHashValue(
+                            Val.Start.getOpaquePointerValue()),
+                        DenseMapInfo<const void *>::getHashValue(
+                            Val.End.getOpaquePointerValue()));
+  }
+
+  static bool isEqual(const swift::SourceRange &LHS,
+                      const swift::SourceRange &RHS) {
+    return LHS == RHS;
+  }
+};
+} // namespace llvm
 
 #endif // SWIFT_BASIC_SOURCELOC_H

@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -15,12 +15,20 @@
 //===----------------------------------------------------------------------===//
 
 #include "swift/AST/Pattern.h"
-#include "swift/AST/AST.h"
+#include "swift/AST/ASTContext.h"
+#include "swift/AST/Expr.h"
 #include "swift/AST/ASTWalker.h"
+#include "swift/AST/GenericEnvironment.h"
 #include "swift/AST/TypeLoc.h"
+#include "swift/Basic/Statistic.h"
 #include "llvm/ADT/APFloat.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace swift;
+
+#define PATTERN(Id, _) \
+  static_assert(IsTriviallyDestructible<Id##Pattern>::value, \
+                "Patterns are BumpPtrAllocated; the d'tor is never called");
+#include "swift/AST/PatternNodes.def"
 
 /// Diagnostic printing of PatternKinds.
 llvm::raw_ostream &swift::operator<<(llvm::raw_ostream &OS, PatternKind kind) {
@@ -94,6 +102,36 @@ return cast<ID##Pattern>(this)->getSourceRange();
   llvm_unreachable("pattern type not handled!");
 }
 
+void Pattern::setDelayedInterfaceType(Type interfaceTy, DeclContext *dc) {
+  assert(interfaceTy->hasTypeParameter() && "Not an interface type");
+  Ty = interfaceTy;
+  ASTContext &ctx = interfaceTy->getASTContext();
+  ctx.DelayedPatternContexts[this] = dc;
+  Bits.Pattern.hasInterfaceType = true;
+}
+
+Type Pattern::getType() const {
+  assert(hasType());
+
+  // If this pattern has an interface type, map it into the context type.
+  if (Bits.Pattern.hasInterfaceType) {
+    ASTContext &ctx = Ty->getASTContext();
+
+    // Retrieve the generic environment to use for the mapping.
+    auto found = ctx.DelayedPatternContexts.find(this);
+    assert(found != ctx.DelayedPatternContexts.end());
+    auto dc = found->second;
+
+    if (auto genericEnv = dc->getGenericEnvironmentOfContext()) {
+      ctx.DelayedPatternContexts.erase(this);
+      Ty = genericEnv->mapTypeIntoContext(Ty);
+      const_cast<Pattern*>(this)->Bits.Pattern.hasInterfaceType = false;
+    }
+  }
+
+  return Ty;
+}
+
 /// getLoc - Return the caret location of the pattern.
 SourceLoc Pattern::getLoc() const {
   switch (getKind()) {
@@ -134,13 +172,31 @@ namespace {
         fn(Named->getDecl());
       return P;
     }
+
+    // Only walk into an expression insofar as it doesn't open a new scope -
+    // that is, don't walk into a closure body.
+    std::pair<bool, Expr *> walkToExprPre(Expr *E) override {
+      if (isa<ClosureExpr>(E)) {
+        return { false, E };
+      }
+      return { true, E };
+    }
+
+    // Don't walk into anything else.
+    std::pair<bool, Stmt *> walkToStmtPre(Stmt *S) override {
+      return { false, S };
+    }
+    bool walkToTypeLocPre(TypeLoc &TL) override { return false; }
+    bool walkToTypeReprPre(TypeRepr *T) override { return false; }
+    bool walkToParameterListPre(ParameterList *PL) override { return false; }
+    bool walkToDeclPre(Decl *D) override { return false; }
   };
-}
+} // end anonymous namespace
 
 
 /// \brief apply the specified function to all variables referenced in this
 /// pattern.
-void Pattern::forEachVariable(const std::function<void(VarDecl*)> &fn) const {
+void Pattern::forEachVariable(llvm::function_ref<void(VarDecl *)> fn) const {
   switch (getKind()) {
   case PatternKind::Any:
   case PatternKind::Bool:
@@ -185,7 +241,7 @@ void Pattern::forEachVariable(const std::function<void(VarDecl*)> &fn) const {
 
 /// \brief apply the specified function to all pattern nodes recursively in
 /// this pattern.  This is a pre-order traversal.
-void Pattern::forEachNode(const std::function<void(Pattern*)> &f) {
+void Pattern::forEachNode(llvm::function_ref<void(Pattern*)> f) {
   f(this);
 
   switch (getKind()) {
@@ -266,7 +322,8 @@ bool Pattern::isRefutablePattern() const {
 
     // If this is an always matching 'is' pattern, then it isn't refutable.
     if (auto *is = dyn_cast<IsPattern>(Node))
-      if (is->getCastKind() == CheckedCastKind::Coercion)
+      if (is->getCastKind() == CheckedCastKind::Coercion ||
+          is->getCastKind() == CheckedCastKind::BridgingCoercion)
         return;
 
     // If this is an ExprPattern that isn't resolved yet, do some simple
@@ -348,6 +405,30 @@ SourceRange TuplePattern::getSourceRange() const {
            Fields.back().getPattern()->getEndLoc() };
 }
 
+TypedPattern::TypedPattern(Pattern *pattern, TypeRepr *tr,
+                           Optional<bool> implicit)
+  : Pattern(PatternKind::Typed), SubPattern(pattern), PatTypeRepr(tr) {
+  if (implicit ? *implicit : tr && !tr->getSourceRange().isValid())
+    setImplicit();
+  Bits.TypedPattern.IsPropagatedType = false;
+}
+
+TypeLoc TypedPattern::getTypeLoc() const {
+  TypeLoc loc = TypeLoc(PatTypeRepr);
+
+  if (hasType())
+    loc.setType(getType());
+
+  return loc;
+}
+
+SourceLoc TypedPattern::getLoc() const {
+  if (SubPattern->isImplicit() && PatTypeRepr)
+    return PatTypeRepr->getSourceRange().Start;
+
+  return SubPattern->getLoc();
+}
+
 SourceRange TypedPattern::getSourceRange() const {
   if (isImplicit() || isPropagatedType()) {
     // If a TypedPattern is implicit, then its type is definitely implicit, so
@@ -356,9 +437,61 @@ SourceRange TypedPattern::getSourceRange() const {
     return SubPattern->getSourceRange();
   }
 
-  if (SubPattern->isImplicit())
-    return PatType.getSourceRange();
+  if (!PatTypeRepr)
+    return SourceRange();
 
-  return { SubPattern->getSourceRange().Start, PatType.getSourceRange().End };
+  if (SubPattern->isImplicit())
+    return PatTypeRepr->getSourceRange();
+
+  return { SubPattern->getSourceRange().Start,
+           PatTypeRepr->getSourceRange().End };
 }
 
+/// Construct an ExprPattern.
+ExprPattern::ExprPattern(Expr *e, bool isResolved, Expr *matchExpr,
+                         VarDecl *matchVar,
+                         Optional<bool> implicit)
+  : Pattern(PatternKind::Expr), SubExprAndIsResolved(e, isResolved),
+    MatchExpr(matchExpr), MatchVar(matchVar) {
+  assert(!matchExpr || e->isImplicit() == matchExpr->isImplicit());
+  if (implicit.hasValue() ? *implicit : e->isImplicit())
+    setImplicit();
+}
+
+SourceLoc ExprPattern::getLoc() const {
+  return getSubExpr()->getLoc();
+}
+
+SourceRange ExprPattern::getSourceRange() const {
+  return getSubExpr()->getSourceRange();
+}
+
+// See swift/Basic/Statistic.h for declaration: this enables tracing Patterns, is
+// defined here to avoid too much layering violation / circular linkage
+// dependency.
+
+struct PatternTraceFormatter : public UnifiedStatsReporter::TraceFormatter {
+  void traceName(const void *Entity, raw_ostream &OS) const {
+    if (!Entity)
+      return;
+    const Pattern *P = static_cast<const Pattern *>(Entity);
+    if (const NamedPattern *NP = dyn_cast<NamedPattern>(P)) {
+      OS << NP->getBoundName();
+    }
+  }
+  void traceLoc(const void *Entity, SourceManager *SM,
+                clang::SourceManager *CSM, raw_ostream &OS) const {
+    if (!Entity)
+      return;
+    const Pattern *P = static_cast<const Pattern *>(Entity);
+    P->getSourceRange().print(OS, *SM, false);
+  }
+};
+
+static PatternTraceFormatter TF;
+
+template<>
+const UnifiedStatsReporter::TraceFormatter*
+FrontendStatsTracer::getTraceFormatter<const Pattern *>() {
+  return &TF;
+}

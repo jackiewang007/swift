@@ -1,5 +1,5 @@
 // RUN: sed -n -e '1,/NO_ERRORS_UP_TO_HERE$/ p' %s > %t_no_errors.swift
-// RUN: %target-swift-frontend -parse -verify %t_no_errors.swift
+// RUN: %target-swift-frontend -typecheck -verify %t_no_errors.swift
 
 // RUN: %target-swift-ide-test -code-completion -source-filename=%s -code-complete-inits-in-postfix-expr -code-completion-token=TOP_LEVEL_0 > %t
 // RUN: %FileCheck %s -check-prefix=TOP_LEVEL_0 < %t
@@ -143,7 +143,5 @@ typealias CAlias = C
 
 var CAliasInstance = CAlias(#^ALIAS_CONSTRUCTOR_0^#
 // rdar://18586415
-// ALIAS_CONSTRUCTOR_0: Decl[Constructor]/CurrNominal:      ['('])[#CAlias#]; name=)
-// ALIAS_CONSTRUCTOR_0: Decl[Constructor]/CurrNominal:      ['(']{#x: A#})[#CAlias#]; name=x: A)
-// ALIAS_CONSTRUCTOR_0: Decl[Constructor]/CurrNominal:      ['('])[#CAlias#]; name=)
-// ALIAS_CONSTRUCTOR_0: Decl[Constructor]/CurrNominal:      ['(']{#y: A#})[#CAlias#]; name=y: A)
+// ALIAS_CONSTRUCTOR_0: Decl[Constructor]/CurrNominal:      ['(']{#x: A#}[')'][#CAlias#];
+// ALIAS_CONSTRUCTOR_0: Decl[Constructor]/CurrNominal:      ['(']{#y: A#}[')'][#CAlias#];

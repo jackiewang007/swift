@@ -1,5 +1,6 @@
 // RUN: %target-run-simple-swift
 // RUN: %target-build-swift -O %s -o %t/a.out.optimized
+// RUN: %target-codesign %t/a.out.optimized
 // RUN: %target-run %t/a.out.optimized
 // REQUIRES: executable_test
 
@@ -47,7 +48,7 @@ tupleCastTests.test("Incorrect labels conditional cast") {
 
 tupleCastTests
   .test("Incorrect labels forced cast")
-  .crashOutputMatches("Could not cast value of type '(x : Swift.Int, z : Swift.Int)'")
+  .crashOutputMatches("Could not cast value of type '(x: Swift.Int, z: Swift.Int)'")
   .code {
   expectCrashLater()
   _ = anyToIntPoint((x: 1, z: 2))

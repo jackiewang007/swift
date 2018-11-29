@@ -2,17 +2,27 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
+import TestsUtils
 
 // Sort an array of strings using an explicit sort predicate.
+public let SortStrings = [
+  BenchmarkInfo(name: "SortSortedStrings", runFunction: run_SortSortedStrings, tags: [.validation, .api, .algorithm, .String],
+    setUpFunction: { blackHole(sortedWords) }),
+  BenchmarkInfo(name: "SortStrings", runFunction: run_SortStrings, tags: [.validation, .api, .algorithm, .String],
+    setUpFunction: { blackHole(words) }),
+  BenchmarkInfo(name: "SortStringsUnicode", runFunction: run_SortStringsUnicode, tags: [.validation, .api, .algorithm, .String],
+    setUpFunction: { blackHole(unicodeWords) }),
+]
 
-var stringBenchmarkWords: [String] = [
+let sortedWords = words.sorted()
+let words: [String] = [
   "woodshed",
   "lakism",
   "gastroperiodynia",
@@ -1026,11 +1036,17 @@ func benchSortStrings(_ words: [String]) {
 
 public func run_SortStrings(_ N: Int) {
   for _ in 1...5*N {
-    benchSortStrings(stringBenchmarkWords)
+    benchSortStrings(words)
   }
 }
 
-var stringBenchmarkWordsUnicode: [String] = [
+public func run_SortSortedStrings(_ N: Int) {
+  for _ in 1...5*N {
+    benchSortStrings(sortedWords)
+  }
+}
+
+var unicodeWords: [String] = [
   "❄️woodshed",
   "❄️lakism",
   "❄️gastroperiodynia",
@@ -2035,6 +2051,6 @@ var stringBenchmarkWordsUnicode: [String] = [
 
 public func run_SortStringsUnicode(_ N: Int) {
   for _ in 1...5*N {
-    benchSortStrings(stringBenchmarkWordsUnicode)
+    benchSortStrings(unicodeWords)
   }
 }

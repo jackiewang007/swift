@@ -23,6 +23,13 @@ struct NSRect {
   } size;
 };
 
+struct Fob {
+  unsigned long a;
+  unsigned b;
+  unsigned c;
+  unsigned long d;
+} Fob;
+
 typedef long NSInteger;
 
 @interface Gizmo : NSObject
@@ -37,6 +44,7 @@ typedef long NSInteger;
 - (struct NSRect) frame;
 - (void) setFrame: (struct NSRect) rect;
 - (void) frob;
+- (void) test: (struct Fob) fob;
 + (void) runce;
 @end
 
@@ -85,6 +93,12 @@ NSString *NSStringFromRect(struct NSRect r);
 - (void)foo;
 @end
 
+@protocol NSFungingAndRuncing <NSRuncing, NSFunging>
+@end
+
+@protocol NSDoubleInheritedFunging <NSFungingAndRuncing, NSFunging>
+@end
+
 typedef NS_ENUM(unsigned short, NSRuncingOptions) {
   NSRuncingMince = 123,
   NSRuncingQuinceSliced = 4567,
@@ -115,11 +129,19 @@ typedef NS_ENUM(unsigned, NeverActuallyMentionedByName) {
 - (NeverActuallyMentionedByName)getValue;
 @end
 
+#if defined(_WIN32)
+enum RawEnumInGizmo : unsigned {
+  InGizmoOne=0x7FFFFFFF,
+  InGizmoTwo,
+  InGizmoThree
+};
+#else
 enum RawEnumInGizmo {
   InGizmoOne=0x7FFFFFFF,
   InGizmoTwo,
   InGizmoThree
 };
+#endif
 
 struct StructOfNSStrings {
   __unsafe_unretained NSString *a;
@@ -129,3 +151,10 @@ struct StructOfNSStrings {
 };
 
 struct StructOfNSStrings useStructOfNSStringsInObjC(struct StructOfNSStrings);
+
+@interface OuterType : NSObject
+@end
+
+__attribute__((swift_name("OuterType.InnerType")))
+@interface OuterTypeInnerType : NSObject<NSRuncing>
+@end

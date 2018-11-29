@@ -1,6 +1,6 @@
 // Verify errors in this file to ensure that parse and type checker errors
 // occur where we expect them.
-// RUN: %target-parse-verify-swift -show-diagnostics-after-fatal %s
+// RUN: %target-typecheck-verify-swift -show-diagnostics-after-fatal %s
 
 // RUN: %target-swift-ide-test -print-ast-typechecked -source-filename %s -prefer-type-repr=false > %t.printed.txt
 // RUN: %FileCheck %s -strict-whitespace < %t.printed.txt
@@ -119,18 +119,21 @@ enum EnumWithInheritance2 : FooNonExistentProtocol, BarNonExistentProtocol {} //
 // NO-TYREPR: {{^}}enum EnumWithInheritance2 : <<error type>>, <<error type>> {{{$}}
 // TYREPR: {{^}}enum EnumWithInheritance2 : FooNonExistentProtocol, BarNonExistentProtocol {{{$}}
 
-enum EnumWithInheritance3 : FooClass { case X } // expected-error {{raw type 'FooClass' is not expressible by any literal}}
+enum EnumWithInheritance3 : FooClass { case X } // expected-error {{raw type 'FooClass' is not expressible by a string, integer, or floating-point literal}}
 // expected-error@-1{{'EnumWithInheritance3' declares raw type 'FooClass', but does not conform to RawRepresentable and conformance could not be synthesized}}
+// expected-error@-2{{RawRepresentable conformance cannot be synthesized because raw type 'FooClass' is not Equatable}}
 // NO-TYREPR: {{^}}enum EnumWithInheritance3 : <<error type>> {{{$}}
 // TYREPR: {{^}}enum EnumWithInheritance3 : FooClass {{{$}}
 
-enum EnumWithInheritance4 : FooClass, FooProtocol { case X } // expected-error {{raw type 'FooClass' is not expressible by any literal}}
+enum EnumWithInheritance4 : FooClass, FooProtocol { case X } // expected-error {{raw type 'FooClass' is not expressible by a string, integer, or floating-point literal}}
 // expected-error@-1{{'EnumWithInheritance4' declares raw type 'FooClass', but does not conform to RawRepresentable and conformance could not be synthesized}}
+// expected-error@-2{{RawRepresentable conformance cannot be synthesized because raw type 'FooClass' is not Equatable}}
 // NO-TYREPR: {{^}}enum EnumWithInheritance4 : <<error type>>, FooProtocol {{{$}}
 // TYREPR: {{^}}enum EnumWithInheritance4 : FooClass, FooProtocol {{{$}}
 
-enum EnumWithInheritance5 : FooClass, BarClass { case X } // expected-error {{raw type 'FooClass' is not expressible by any literal}} expected-error {{multiple enum raw types 'FooClass' and 'BarClass'}}
+enum EnumWithInheritance5 : FooClass, BarClass { case X } // expected-error {{raw type 'FooClass' is not expressible by a string, integer, or floating-point literal}} expected-error {{multiple enum raw types 'FooClass' and 'BarClass'}}
 // expected-error@-1{{'EnumWithInheritance5' declares raw type 'FooClass', but does not conform to RawRepresentable and conformance could not be synthesized}}
+// expected-error@-2{{RawRepresentable conformance cannot be synthesized because raw type 'FooClass' is not Equatable}}
 // NO-TYREPR: {{^}}enum EnumWithInheritance5 : <<error type>>, <<error type>> {{{$}}
 // TYREPR: {{^}}enum EnumWithInheritance5 : FooClass, BarClass {{{$}}
 
@@ -146,15 +149,15 @@ protocol ProtocolWithInheritance2 : FooNonExistentProtocol, BarNonExistentProtoc
 // NO-TYREPR: {{^}}protocol ProtocolWithInheritance2 : <<error type>>, <<error type>> {{{$}}
 // TYREPR: {{^}}protocol ProtocolWithInheritance2 : FooNonExistentProtocol, BarNonExistentProtocol {{{$}}
 
-protocol ProtocolWithInheritance3 : FooClass {} // expected-error {{non-class type 'ProtocolWithInheritance3' cannot inherit from class 'FooClass'}}
-// NO-TYREPR: {{^}}protocol ProtocolWithInheritance3 : <<error type>> {{{$}}
+protocol ProtocolWithInheritance3 : FooClass {}
+// NO-TYREPR: {{^}}protocol ProtocolWithInheritance3 : FooClass {{{$}}
 // TYREPR: {{^}}protocol ProtocolWithInheritance3 : FooClass {{{$}}
 
-protocol ProtocolWithInheritance4 : FooClass, FooProtocol {} // expected-error {{non-class type 'ProtocolWithInheritance4' cannot inherit from class 'FooClass'}}
-// NO-TYREPR: {{^}}protocol ProtocolWithInheritance4 : <<error type>>, FooProtocol {{{$}}
+protocol ProtocolWithInheritance4 : FooClass, FooProtocol {}
+// NO-TYREPR: {{^}}protocol ProtocolWithInheritance4 : FooClass, FooProtocol {{{$}}
 // TYREPR: {{^}}protocol ProtocolWithInheritance4 : FooClass, FooProtocol {{{$}}
 
-protocol ProtocolWithInheritance5 : FooClass, BarClass {} // expected-error {{non-class type 'ProtocolWithInheritance5' cannot inherit from class 'FooClass'}} expected-error {{non-class type 'ProtocolWithInheritance5' cannot inherit from class 'BarClass'}}
+protocol ProtocolWithInheritance5 : FooClass, BarClass {} // expected-error{{multiple inheritance from classes 'FooClass' and 'BarClass'}} expected-error{{protocol 'ProtocolWithInheritance5' cannot be a subclass of both 'BarClass' and 'FooClass'}} // expected-note{{superclass constraint 'Self' : 'FooClass' written here}}
 // NO-TYREPR: {{^}}protocol ProtocolWithInheritance5 : <<error type>>, <<error type>> {{{$}}
 // TYREPR: {{^}}protocol ProtocolWithInheritance5 : FooClass, BarClass {{{$}}
 

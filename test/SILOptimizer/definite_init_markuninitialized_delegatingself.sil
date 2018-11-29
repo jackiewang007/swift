@@ -1,0 +1,137 @@
+// RUN: %target-sil-opt -enable-sil-ownership -enable-sil-verify-all %s -definite-init -raw-sil-inst-lowering -verify | %FileCheck %s
+
+// This test only tests mark_uninitialized [delegatingself]
+
+sil_stage raw
+
+import Builtin
+import Swift
+
+protocol P {}
+class C : P {}
+struct MyStruct : P {}
+
+struct MyStruct2 {
+  var x: P
+  init(delegate: ())
+  init()
+}
+
+sil @selfinit : $@convention(thin) () -> MyStruct // user: %7
+
+class SomeClass {}
+
+class RootClassWithNontrivialStoredProperties {
+  var x, y: SomeClass
+  init()
+}
+
+class DerivedClassWithNontrivialStoredProperties : RootClassWithNontrivialStoredProperties {
+  var a, b: SomeClass
+  override init()
+}
+
+// CHECK-LABEL: @self_init_assert_instruction
+// CHECK:  apply
+// CHECK-NEXT: store
+// CHECK-NEXT: load
+// CHECK:  return
+sil @self_init_assert_instruction : $@convention(thin) (Int, @thin MyStruct.Type) -> MyStruct {
+  bb0(%0 : @trivial $Int, %1 : @trivial $@thin MyStruct.Type):
+  %2 = alloc_stack $MyStruct, var, name "sf"
+  %3 = mark_uninitialized [delegatingself] %2 : $*MyStruct
+
+  %6 = function_ref @selfinit : $@convention(thin) () -> MyStruct
+  %7 = apply %6() : $@convention(thin) () -> MyStruct
+  assign %7 to %3 : $*MyStruct
+  %9 = load [trivial] %3 : $*MyStruct
+  dealloc_stack %2 : $*MyStruct
+  return %9 : $MyStruct
+}
+
+sil @selfinit_delegate : $@convention(thin) (@thin MyStruct2.Type) -> @out MyStruct2
+
+// <rdar://problem/18089574> Protocol member in struct + delegating init miscompilation
+// CHECK-LABEL: @self_init_copyaddr
+sil @self_init_copyaddr : $@convention(thin) (@thin MyStruct2.Type) -> @out MyStruct2 {
+bb0(%0 : @trivial $*MyStruct2, %1 : @trivial $@thin MyStruct2.Type):
+  // CHECK: [[SELF:%[0-9]+]] = alloc_stack $MyStruct2
+  %2 = alloc_stack $MyStruct2, var, name "sf"
+  %3 = mark_uninitialized [delegatingself] %2 : $*MyStruct2
+  %6 = metatype $@thin MyStruct2.Type
+  %7 = function_ref @selfinit_delegate : $@convention(thin) (@thin MyStruct2.Type) -> @out MyStruct2
+  %8 = alloc_stack $MyStruct2
+
+  // Make sure this copy_addr ends up being an initialization.
+  apply %7(%8, %6) : $@convention(thin) (@thin MyStruct2.Type) -> @out MyStruct2
+  copy_addr [take] %8 to %3 : $*MyStruct2
+  dealloc_stack %8 : $*MyStruct2
+
+  // CHECK: apply
+  // CHECK-NEXT: copy_addr [take] {{.*}} to [initialization] [[SELF]] : $*MyStruct2
+  // CHECK-NEXT: dealloc_stack
+
+  copy_addr [take] %3 to [initialization] %0 : $*MyStruct2
+  %13 = tuple ()
+  dealloc_stack %2 : $*MyStruct2
+  return %13 : $()
+}
+
+// <rdar://problem/20608881> DI miscompiles this testcase into a memory leak
+struct MyStruct3 {
+  @_hasStorage var c: C
+}
+sil @selfinit_mystruct3 : $@convention(thin) () -> @owned MyStruct3
+
+// CHECK-LABEL: sil hidden @test_conditional_destroy_delegating_init
+sil hidden @test_conditional_destroy_delegating_init : $@convention(thin) (Builtin.Int1) -> () {
+bb0(%0 : @trivial $Builtin.Int1):
+// CHECK:  [[CONTROL:%[0-9]+]] = alloc_stack $Builtin.Int1
+// CHECK-NEXT: [[SELF_BOX:%[0-9]+]] = alloc_stack $MyStruct3
+
+  %2 = alloc_stack $MyStruct3
+  %3 = mark_uninitialized [delegatingself] %2 : $*MyStruct3
+
+// CHECK:  cond_br %0, [[SUCCESS:bb[0-9]+]], [[EXIT:bb[0-9]+]]
+  cond_br %0, bb1, bb2
+
+// CHECK: [[SUCCESS]]:
+bb1:
+  %9 = function_ref @selfinit_mystruct3 : $@convention(thin) () -> @owned MyStruct3
+  %10 = apply %9() : $@convention(thin) () -> @owned MyStruct3
+  assign %10 to %3 : $*MyStruct3
+
+// CHECK: [[NEW_SELF:%[0-9]+]] = apply {{.*}}()  : $@convention(thin) () -> @owned MyStruct3
+// CHECK-NEXT:  [[SET:%[0-9]+]] = integer_literal $Builtin.Int1, -1
+// CHECK-NEXT:  store [[SET]] to [trivial] [[CONTROL]] : $*Builtin.Int1
+// CHECK-NEXT:  store [[NEW_SELF]] to [init] [[SELF_BOX]] : $*MyStruct3
+
+// CHECK-NEXT:  br [[CHECK:bb[0-9]+]]
+  br bb2
+
+// CHECK: [[CHECK]]:
+bb2:
+
+// CHECK-NEXT:  [[BIT:%[0-9]+]] = load [trivial] [[CONTROL]] : $*Builtin.Int1
+// CHECK-NEXT:  cond_br [[BIT]], [[INITIALIZED:bb[0-9]+]], [[UNINITIALIZED:bb[0-9]+]]
+
+// CHECK: [[INITIALIZED]]:
+// CHECK-NEXT:  destroy_addr [[SELF_BOX]] : $*MyStruct3
+// CHECK-NEXT:  br [[EXIT:bb[0-9]+]]
+
+// CHECK: [[UNINITIALIZED]]:
+// CHECK-NEXT:  br [[EXIT]]
+
+// CHECK: [[EXIT]]:
+
+  destroy_addr %3 : $*MyStruct3
+  dealloc_stack %2 : $*MyStruct3
+  %15 = tuple ()
+  return %15 : $()
+}
+
+
+// <rdar://problem/21991742> DI miscompiles this testcase into a double free
+class MyClass3 {
+}
+sil @selfinit_myclass3 : $@convention(thin) (@owned MyClass3) -> @owned MyClass3

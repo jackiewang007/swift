@@ -11,6 +11,7 @@ enum E {}
 
 protocol P {}
 protocol P2 {}
+protocol P3 {}
 protocol AssociatedTypes {
   associatedtype A
   associatedtype B
@@ -63,6 +64,13 @@ TypeNameTests.test("Prints") {
   expectEqual("() -> () -> ()", _typeName(F2.self))
   expectEqual("(() -> ()) -> ()", _typeName(F3.self))
   expectEqual("() -> ()", _typeName((() -> ()).self))
+
+  expectEqual("(main.P) -> main.P2 & main.P3",
+    _typeName(((P) -> P2 & P3).self))
+  expectEqual("() -> main.P & main.P2 & main.P3",
+    _typeName((() -> P & P2 & P3).self))
+  expectEqual("(main.P & main.P2) -> main.P & main.P3",
+    _typeName(((P & P2) -> P3 & P).self))
  
   #if _runtime(_ObjC)
   typealias B = @convention(block) () -> ()
@@ -175,6 +183,30 @@ TypeNameTests.test("Nested") {
               _typeName(SomeOuterGenericClass<Int>.SomeInnerStruct.self));
   expectEqual("main.SomeOuterGenericClass<Swift.String>.SomeInnerGenericStruct<Swift.Int>",
               _typeName(SomeOuterGenericClass<String>.SomeInnerGenericStruct<Int>.self));
+}
+
+extension SomeOuterGenericClass {
+  struct OtherInnerStruct {}
+  struct OtherInnerGenericStruct<U> {}
+}
+
+TypeNameTests.test("NestedInExtension") {
+  expectEqual("main.SomeOuterGenericClass<Swift.Int>.OtherInnerStruct",
+              _typeName(SomeOuterGenericClass<Int>.OtherInnerStruct.self));
+  expectEqual("main.SomeOuterGenericClass<Swift.Int>.OtherInnerGenericStruct<Swift.String>",
+              _typeName(SomeOuterGenericClass<Int>.OtherInnerGenericStruct<String>.self));
+}
+
+extension SomeOuterGenericClass where T == Int {
+  struct AnotherInnerStruct {}
+  struct AnotherInnerGenericStruct<U> {}
+}
+
+TypeNameTests.test("NestedInConstrainedExtension") {
+  expectEqual("(extension in main):main.SomeOuterGenericClass<Swift.Int>.AnotherInnerStruct",
+              _typeName(SomeOuterGenericClass<Int>.AnotherInnerStruct.self));
+  expectEqual("(extension in main):main.SomeOuterGenericClass<Swift.Int>.AnotherInnerGenericStruct<Swift.String>",
+              _typeName(SomeOuterGenericClass<Int>.AnotherInnerGenericStruct<String>.self));
 }
 
 runAllTests()

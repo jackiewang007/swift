@@ -2,17 +2,18 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 // -*- swift -*-
-// RUN: rm -rf %t ; mkdir -p %t
+// RUN: %empty-directory(%t)
 // RUN: %gyb -DCMAKE_SIZEOF_VOID_P=%target-ptrsize %s -o %t/NumericParsing.swift
 // RUN: %line-directive %t/NumericParsing.swift -- %target-build-swift %t/NumericParsing.swift -o %t/a.out
+// RUN: %target-codesign %t/a.out
 // RUN: %line-directive %t/NumericParsing.swift -- %target-run %t/a.out
 // REQUIRES: executable_test
 %{
@@ -35,7 +36,7 @@ Note: the third parameter, zero, is not for user consumption.
   else:
     r = n % radix
     digit = chr((ord('0') + r) if r < 10 else (ord('a') + r - 10))
-    return inRadix(radix, n / radix, '') + digit
+    return inRadix(radix, int(n / radix), '') + digit
 
 # The maximal legal radix
 max_radix = ord('z') - ord('a') + 1 + 10
@@ -80,7 +81,7 @@ tests.test("${Self}/success") {
   expectEqual(0, ${Self}("-00", radix: 16))
 
   // Maximum radix
-  expectEqual(${max_radix} - 1, ${Self}("z", radix: ${max_radix}))
+  expectEqual(${max_radix} - 1, ${Self}("z", radix: ${max_radix})!)
 
   // Out-of-range values
   expectEqual(nil, ${Self}("${maxValue + 1}"))
@@ -93,9 +94,9 @@ tests.test("${Self}/success") {
 
   // Do more exhaustive testing
   % for radix in radices_to_test:
-  %   for n in required_values + range(
+  %   for n in required_values + list(range(
   %     minValue + 1, maxValue - 1,
-  %     (maxValue - minValue - 2) / (number_of_values - len(required_values))):
+  %     int((maxValue - minValue - 2) / (number_of_values - len(required_values))))):
   %     prefix = '+' if n > 0 and n % 2 == 0 else '' # leading '+'
   %     text = inRadix(radix, n)
   expectEqual(${n}, ${Self}("${prefix + text}", radix: ${radix}))
@@ -121,6 +122,15 @@ tests.test("${Self}/radixTooHigh") {
 
 % end
 
+tests.test("FixedWidthInteger/maxUInt64") {
+  func f<T : FixedWidthInteger>(_ x: T) -> String {
+    return String(x, radix: 16)
+  }
+  let x = f(UInt64.max)
+  let y = String(UInt64.max, radix: 16)
+  expectEqual(x, y)
+}
+
 % for Self in 'Float', 'Double', 'Float80':
 
 % if Self == 'Float80':
@@ -135,6 +145,14 @@ tests.test("${Self}/Basics") {
   expectEqual(-(.infinity), ${Self}("-Inf"))
   expectEqual(String(${Self}.nan), String(${Self}("nan")!))
   expectEqual(String(${Self}.nan), String(${Self}("NaN")!))
+
+// sNaN cannot be fully supported on i386.
+#if !arch(i386)
+  expectTrue(${Self}("sNaN")!.isSignalingNaN)
+  expectTrue(${Self}("SNAN")!.isSignalingNaN)
+  expectTrue(${Self}("+snan")!.isSignalingNaN)
+  expectTrue(${Self}("-SnAn")!.isSignalingNaN)
+#endif
 % end
 
   expectEqual(-0.0, ${Self}("-0"))

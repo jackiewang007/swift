@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -108,7 +108,7 @@ public func dispatch_data_copy_region(_ data: __DispatchData, _ location: Int, _
 	fatalError()
 }
 
-@available(*, unavailable, renamed:"DispatchQueue.asynchronously(self:group:qos:flags:execute:)")
+@available(*, unavailable, renamed:"DispatchQueue.async(self:group:qos:flags:execute:)")
 public func dispatch_group_async(_ group: DispatchGroup, _ queue: DispatchQueue, _ block: () -> Void)
 {
 	fatalError()
@@ -138,13 +138,13 @@ public func dispatch_io_set_interval(_ channel: DispatchIO, _ interval: UInt64, 
 	fatalError()
 }
 
-@available(*, unavailable, renamed:"DispatchQueue.apply(attributes:iterations:execute:)")
+@available(*, unavailable, message:"Use DispatchQueue.concurrentPerform(iterations:execute:). The 'queue' argument is not required because the system chooses the appropriate execution context for the block")
 public func dispatch_apply(_ iterations: Int, _ queue: DispatchQueue, _ block: (Int) -> Void) 
 {
 	fatalError()
 }
 
-@available(*, unavailable, renamed:"DispatchQueue.asynchronously(self:execute:)")
+@available(*, unavailable, renamed:"DispatchQueue.async(self:execute:)")
 public func dispatch_async(_ queue: DispatchQueue, _ block: () -> Void)
 {
 	fatalError()

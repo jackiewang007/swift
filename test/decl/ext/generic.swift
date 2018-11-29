@@ -1,4 +1,4 @@
-// RUN: %target-parse-verify-swift
+// RUN: %target-typecheck-verify-swift
 
 protocol P1 { associatedtype AssocType }
 protocol P2 : P1 { }
@@ -19,6 +19,10 @@ extension Double : P2 {
 }
 
 extension X<Int, Double, String> { } // expected-error{{constrained extension must be declared on the unspecialized generic type 'X' with constraints specified by a 'where' clause}}
+
+typealias GGG = X<Int, Double, String>
+
+extension GGG { } // expected-error{{constrained extension must be declared on the unspecialized generic type 'X' with constraints specified by a 'where' clause}}
 
 // Lvalue check when the archetypes are not the same.
 struct LValueCheck<T> {
@@ -93,7 +97,7 @@ extension GenericOverloads where T : P1, U : P2 {
   subscript (i: Int) -> Int { return i }
 }
 
-extension Array where Element : Hashable {
+extension Array where Element : Hashable { // expected-note {{where 'Element' = 'T'}}
   var worseHashEver: Int {
     var result = 0
     for elt in self {
@@ -104,7 +108,7 @@ extension Array where Element : Hashable {
 }
 
 func notHashableArray<T>(_ x: [T]) {
-  x.worseHashEver // expected-error{{type 'T' does not conform to protocol 'Hashable'}}
+  x.worseHashEver // expected-error{{property 'worseHashEver' requires that 'T' conform to 'Hashable'}}
 }
 
 func hashableArray<T : Hashable>(_ x: [T]) {
@@ -128,17 +132,16 @@ func genericClassEquatable<T : Equatable>(_ gc: GenericClass<T>, x: T, y: T) {
 }
 
 func genericClassNotEquatable<T>(_ gc: GenericClass<T>, x: T, y: T) {
-  gc.foo(x, y: y) // expected-error{{type 'T' does not conform to protocol 'Equatable'}}
+  gc.foo(x, y: y) // expected-error{{argument type 'T' does not conform to expected type 'Equatable'}}
 }
 
 
 extension Array where Element == String { }
 
-extension GenericClass : P3 where T : P3 { } // expected-error{{extension of type 'GenericClass' with constraints cannot have an inheritance clause}}
+extension GenericClass : P3 where T : P3 { }
 
 extension GenericClass where Self : P3 { }
 // expected-error@-1{{'Self' is only available in a protocol or as the result of a method in a class; did you mean 'GenericClass'?}} {{30-34=GenericClass}}
-// expected-error@-2{{type 'GenericClass' in conformance requirement does not refer to a generic parameter or associated type}}
 
 protocol P4 {
   associatedtype T
@@ -151,4 +154,41 @@ struct S4<Q>: P4 {
   init(_: Q) { }
 }
 
-extension S4 where T : P5 {} // expected-FIXME-error{{type 'T' in conformance requirement does not refer to a generic parameter or associated type}}
+extension S4 where T : P5 {}
+
+struct S5<Q> {
+  init(_: Q) { }
+}
+
+extension S5 : P4 {}
+
+// rdar://problem/21607421
+public typealias Array2 = Array
+extension Array2 where QQQ : VVV {}
+// expected-error@-1 {{use of undeclared type 'QQQ'}}
+// expected-error@-2 {{use of undeclared type 'VVV'}}
+
+// https://bugs.swift.org/browse/SR-9009
+func foo() {
+  extension Array where Element : P1 {
+  // expected-error@-1 {{declaration is only valid at file scope}}
+    func foo() -> Element.AssocType {}
+  }
+}
+
+// Deeply nested
+protocol P6 {
+  associatedtype Assoc1
+  associatedtype Assoc2
+}
+
+struct A<T, U, V> {
+  struct B<W, X, Y> {
+    struct C<Z: P6> {
+    }
+  }
+}
+
+extension A.B.C where T == V, X == Z.Assoc2 {
+  func f() { }
+}

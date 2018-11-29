@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -44,7 +44,7 @@ public struct Notification : ReferenceConvertible, Equatable, Hashable {
     }
     
     public var description: String {
-        return "name = \(name.rawValue), object = \(object), userInfo = \(userInfo)"
+        return "name = \(name.rawValue), object = \(String(describing: object)), userInfo = \(String(describing: userInfo))"
     }
     
     public var debugDescription: String {
@@ -120,10 +120,10 @@ extension Notification : _ObjectiveCBridgeable {
         return true
     }
 
+    @_effects(readonly)
     public static func _unconditionallyBridgeFromObjectiveC(_ source: NSNotification?) -> Notification {
-        var result: Notification?
-        _forceBridgeFromObjectiveC(source!, result: &result)
-        return result!
+        guard let src = source else { return Notification(name: Notification.Name("")) }
+        return Notification(name: src.name, object: src.object, userInfo: src.userInfo)
     }
 }
 

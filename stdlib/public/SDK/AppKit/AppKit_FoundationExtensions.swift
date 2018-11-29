@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -14,7 +14,7 @@ import Foundation
 @_exported import AppKit
 
 // NSCollectionView extensions
-public extension IndexPath {
+extension IndexPath {
     
     /// Initialize for use with `NSCollectionView`.
     public init(item: Int, section: Int) {
@@ -51,9 +51,9 @@ public extension IndexPath {
     
 }
 
-public extension URLResourceValues {
+extension URLResourceValues {
     /// Returns all thumbnails as a single NSImage.
-    @available(OSX 10.10, *)
+    @available(macOS 10.10, *)
     public var thumbnail : NSImage? {
         return allValues[URLResourceKey.thumbnailKey] as? NSImage
     }
@@ -74,9 +74,9 @@ public extension URLResourceValues {
     }
     
     /// Returns a dictionary of NSImage objects keyed by size.
-    @available(OSX 10.10, *)
-    public var thumbnailDictionary : [URLThumbnailSizeKey : NSImage]? {
-        return allValues[URLResourceKey.thumbnailDictionaryKey] as? [URLThumbnailSizeKey : NSImage]
+    @available(macOS 10.10, *)
+    public var thumbnailDictionary : [URLThumbnailDictionaryItem : NSImage]? {
+        return allValues[URLResourceKey.thumbnailDictionaryKey] as? [URLThumbnailDictionaryItem : NSImage]
     }
 
 }

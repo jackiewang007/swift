@@ -4,7 +4,7 @@
 
 // CHECK: !DICompositeType(tag: DW_TAG_structure_type, name: "Protocol",
 // CHECK-SAME:             scope: ![[ObjectiveC:[0-9]+]]
-// CHECK-SAME:             identifier: "_TtCSo8Protocol"
+// CHECK-SAME:             identifier: "$sSo8ProtocolCD"
 // CHECK: ![[ObjectiveC]] = !DIModule({{.*}}, name: "ObjectiveC"
 import Foundation
 

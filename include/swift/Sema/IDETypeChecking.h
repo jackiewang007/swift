@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -29,11 +29,15 @@ namespace swift {
   class LazyResolver;
   class ExtensionDecl;
   class ProtocolDecl;
+  class Type;
+  class TypeChecker;
+  class DeclContext;
+  class ConcreteDeclRef;
+  class ValueDecl;
+  class DeclName;
 
   /// \brief Typecheck a declaration parsed during code completion.
-  ///
-  /// \returns true on success, false on error.
-  bool typeCheckCompletionDecl(Decl *D);
+  void typeCheckCompletionDecl(Decl *D);
 
   /// \brief Check if T1 is convertible to T2.
   ///
@@ -49,19 +53,25 @@ namespace swift {
   void collectDefaultImplementationForProtocolMembers(ProtocolDecl *PD,
                         llvm::SmallDenseMap<ValueDecl*, ValueDecl*> &DefaultMap);
 
-  /// \brief Given an unresolved member E and its parent P, this function tries
-  /// to infer the type of E.
-  /// \returns true on success, false on error.
-  bool typeCheckUnresolvedExpr(DeclContext &DC, Expr* E,
-                               Expr *P, SmallVectorImpl<Type> &PossibleTypes);
-
-  struct ResolveMemberResult {
-    ValueDecl *Favored = nullptr;
-    std::vector<ValueDecl*> OtherViables;
-    operator bool() const { return Favored; }
+  enum InterestedMemberKind : uint8_t {
+    Viable,
+    Unviable,
+    All,
   };
 
-  ResolveMemberResult resolveValueMember(DeclContext &DC, Type BaseTy,
+  struct ResolvedMemberResult {
+    struct Implementation;
+    Implementation &Impl;
+
+    ResolvedMemberResult();
+    ~ResolvedMemberResult();
+    operator bool() const;
+    bool hasBestOverload() const;
+    ValueDecl* getBestOverload() const;
+    ArrayRef<ValueDecl*> getMemberDecls(InterestedMemberKind Kind);
+  };
+
+  ResolvedMemberResult resolveValueMember(DeclContext &DC, Type BaseTy,
                                          DeclName Name);
 
   /// \brief Given a type and an extension to the original type decl of that type,
@@ -76,7 +86,7 @@ namespace swift {
     Normal,
 
     /// Type check the argument to an Objective-C #keyPath.
-    ObjCKeyPath,
+    KeyPath,
   };
 
   /// \brief Return the type of an expression parsed during code completion, or
@@ -88,19 +98,16 @@ namespace swift {
                    Expr *&parsedExpr,
                    ConcreteDeclRef &referencedDecl);
 
-  /// Typecheck the sequence expression \p parsedExpr for code completion.
+  /// Resolve type of operator function with \c opName appending it to \c LHS.
   ///
-  /// This requires that \p parsedExpr is a SequenceExpr and that it contains:
-  ///   * ... leading sequence  LHS
-  ///   * UnresolvedDeclRefExpr operator
-  ///   * CodeCompletionExpr    RHS
-  ///
-  /// On success, returns false, and replaces parsedExpr with the binary
-  /// expression corresponding to the operator.  The type of the operator and
-  /// RHS are also set, but the rest of the expression may not be typed
-  ///
-  /// The LHS should already be type-checked or this will be very slow.
-  bool typeCheckCompletionSequence(DeclContext *DC, Expr *&parsedExpr);
+  /// For \p refKind, use \c DeclRefKind::PostfixOperator for postfix operator,
+  /// or \c DeclRefKind::BinaryOperator for infix operator.
+  /// On success, returns resolved function type of the operator. The LHS should
+  /// already be type-checked. This function guarantees LHS not to be modified.
+  FunctionType *getTypeOfCompletionOperator(DeclContext *DC, Expr *LHS,
+                                            Identifier opName,
+                                            DeclRefKind refKind,
+                                            ConcreteDeclRef &referencedDecl);
 
   /// Typecheck the given expression.
   bool typeCheckExpression(DeclContext *DC, Expr *&parsedExpr);
@@ -114,11 +121,46 @@ namespace swift {
   /// \returns true on success, false on error.
   bool typeCheckTopLevelCodeDecl(TopLevelCodeDecl *TLCD);
 
-  /// A unique_ptr for LazyResolver that can perform additional cleanup.
-  using OwnedResolver = std::unique_ptr<LazyResolver, void(*)(LazyResolver*)>;
+  /// Creates a type checker instance on the given AST context, if it
+  /// doesn't already have one.
+  ///
+  /// \returns a reference to the type checker instance.
+  TypeChecker &createTypeChecker(ASTContext &Ctx);
 
-  /// Creates a lazy type resolver for use in lookups.
-  OwnedResolver createLazyResolver(ASTContext &Ctx);
+  struct ExtensionInfo {
+    // The extension with the declarations to apply.
+    ExtensionDecl *Ext;
+    // The extension that enables the former to apply, if any (i.e. a
+    // conditional
+    // conformance to Foo enables 'extension Foo').
+    ExtensionDecl *EnablingExt;
+    bool IsSynthesized;
+  };
+
+  using ExtensionGroupOperation =
+      llvm::function_ref<void(ArrayRef<ExtensionInfo>)>;
+
+  class SynthesizedExtensionAnalyzer {
+    struct Implementation;
+    Implementation &Impl;
+  public:
+    SynthesizedExtensionAnalyzer(NominalTypeDecl *Target,
+                                 PrintOptions Options,
+                                 bool IncludeUnconditional = true);
+    ~SynthesizedExtensionAnalyzer();
+
+    enum class MergeGroupKind : char {
+      All,
+      MergeableWithTypeDef,
+      UnmergeableWithTypeDef,
+    };
+
+    void forEachExtensionMergeGroup(MergeGroupKind Kind,
+                                    ExtensionGroupOperation Fn);
+    bool isInSynthesizedExtension(const ValueDecl *VD);
+    bool shouldPrintRequirement(ExtensionDecl *ED, StringRef Req);
+    bool hasMergeGroup(MergeGroupKind Kind);
+  };
 }
 
 #endif

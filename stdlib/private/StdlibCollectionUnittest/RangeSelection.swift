@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -55,10 +55,6 @@ public enum RangeSelection {
     }
   }
 
-  public func countableRange<C : Collection>(in c: C) -> CountableRange<C.Index> {
-    return CountableRange(range(in: c))
-  }
-
   public func closedRange<C : Collection>(in c: C) -> ClosedRange<C.Index> {
     switch self {
       case .emptyRange: fatalError("Closed range cannot be empty")
@@ -86,9 +82,5 @@ public enum RangeSelection {
         let end = c.index(c.startIndex, offsetBy: numericCast(upperBound))
         return start...end
     }
-  }
-
-  public func countableClosedRange<C : Collection>(in c: C) -> CountableClosedRange<C.Index> {
-    return CountableClosedRange(closedRange(in: c))
   }
 }

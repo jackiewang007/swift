@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -17,9 +17,10 @@
 #include "swift/Frontend/DiagnosticVerifier.h"
 #include "swift/Basic/SourceManager.h"
 #include "swift/Parse/Lexer.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
-#include <fstream>
+
 using namespace swift;
 
 namespace {
@@ -60,14 +61,17 @@ namespace {
     }
     
   };
-}
+} // end anonymous namespace
 
 static std::string getDiagKindString(llvm::SourceMgr::DiagKind Kind) {
   switch (Kind) {
   case llvm::SourceMgr::DK_Error: return "error";
   case llvm::SourceMgr::DK_Warning: return "warning";
   case llvm::SourceMgr::DK_Note: return "note";
+  case llvm::SourceMgr::DK_Remark: return "remark";
   }
+
+  llvm_unreachable("Unhandled DiagKind in switch.");
 }
 
 
@@ -90,6 +94,9 @@ namespace {
     /// got all of the expected diagnostics and check to see if there were any
     /// unexpected ones.
     bool verifyFile(unsigned BufferID, bool autoApplyFixes);
+
+    /// diagnostics for '<unknown>:0' should be considered as unexpected.
+    bool verifyUnknown();
 
     /// If there are any -verify errors (e.g. differences between expectations
     /// and actual diagnostics produced), apply fixits to the original source
@@ -171,28 +178,24 @@ static std::string renderFixits(ArrayRef<llvm::SMFixIt> fixits,
                                 StringRef InputFile) {
   std::string Result;
   llvm::raw_string_ostream OS(Result);
-  bool isFirst = true;
-  for (auto &ActualFixIt : fixits) {
-    llvm::SMRange Range = ActualFixIt.getRange();
-    
-    if (isFirst)
-      isFirst = false;
-    else
-      OS << ' ';
-    OS << "{{"
-    << getColumnNumber(InputFile, Range.Start) << '-'
-    << getColumnNumber(InputFile, Range.End) << '=';
-    
-    for (auto C : ActualFixIt.getText()) {
-      if (C == '\n')
-        OS << "\\n";
-      else if (C == '}' || C == '\\')
-        OS << '\\' << C;
-      else
-        OS << C;
-    }
-    OS << "}}";
-  }
+  interleave(fixits,
+             [&](const llvm::SMFixIt &ActualFixIt) {
+               llvm::SMRange Range = ActualFixIt.getRange();
+
+               OS << "{{" << getColumnNumber(InputFile, Range.Start) << '-'
+                  << getColumnNumber(InputFile, Range.End) << '=';
+
+               for (auto C : ActualFixIt.getText()) {
+                 if (C == '\n')
+                   OS << "\\n";
+                 else if (C == '}' || C == '\\')
+                   OS << '\\' << C;
+                 else
+                   OS << C;
+               }
+               OS << "}}";
+             },
+             [&] { OS << ' '; });
   return OS.str();
 }
 
@@ -621,6 +624,24 @@ bool DiagnosticVerifier::verifyFile(unsigned BufferID,
   return !Errors.empty();
 }
 
+bool DiagnosticVerifier::verifyUnknown() {
+  bool HadError = false;
+  for (unsigned i = 0, e = CapturedDiagnostics.size(); i != e; ++i) {
+    if (CapturedDiagnostics[i].getFilename() != "<unknown>")
+      continue;
+
+    HadError = true;
+    std::string Message =
+      "unexpected "+getDiagKindString(CapturedDiagnostics[i].getKind())+
+      " produced: "+CapturedDiagnostics[i].getMessage().str();
+
+    auto diag = SM.GetMessage({}, llvm::SourceMgr::DK_Error, Message,
+                              {}, {});
+    SM.getLLVMSourceMgr().PrintMessage(llvm::errs(), diag);
+  }
+  return HadError;
+}
+
 /// If there are any -verify errors (e.g. differences between expectations
 /// and actual diagnostics produced), apply fixits to the original source
 /// file and drop it back in place.
@@ -668,9 +689,12 @@ void DiagnosticVerifier::autoApplyFixes(unsigned BufferID,
   
   // Retain the end of the file.
   Result.append(LastPos, bufferRange.end());
-  
-  std::ofstream outs(memBuffer->getBufferIdentifier());
-  outs << Result;
+
+  std::error_code error;
+  llvm::raw_fd_ostream outs(memBuffer->getBufferIdentifier(), error,
+                            llvm::sys::fs::OpenFlags::F_None);
+  if (!error)
+    outs << Result;
 }
 
 //===----------------------------------------------------------------------===//
@@ -692,7 +716,7 @@ void swift::enableDiagnosticVerifier(SourceManager &SM) {
 }
 
 bool swift::verifyDiagnostics(SourceManager &SM, ArrayRef<unsigned> BufferIDs,
-                              bool autoApplyFixes) {
+                              bool autoApplyFixes, bool ignoreUnknown) {
   auto *Verifier = (DiagnosticVerifier*)SM.getLLVMSourceMgr().getDiagContext();
   SM.getLLVMSourceMgr().setDiagHandler(nullptr, nullptr);
   
@@ -700,6 +724,8 @@ bool swift::verifyDiagnostics(SourceManager &SM, ArrayRef<unsigned> BufferIDs,
 
   for (auto &BufferID : BufferIDs)
     HadError |= Verifier->verifyFile(BufferID, autoApplyFixes);
+  if (!ignoreUnknown)
+    HadError |= Verifier->verifyUnknown();
 
   delete Verifier;
 

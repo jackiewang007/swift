@@ -1,6 +1,4 @@
-// RUN: %target-swift-frontend(mock-sdk: %clang-importer-sdk) -parse -verify %s
-
-// XFAIL: linux
+// RUN: %target-swift-frontend(mock-sdk: %clang-importer-sdk) -enable-objc-interop -typecheck -verify %s
 
 @_exported import macros
 
@@ -109,9 +107,72 @@ func testBitwiseOps() {
   _ = (BIT_SHIFT_1 | BIT_SHIFT_2) as CInt
   _ = BIT_SHIFT_3 as CLongLong
   _ = BIT_SHIFT_4 as CUnsignedInt
+
+  _ = RSHIFT_ONE as CUnsignedInt
+  _ = RSHIFT_INVALID // expected-error {{use of unresolved identifier 'RSHIFT_INVALID'}}
+
+  _ = XOR_HIGH as CUnsignedLongLong
+
+  var attributes = 0 as CInt
+  attributes |= ATTR_BOLD
+  attributes |= ATTR_ITALIC
+  attributes |= ATTR_UNDERLINE
+  attributes |= ATTR_INVALID // expected-error {{use of unresolved identifier 'ATTR_INVALID'}}
+}
+
+func testIntegerArithmetic() {
+  _ = ADD_ZERO as CInt
+  _ = ADD_ONE as CInt
+  _ = ADD_TWO as CInt
+  _ = ADD_MINUS_TWO as CInt
+  _ = ADD_MIXED_WIDTH as CLongLong
+  _ = ADD_MIXED_SIGN as CLongLong
+  _ = ADD_UNDERFLOW as CUnsignedInt
+  _ = ADD_OVERFLOW as CUnsignedInt
+
+  _ = SUB_ONE as CInt
+  _ = SUB_ZERO as CInt
+  _ = SUB_MINUS_ONE as CInt
+  _ = SUB_MIXED_WIDTH as CLongLong
+  _ = SUB_MIXED_SIGN as CUnsignedInt
+  _ = SUB_UNDERFLOW as CUnsignedInt
+  _ = SUB_OVERFLOW as CUnsignedInt
+
+  _ = MULT_POS as CInt
+  _ = MULT_NEG as CInt
+  _ = MULT_MIXED_TYPES as CLongLong
+
+  _ = DIVIDE_INTEGRAL as CInt
+  _ = DIVIDE_NONINTEGRAL as CInt
+  _ = DIVIDE_MIXED_TYPES as CLongLong
+  _ = DIVIDE_INVALID // expected-error {{use of unresolved identifier 'DIVIDE_INVALID'}}
+}
+
+func testIntegerComparisons() {
+  if EQUAL_FALSE, EQUAL_TRUE, EQUAL_TRUE_MIXED_TYPES,
+     GT_FALSE, GT_TRUE, GTE_FALSE, GTE_TRUE,
+     LT_FALSE, LT_TRUE, LTE_FALSE, LTE_TRUE {
+    fatalError("You hit the jackpot!")
+  }
+}
+
+func testLogicalComparisons() {
+  if L_AND_TRUE, L_AND_FALSE, L_AND_TRUE_B, L_AND_FALSE_B,
+     L_OR_TRUE,  L_OR_FALSE,  L_OR_TRUE_B,  L_OR_FALSE_B {
+    fatalError("Yet again!")
+  }
 }
 
 func testRecursion() {
   _ = RECURSION // expected-error {{use of unresolved identifier 'RECURSION'}}
   _ = REF_TO_RECURSION // expected-error {{use of unresolved identifier 'REF_TO_RECURSION'}}
+  _ = RECURSION_IN_EXPR // expected-error {{use of unresolved identifier 'RECURSION_IN_EXPR'}}
+  _ = RECURSION_IN_EXPR2 // expected-error {{use of unresolved identifier 'RECURSION_IN_EXPR2'}}
+  _ = RECURSION_IN_EXPR3 // expected-error {{use of unresolved identifier 'RECURSION_IN_EXPR3'}}
+}
+
+func testNulls() {
+  let _: Int = UNAVAILABLE_ONE // expected-error {{use of unresolved identifier 'UNAVAILABLE_ONE'}}
+  let _: Int = DEPRECATED_ONE // expected-error {{use of unresolved identifier 'DEPRECATED_ONE'}}
+  let _: Int = OKAY_TYPED_ONE // expected-error {{cannot convert value of type 'okay_t' (aka 'UInt32') to specified type 'Int'}}
 }

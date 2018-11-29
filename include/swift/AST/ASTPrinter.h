@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -17,6 +17,8 @@
 #include "swift/Basic/UUID.h"
 #include "swift/AST/Identifier.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/Support/raw_ostream.h"
 #include "swift/AST/PrintOptions.h"
 
 namespace swift {
@@ -25,12 +27,15 @@ namespace swift {
   class DynamicSelfType;
   class ModuleEntity;
   class TypeDecl;
+  class EnumElementDecl;
   class Type;
   struct TypeLoc;
   class Pattern;
   class ExtensionDecl;
   class NominalTypeDecl;
   class ValueDecl;
+  class SourceLoc;
+  enum class tok;
 
 /// Describes the context in which a name is being printed, which
 /// affects the keywords that need to be escaped.
@@ -79,7 +84,7 @@ enum class PrintStructureKind {
 class ASTPrinter {
   unsigned CurrentIndentation = 0;
   unsigned PendingNewlines = 0;
-  const NominalTypeDecl *SynthesizeTarget = nullptr;
+  TypeOrExtensionDecl SynthesizeTarget;
 
   void printTextImpl(StringRef Text);
 
@@ -131,13 +136,14 @@ public:
 
   /// Called before printing a synthesized extension.
   virtual void printSynthesizedExtensionPre(const ExtensionDecl *ED,
-                                            const NominalTypeDecl *NTD,
+                                            TypeOrExtensionDecl NTD,
                                             Optional<BracketOptions> Bracket) {}
 
   /// Called after printing a synthesized extension.
   virtual void printSynthesizedExtensionPost(const ExtensionDecl *ED,
-                                             const NominalTypeDecl *NTD,
-                                             Optional<BracketOptions> Bracket) {}
+                                             TypeOrExtensionDecl TargetDecl,
+                                             Optional<BracketOptions> Bracket) {
+  }
 
   /// Called before printing a structured entity.
   ///
@@ -154,8 +160,6 @@ public:
   virtual void printNamePost(PrintNameContext Context) {}
 
   // Helper functions.
-
-  void printTypeRef(DynamicSelfType *T, Identifier Name);
 
   void printSeparator(bool &first, StringRef separator) {
     if (first) {
@@ -174,6 +178,13 @@ public:
   ASTPrinter &operator<<(UUID UU);
 
   ASTPrinter &operator<<(DeclName name);
+
+  // Special case for 'char', but not arbitrary things that convert to 'char'.
+  template <typename T>
+  typename std::enable_if<std::is_same<T, char>::value, ASTPrinter &>::type
+  operator<<(T c) {
+    return *this << StringRef(&c, 1);
+  }
 
   void printKeyword(StringRef name) {
     callPrintNamePre(PrintNameContext::Keyword);
@@ -203,7 +214,7 @@ public:
     CurrentIndentation = NumSpaces;
   }
 
-  void setSynthesizedTarget(NominalTypeDecl *Target) {
+  void setSynthesizedTarget(TypeOrExtensionDecl Target) {
     assert((!SynthesizeTarget || !Target || Target == SynthesizeTarget) &&
            "unexpected change of setSynthesizedTarget");
     // FIXME: this can overwrite the original target with nullptr.
@@ -295,8 +306,29 @@ public:
   }
 };
 
-bool shouldPrint(const Decl *D, PrintOptions &Options);
-bool shouldPrintPattern(const Pattern *P, PrintOptions &Options);
+void printContext(raw_ostream &os, DeclContext *dc);
+
+bool printRequirementStub(ValueDecl *Requirement, DeclContext *Adopter,
+                          Type AdopterTy, SourceLoc TypeLoc, raw_ostream &OS);
+
+/// Print a keyword or punctuator directly by its kind.
+llvm::raw_ostream &operator<<(llvm::raw_ostream &OS, tok keyword);
+
+/// Get the length of a keyword or punctuator by its kind.
+uint8_t getKeywordLen(tok keyword);
+
+/// Get <#code#>;
+StringRef getCodePlaceholder();
+
+/// Given an array of enum element decls, print them as case statements with
+/// placeholders as contents.
+void printEnumElementsAsCases(
+    llvm::DenseSet<EnumElementDecl *> &UnhandledElements,
+    llvm::raw_ostream &OS);
+
+void getInheritedForPrinting(const Decl *decl,
+                             llvm::function_ref<bool(const Decl*)> shouldPrint,
+                             llvm::SmallVectorImpl<TypeLoc> &Results);
 
 } // namespace swift
 

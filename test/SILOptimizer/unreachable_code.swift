@@ -1,4 +1,4 @@
-// RUN: %target-swift-frontend -emit-sil %s -o /dev/null -verify
+// RUN: %target-swift-frontend -emit-sil -primary-file %s -o /dev/null -verify
 func ifFalse() -> Int {
   if false { // expected-note {{always evaluates to false}}
     return 0 // expected-warning {{will never be executed}}
@@ -13,6 +13,49 @@ func ifTrue() -> Int {
     return 1
   }
   return 0 // expected-warning {{will never be executed}}
+}
+
+func testUnreachableIfBranch() -> Int {
+  let a = 2
+  let c: Int
+  if a < 2 {  // expected-note {{condition always evaluates to false}}
+    c = 3     // expected-warning {{will never be executed}}
+  } else {
+    c = 4
+  }
+  return c
+}
+
+func testUnreachableIfBranch2() -> Int {
+  let a = 2
+  let c: Int
+  if a > 2 { // expected-note {{condition always evaluates to false}}
+    c = 3    // expected-warning {{will never be executed}}
+  } else {
+    c = 4
+  }
+  return c
+}
+
+func testUnreachableElseBranch() -> Int {
+  let a = 2
+  let c: Int
+  if a == 2 { // expected-note {{condition always evaluates to true}}
+    c = 3
+  } else {
+    c = 4     // expected-warning {{will never be executed}}
+  }
+  return c
+}
+
+// FIXME: False Negative: <rdar://39516135>. No warnings are produced here
+// as the statements along the unreachable branches are marked implicit.
+// Unreachable code analysis suppresses warnings in such cases.
+func testQuestionMarkOperator() -> Int {
+  let a = 2
+  let c: Int
+  c = (a < 2) ? 3 : 4
+  return c
 }
 
 // Work-around <rdar://problem/17687851> by ensuring there is
@@ -129,23 +172,6 @@ func testSwitchEnum(_ xi: Int) -> Int {
     x += 1
   }
 
-  switch cond { // no warning
-  case .Two: 
-    x += 1
-  }
-
-  switch cond {
-  case .One:
-    x += 1
-  } // expected-error{{switch must be exhaustive}}
-
-  switch cond {
-  case .One:
-    x += 1
-  case .Three:
-    x += 1
-  } // expected-error{{switch must be exhaustive}}
-
   switch cond { // expected-warning{{switch condition evaluates to a constant}}
   case .Two: 
     x += 1
@@ -162,110 +188,6 @@ func testSwitchEnum(_ xi: Int) -> Int {
   
   return x
 }
-
-
-// Treat nil as .none and do not emit false 
-// non-exhaustive warning.
-func testSwitchEnumOptionalNil(_ x: Int?) -> Int {
-  switch x { // no warning
-  case .some(_):
-    return 1
-  case nil:
-    return -1
-  }
-}
-
-// Do not emit false non-exhaustive warnings if both
-// true and false are covered by the switch.
-func testSwitchEnumBool(_ b: Bool, xi: Int) -> Int {
-  var x = xi
-  let Cond = b
-  
-  switch Cond { // no warning
-  default:
-    x += 1
-  }
-
-  switch Cond {
-  case true:
-    x += 1
-  } // expected-error{{switch must be exhaustive}}
-
-  switch Cond {
-  case false:
-    x += 1
-  } // expected-error{{switch must be exhaustive}}
-
-  switch Cond { // no warning
-  case true:
-    x += 1
-  case false:
-    x -= 1
-  }
-
-  return x
-}
-
-func testSwitchOptionalBool(_ b: Bool?, xi: Int) -> Int {
-  var x = xi
-  switch b { // No warning
-  case .some(true):
-    x += 1
-  case .some(false):
-    x += 1
-  case .none:
-    x -= 1
-  }
-
-  switch b {
-  case .some(true):
-    x += 1
-  case .none:
-    x -= 1
-  } // expected-error{{switch must be exhaustive}}
-
-  return xi
-}
-
-// Do not emit false non-exhaustive warnings if both 
-// true and false are covered for a boolean element of a tuple.
-func testSwitchEnumBoolTuple(_ b1: Bool, b2: Bool, xi: Int) -> Int {
-  var x = xi
-  let Cond = (b1, b2)
-  
-  switch Cond { // no warning
-  default:
-    x += 1
-  }
-
-  switch Cond {
-  case (true, true):
-    x += 1
-    // FIXME: Two expect statements are written, because unreachable diagnostics produces N errors
-    // for non-exhaustive switches on tuples of N elements
-  } // expected-error{{switch must be exhaustive}} expected-error{{switch must be exhaustive}}
-
-  switch Cond {
-  case (false, true):
-    x += 1
-    // FIXME: Two expect statements are written, because unreachable diagnostics produces N errors
-    // for non-exhaustive switches on tuples of N elements
-  } // expected-error{{switch must be exhaustive}} expected-error{{switch must be exhaustive}}
-
-  switch Cond { // no warning
-  case (true, true):
-    x += 1
-  case (true, false):
-    x += 1
-  case (false, true):
-    x -= 1
-  case (false, false):
-    x -= 1
-  }
-
-  return x
-}
-
 
 @_silgen_name("exit") func exit() -> Never
 
@@ -336,10 +258,10 @@ class r20097963MyClass {
   }
 }
 
-func die() -> Never { die() }
+func die() -> Never { die() } // expected-warning {{all paths through this function will call itself}}
 
 func testGuard(_ a : Int) {
-  guard case 4 = a else {  }  // expected-error {{'guard' body may not fall through, consider using a 'return' or 'throw'}}
+  guard case 4 = a else {  }  // expected-error {{'guard' body must not fall through, consider using a 'return' or 'throw'}}
 
   guard case 4 = a else { return }  // ok
   guard case 4 = a else { die() }  // ok
@@ -350,7 +272,7 @@ func testGuard(_ a : Int) {
   }
 }
 
-public func testFailingCast(_ s:String) -> Int {
+func testFailingCast(_ s:String) -> Int {
    // There should be no notes or warnings about a call to a noreturn function, because we do not expose
    // how casts are lowered.
    return s as! Int // expected-warning {{cast from 'String' to unrelated type 'Int' always fails}}
@@ -406,7 +328,7 @@ func deferTryNoReturn() throws {
 }
 
 func noReturnInDefer() {
-  defer {
+  defer { // expected-warning {{'defer' statement before end of scope always executes immediately}}{{3-8=do}}
     _ = Lisp()
     die() // expected-note {{a call to a never-returning function}}
     die() // expected-warning {{will never be executed}}
@@ -419,14 +341,113 @@ while true {
 
 
 // SR-1010 - rdar://25278336 - Spurious "will never be executed" warnings when building standard library
-public struct SR1010<T> {
+struct SR1010<T> {
   var a : T
 }
 
 extension SR1010 {
   @available(*, unavailable, message: "use the 'enumerated()' method on the sequence")
-  public init(_ base: Int) {
+  init(_ base: Int) {
     fatalError("unavailable function can't be called")
   }
 }
 
+// More spurious 'will never be executed' warnings
+struct FailingStruct {
+  init?(x: ()) {
+    fatalError("gotcha")
+  }
+}
+
+class FailingClass {
+  init?(x: ()) {
+    fatalError("gotcha")
+  }
+
+  convenience init?(y: ()) {
+    fatalError("gotcha")
+  }
+}
+
+// <https://bugs.swift.org/browse/SR-2729>
+// We should not report unreachable code inside protocol witness thunks
+
+protocol Fooable {
+  init()
+  func foo() -> Never
+}
+struct Foo: Fooable {
+  init() { // no-warning
+    fatalError()
+  }
+
+  func foo() -> Never { // no-warning
+    while true {}
+  }
+}
+
+// We should not report unreachable code inside vtable thunks
+class Base {
+  required init(x: Int) {
+    fatalError()
+  }
+
+  func foo(x: Int) -> Never {
+    while true {}
+  }
+}
+
+class Derived : Base {
+  required init(x: Int?) {
+    fatalError()
+  }
+
+  override func foo(x: Int?) -> Never {
+    while true {}
+  }
+}
+
+// Inout writeback
+func takesInOut(value: inout SillyStruct) -> Never {
+  while true {}
+}
+
+struct SillyStruct {
+  mutating func mutatingMethod() -> Never {
+    takesInOut(value: &self)
+  }
+}
+
+// This triggers various problems
+public func genericMightBeNever<R>(
+  _ body: () -> R) -> R {
+  while true {}
+
+}
+
+func sillyGenericExample() -> Never {
+  return genericMightBeNever {
+    return genericMightBeNever {
+      return fatalError()
+    }
+  }
+}
+
+// https://bugs.swift.org/browse/SR-7472
+
+protocol P {
+    static var theThing: Self { get }
+}
+
+extension Never : P {
+    static var theThing: Never { return fatalError() }
+}
+
+func test<T: P>(_ type: T.Type) -> T {
+    return type.theThing
+}
+
+func f(i: Int?) {
+    guard i != nil else { Never.theThing }
+    guard i != nil else { test(Never.self) }
+}

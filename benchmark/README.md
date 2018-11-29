@@ -48,7 +48,7 @@ The following build options are available:
       (default: "macosx;iphoneos;appletvos;watchos")
 * `-DSWIFT_OPTIMIZATION_LEVELS`
     * A list of Swift optimization levels to build against
-      (default: "O;Onone;Ounchecked")
+      (default: "O;Onone;Osize")
 * `-DSWIFT_BENCHMARK_EMIT_SIB`
     * A boolean value indicating whether .sib files should be generated
       alongside .o files (default: FALSE)
@@ -86,58 +86,46 @@ Using the Benchmark Driver
 * `--num-samples`
     * Control the number of samples to take for each test
 * `--list`
-    * Print a list of available tests
+    * Print a list of available tests matching specified criteria
+* `--tags`
+    * Run tests that are labeled with specified [tags](https://github.com/apple/swift/blob/master/benchmark/utils/TestsUtils.swift#L19)
+     (comma separated list); multiple tags are interpreted as logical AND, i.e.
+     run only test that are labeled with all the supplied tags
+* `--skip-tags`
+    * Don't run tests that are labeled with any of the specified tags (comma
+      separated list); default value: `skip,unstable`; to get complete list of
+      tests, specify empty `--skip-tags=`
+
 
 ### Examples
 
-1. `$ ./Benchmark_O --num-iters=1 --num-samples=1`
-2. `$ ./Benchmark_Onone --list`
-3. `$ ./Benchmark_Ounchecked Ackermann`
+* `$ ./Benchmark_O --num-iters=1 --num-samples=1`
+* `$ ./Benchmark_Onone --list`
+* `$ ./Benchmark_Osize Ackermann`
+* `$ ./Benchmark_O --tags=Dictionary`
+* `$ ./Benchmark_O --skip-tags=unstable,skip,validation`
+
+### Note
+As a shortcut, you can also refer to benchmarks by their ordinal numbers.
+These are printed out together with benchmark names and tags using the
+`--list` parameter. For a complete list of all available performance tests run
+* `$ ./Benchmark_O --list --skip-tags=`
+
+You can use test numbers instead of test names like this:
+* `$ ./Benchmark_O 1 42`
+* `$ ./Benchmark_Driver run 1 42`
+
+Test numbers are not stable in the long run, adding and removing tests from the
+benchmark suite will reorder them, but they are stable for a given build.
 
 Using the Harness Generator
 ---------------------------
 
-`scripts/generate_harness/generate_harness.py` generates and replaces
-`CMakeLists.txt` and `utils/main.swift` from single and multiple file tests
-contained in the directories `single-source` and `multi-source`. It gathers
-information about the tests and then generates the files from templates using
-jinja2. The motivation for creating this script was to eliminate the need to
-manually add at least three lines to harness files (one to `CMakeLists.txt` and
-two to `utils/main.swift`) for every new benchmark added.
+`scripts/generate_harness/generate_harness.py` runs `gyb` to automate generation
+of some benchmarks.
 
-**Warning:**
-
-Since `CMakeLists.txt` and `utils/main.swift` are now generated from templates,
-they should not be directly modified. Work may be lost if the harness is
-executed after making changes to derived files. Instead, modifications should
-be made to the template files stored in the `scripts/generate_harness`
-directory.
-
-### Generating harness files
-
-Start by installing jinja2 if it isn't already installed:
-
-    $ sudo easy_install -U jinja2
-
-To generate `CMakeLists.txt` and `utils/main.swift` from test sources, run the
-command:
-
-    $ scripts/generate_harness/generate_harness.py
-
-**Note:**
-
-Ensure `generate_harness.py` remains in `scripts/generate_harness` as it
-modifies files relative to its location instead of the current working
-directory.
-
-### Modifying CMakeLists.txt or utils/main.swift
-
-To make changes to `CMakeLists.txt` or `utils/main.swift`, modify the template
-files `CMakeLists.txt_template` and `main.swift_template` stored in the
-`scripts/generate_harness` directory. These are jinja2 templates, rendered by
-jinja2 calls in `generate_harness.py`, so ensure static changes don't interfere
-with the template portions. Test changes by regenerating the harness
-(*Generating harness files*) and rebuilding the repository with `build-script`.
+** FIXME ** `gyb` should be invoked automatically during the
+   build so that manually invoking `generate_harness.py` is not required.
 
 Adding New Benchmarks
 ---------------------
@@ -148,30 +136,33 @@ To add a new single file test:
 
 1.  Add a new Swift file (`YourTestNameHere.swift`), built according to
     the template below, to the `single-source` directory.
-2.  Regenerate harness files by following the directions in
-    *Generating harness files* before committing changes.
+2.  Add the filename of the new Swift file to CMakeLists.txt
+3.  Edit `main.swift`. Import and register your new Swift module.
 
 To add a new multiple file test:
 
 1.  Add a new directory and files under the `multi-source` directory as
     specified below:
 
-        ├── multi-source
-        │   ├── YourTestName
-        │   │   ├── TestFile1.swift
-        │   │   ├── TestFile2.swift
-        │   │   ├── TestFile3.swift
+        +-- multi-source
+        |   +-- YourTestName
+        |   |   +-- TestFile1.swift
+        |   |   +-- TestFile2.swift
+        |   |   +-- TestFile3.swift
 
-    At least one run function (specified in the template below) must
-    exist in the files.
+    At least one file must define a public `YourTestName` variable, initialized to an
+    instance of BenchmarkInfo (specified in the template below).
 
-2.  Regenerate harness files by following the directions in
-    *Generating harness files* before committing changes.
+2.  In `CMakeLists.txt` add the new directory name to
+    `SWIFT_MULTISOURCE_SWIFT_BENCHES`, and set `YourTestName_sources` to the
+    list of source file paths.
+
+3.  Edit `main.swift`. Import and register your new Swift module.
 
 **Note:**
 
-The generator script looks for functions prefixed with `run_` in order to
-populate `utils/main.swift`.
+The benchmark harness will execute the routine referenced by
+`BenchmarkInfo.runFunction`.
 
 The benchmark driver will measure the time taken for `N = 1` and automatically calculate
 the necessary number of iterations `N` to run each benchmark in approximately one second,
@@ -185,14 +176,18 @@ If needed you can multiply N by a fixed amount (e.g. `1...100*N`) to achieve thi
 **Performance Test Template**
 
 ``` {.sourceCode .swift}
-// YourTestNameHere benchmark
+// YourTestName benchmark
 //
 // rdar://problem/00000000
-import Foundation
 import TestsUtils
 
+public let YourTestName = BenchmarkInfo(
+  name: "YourTestName",
+  runFunction: run_YourTestName,
+  tags: [.regression])
+
 @inline(never)
-public func run_YourTestNameHere(N: Int) {
+public func run_YourTestName(N: Int) {
     # Declare variables
 
     for i in 1...N {
@@ -205,3 +200,23 @@ public func run_YourTestNameHere(N: Int) {
 }
 ```
 
+The current set of tags are defined by the `BenchmarkCategory` enum in
+`TestsUtils.swift` .
+
+Testing the Benchmark Drivers
+-----------------------------
+When working on tests, after the initial build
+````
+swift-source$ ./swift/utils/build-script -R -B
+````
+you can rebuild just the benchmarks:
+````
+swift-source$ export SWIFT_BUILD_DIR=`pwd`/build/Ninja-ReleaseAssert/swift-macosx-x86_64
+swift-source$ ninja -C ${SWIFT_BUILD_DIR} swift-benchmark-macosx-x86_64
+````
+
+When modifying the testing infrastructure, you should verify that your changes
+pass all the tests:
+````
+swift-source$ ./llvm/utils/lit/lit.py -sv ${SWIFT_BUILD_DIR}/test-macosx-x86_64/benchmark
+````

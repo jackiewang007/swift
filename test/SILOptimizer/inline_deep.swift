@@ -14,7 +14,7 @@ class S<T> {
 }
 
 
-// CHECK-LABEL: sil @_TF11inline_deep3topFT_Vs5Int32
+// CHECK-LABEL: sil @$s11inline_deep3tops5Int32VyF
 public func top() -> Int32 {
   // CHECK: bb0
   // CHECK: [[INTLIT:%.*]] = integer_literal $Builtin.Int32, 709

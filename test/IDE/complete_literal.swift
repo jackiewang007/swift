@@ -5,15 +5,18 @@
 // RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=LITERAL5 | %FileCheck %s -check-prefix=LITERAL5
 // RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=LITERAL6 | %FileCheck %s -check-prefix=LITERAL6
 // RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=LITERAL7 | %FileCheck %s -check-prefix=LITERAL7
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=LITERAL8 | %FileCheck %s -check-prefix=LITERAL8
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=LITERAL9 | %FileCheck %s -check-prefix=LITERAL9
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=LITERAL10 | %FileCheck %s -check-prefix=LITERAL10
 
 {
   1.#^LITERAL1^#
 }
 // LITERAL1:          Begin completions
-// LITERAL1-DAG:      Decl[InstanceVar]/CurrNominal:      bigEndian[#Int#]; name=bigEndian{{$}}
-// LITERAL1-DAG:      Decl[InstanceVar]/CurrNominal:      littleEndian[#Int#]; name=littleEndian{{$}}
+// LITERAL1-DAG:      Decl[InstanceVar]/Super:            bigEndian[#Int#]; name=bigEndian{{$}}
+// LITERAL1-DAG:      Decl[InstanceVar]/Super:            littleEndian[#Int#]; name=littleEndian{{$}}
 // LITERAL1-DAG:      Decl[InstanceVar]/CurrNominal:      byteSwapped[#Int#]; name=byteSwapped{{$}}
-// LITERAL1-DAG:      Decl[InstanceMethod]/CurrNominal:   toIntMax()[#IntMax#]; name=toIntMax(){{$}}
+// LITERAL1-DAG:      Decl[InstanceVar]/CurrNominal:      nonzeroBitCount[#Int#]; name=nonzeroBitCount{{$}}
 
 {
   1.1.#^LITERAL2^#
@@ -55,14 +58,13 @@ func giveMeAString() -> Int {
   return "Here's a string".#^LITERAL5^# // try .characters.count here
 }
 
-// LITERAL5-DAG:     Decl[InstanceVar]/CurrNominal:      characters[#String.CharacterView#]{{; name=.+$}}
 // LITERAL5-DAG:     Decl[InstanceVar]/CurrNominal:      endIndex[#String.Index#]{{; name=.+$}}
 // LITERAL5-DAG:     Decl[InstanceMethod]/CurrNominal/NotRecommended/TypeRelation[Invalid]: reserveCapacity({#(n): Int#})[#Void#]{{; name=.+$}}
 // LITERAL5-DAG:     Decl[InstanceMethod]/CurrNominal/NotRecommended/TypeRelation[Invalid]: append({#(c): Character#})[#Void#]{{; name=.+$}}
 // LITERAL5-DAG:     Decl[InstanceMethod]/CurrNominal/NotRecommended/TypeRelation[Invalid]: append({#contentsOf: Sequence#})[#Void#]{{; name=.+$}}
 
 struct MyColor: _ExpressibleByColorLiteral {
-  init(colorLiteralRed: Float, green: Float, blue: Float, alpha: Float) { red = colorLiteralRed }
+  init(_colorLiteralRed: Float, green: Float, blue: Float, alpha: Float) { red = colorLiteralRed }
   var red: Float
 }
 public typealias _ColorLiteralType = MyColor
@@ -76,3 +78,21 @@ func testColor12() {
   y = #colorLiteral(red: 1.0, green: 0.1, blue: 0.5, alpha: 1.0) #^LITERAL7^#
 }
 // LITERAL7: Decl[InstanceVar]/CurrNominal:      .red[#Float#]; name=red
+
+func testArray(f1: Float) {
+  _ = [1, 2, f1] #^LITERAL8^#
+}
+// LITERAL8-DAG: Decl[InstanceVar]/CurrNominal:      .count[#Int#]; name=count
+// LITERAL8-DAG: Decl[InstanceVar]/Super:            .first[#Float?#]; name=first
+
+func testDict(f1: Float) {
+  _ = ["foo": f1, "bar": "baz"] #^LITERAL9^#
+}
+// LITERAL9-DAG: Decl[InstanceVar]/CurrNominal:      .keys[#Dictionary<String, Any>.Keys#]; name=keys
+// LITERAL9-DAG: Decl[InstanceVar]/CurrNominal:      .isEmpty[#Bool#]; name=isEmpty
+
+func testEditorPlaceHolder() {
+  _ = <#T##foo##String#> #^LITERAL10^#
+}
+// LITERAL10-DAG: Decl[InstanceVar]/CurrNominal:      .utf16[#String.UTF16View#]; name=utf16
+// LITERAL10-DAG: Decl[InstanceVar]/CurrNominal:      .utf8[#String.UTF8View#]; name=utf8

@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -108,27 +108,27 @@ public:
     ExpectedTypeRelation = relation;
   }
 
-  void addAccessControlKeyword(Accessibility Access) {
+  void addAccessControlKeyword(AccessLevel Access) {
     switch (Access) {
-    case Accessibility::Private:
+    case AccessLevel::Private:
       addChunkWithTextNoCopy(
           CodeCompletionString::Chunk::ChunkKind::AccessControlKeyword,
           "private ");
       break;
-    case Accessibility::FilePrivate:
+    case AccessLevel::FilePrivate:
       addChunkWithTextNoCopy(
           CodeCompletionString::Chunk::ChunkKind::AccessControlKeyword,
           "fileprivate ");
       break;
-    case Accessibility::Internal:
+    case AccessLevel::Internal:
       // 'internal' is the default, don't add it.
       break;
-    case Accessibility::Public:
+    case AccessLevel::Public:
       addChunkWithTextNoCopy(
           CodeCompletionString::Chunk::ChunkKind::AccessControlKeyword,
           "public ");
       break;
-    case Accessibility::Open:
+    case AccessLevel::Open:
       addChunkWithTextNoCopy(
           CodeCompletionString::Chunk::ChunkKind::AccessControlKeyword,
           "open ");
@@ -274,7 +274,7 @@ public:
     if (escapeAllKeywords) {
 #define KEYWORD(kw) .Case(#kw, true)
       shouldEscape = llvm::StringSwitch<bool>(Word)
-#include "swift/Parse/Tokens.def"
+#include "swift/Syntax/TokenKinds.def"
         .Default(false);
     } else {
       shouldEscape = !canBeArgumentLabel(Word);
@@ -315,7 +315,8 @@ public:
   }
 
   void addCallParameter(Identifier Name, Identifier LocalName, Type Ty,
-                        bool IsVarArg, bool Outermost) {
+                        bool IsVarArg, bool Outermost, bool IsInOut, bool IsIUO,
+                        bool isAutoClosure) {
     CurrentNestingLevel++;
 
     addSimpleChunk(CodeCompletionString::Chunk::ChunkKind::CallParameterBegin);
@@ -344,10 +345,10 @@ public:
     }
 
     // 'inout' arguments are printed specially.
-    if (auto *IOT = Ty->getAs<InOutType>()) {
+    if (IsInOut) {
       addChunkWithTextNoCopy(
           CodeCompletionString::Chunk::ChunkKind::Ampersand, "&");
-      Ty = IOT->getObjectType();
+      Ty = Ty->getInOutObjectType();
     }
 
     if (Name.empty() && !LocalName.empty()) {
@@ -363,30 +364,27 @@ public:
     // If the parameter is of the type @autoclosure ()->output, then the
     // code completion should show the parameter of the output type
     // instead of the function type ()->output.
-    if (auto FuncType = Ty->getAs<AnyFunctionType>()) {
-      if (FuncType->isAutoClosure()) {
-        Ty = FuncType->getResult();
-      }
-    }
+    if (isAutoClosure)
+      Ty = Ty->castTo<FunctionType>()->getResult();
 
     PrintOptions PO;
     PO.SkipAttributes = true;
+    PO.PrintOptionalAsImplicitlyUnwrapped = IsIUO;
+    std::string TypeName = Ty->getString(PO);
     addChunkWithText(CodeCompletionString::Chunk::ChunkKind::CallParameterType,
-                     Ty->getString(PO));
+                     TypeName);
 
     // Look through optional types and type aliases to find out if we have
-    // function/closure parameter type that is not an autoclosure.
-    Ty = Ty->lookThroughAllAnyOptionalTypes();
+    // function type.
+    Ty = Ty->lookThroughAllOptionalTypes();
     if (auto AFT = Ty->getAs<AnyFunctionType>()) {
-      if (!AFT->isAutoClosure()) {
-        // If this is a closure type, add ChunkKind::CallParameterClosureType.
-        PrintOptions PO;
-        PO.PrintFunctionRepresentationAttrs = false;
-        PO.SkipAttributes = true;
-        addChunkWithText(
-            CodeCompletionString::Chunk::ChunkKind::CallParameterClosureType,
-            AFT->getString(PO));
-      }
+      // If this is a closure type, add ChunkKind::CallParameterClosureType.
+      PrintOptions PO;
+      PO.PrintFunctionRepresentationAttrs = false;
+      PO.SkipAttributes = true;
+      addChunkWithText(
+          CodeCompletionString::Chunk::ChunkKind::CallParameterClosureType,
+          AFT->getString(PO));
     }
 
     if (IsVarArg)
@@ -394,9 +392,10 @@ public:
     CurrentNestingLevel--;
   }
 
-  void addCallParameter(Identifier Name, Type Ty, bool IsVarArg,
-                        bool Outermost) {
-    addCallParameter(Name, Identifier(), Ty, IsVarArg, Outermost);
+  void addCallParameter(Identifier Name, Type Ty, bool IsVarArg, bool Outermost,
+                        bool IsInOut, bool IsIUO, bool isAutoClosure) {
+    addCallParameter(Name, Identifier(), Ty, IsVarArg, Outermost, IsInOut,
+                     IsIUO, isAutoClosure);
   }
 
   void addGenericParameter(StringRef Name) {
@@ -417,8 +416,7 @@ public:
 
   void addOptionalMethodCallTail() {
     addChunkWithTextNoCopy(
-        CodeCompletionString::Chunk::ChunkKind::OptionalMethodCallTail, "!");
-    getLastChunk().setIsAnnotation();
+        CodeCompletionString::Chunk::ChunkKind::OptionalMethodCallTail, "?");
   }
 
   void addTypeAnnotation(StringRef Type) {

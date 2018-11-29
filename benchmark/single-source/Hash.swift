@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -14,6 +14,11 @@
 // Source: http://en.wikipedia.org/wiki/MD5 and
 //         http://en.wikipedia.org/wiki/SHA-1
 import TestsUtils
+
+public let HashTest = BenchmarkInfo(
+  name: "HashTest",
+  runFunction: run_HashTest,
+  tags: [.validation, .algorithm])
 
 class Hash {
   /// \brief C'tor.
@@ -50,13 +55,6 @@ class Hash {
     hash()
     let x  = hashState()
     return x
-  }
-
-  func digestFast(_ Res: inout [UInt8]) {
-    fillBlock()
-    hash()
-    // We use [UInt8] to avoid using String::append.
-    hashStateFast(&Res)
   }
 
   // private:
@@ -115,19 +113,13 @@ class Hash {
   /// \brief Left-rotate \p x by \p c.
   final
   func rol(_ x: UInt32, _ c: UInt32) -> UInt32 {
-    // TODO: use the &>> operator.
-    let a = UInt32(truncatingBitPattern: Int64(x) << Int64(c))
-    let b = UInt32(truncatingBitPattern: Int64(x) >> (32 - Int64(c)))
-    return a|b
+    return x &<< c | x &>> (32 &- c)
   }
 
   /// \brief Right-rotate \p x by \p c.
   final
   func ror(_ x: UInt32, _ c: UInt32) -> UInt32 {
-    // TODO: use the &>> operator.
-    let a = UInt32(truncatingBitPattern: Int64(x) >> Int64(c))
-    let b = UInt32(truncatingBitPattern: Int64(x) << (32 - Int64(c)))
-    return a|b
+    return x &>> c | x &<< (32 &- c)
   }
 }
 
@@ -179,10 +171,10 @@ class MD5 : Hash {
   }
 
   func appendBytes(_ Val: Int, _ Message: inout Array<UInt8>, _ Offset : Int) {
-    Message[Offset] = UInt8(truncatingBitPattern: Val)
-    Message[Offset + 1] = UInt8(truncatingBitPattern: Val >> 8)
-    Message[Offset + 2] = UInt8(truncatingBitPattern: Val >> 16)
-    Message[Offset + 3] = UInt8(truncatingBitPattern: Val >> 24)
+    Message[Offset] = UInt8(truncatingIfNeeded: Val)
+    Message[Offset + 1] = UInt8(truncatingIfNeeded: Val >> 8)
+    Message[Offset + 2] = UInt8(truncatingIfNeeded: Val >> 16)
+    Message[Offset + 3] = UInt8(truncatingIfNeeded: Val >> 24)
   }
 
   override
@@ -350,7 +342,7 @@ class SHA1 : Hash {
 
     // Append the original message length as 64bit big endian:
     let len_in_bits = Int64(messageLength)*8
-    for i in 0..<8 {
+    for i in 0..<(8 as Int64) {
       let val = (len_in_bits >> ((7-i)*8)) & 0xFF
       data[dataLength] = UInt8(val)
       dataLength += 1
@@ -488,7 +480,7 @@ class SHA256 :  Hash {
 
     // Append the original message length as 64bit big endian:
     let len_in_bits = Int64(messageLength)*8
-    for i in 0..<8 {
+    for i in 0..<(8 as Int64) {
       let val = (len_in_bits >> ((7-i)*8)) & 0xFF
       data[dataLength] = UInt8(val)
       dataLength += 1
@@ -594,8 +586,7 @@ public func run_HashTest(_ N: Int) {
     let MD = MD5()
     for (K, V) in TestMD5 {
       MD.update(K)
-      CheckResults(MD.digest() == V,
-                   "Incorrect result in Hash: check 1 failed.")
+      CheckResults(MD.digest() == V)
       MD.reset()
     }
 
@@ -616,8 +607,7 @@ public func run_HashTest(_ N: Int) {
     }
     let MD2 = MD5()
     MD2.update(L)
-    CheckResults(MD.digest() == MD2.digest(),
-                 "Incorrect result in Hash: check 2 failed.")
+    CheckResults(MD.digest() == MD2.digest())
 
     // Test the famous MD5 collision from 2009: http://www.mscs.dal.ca/~selinger/md5collision/
     let Src1 : [UInt8] =
@@ -639,10 +629,8 @@ public func run_HashTest(_ N: Int) {
     H2.update(Src2)
     let A1 = H1.digest()
     let A2 = H2.digest()
-    CheckResults(A1 == A2,
-                 "Incorrect result in Hash: check 3 failed.")
-    CheckResults(A1 == "79054025255fb1a26e4bc422aef54eb4",
-                 "Incorrect result in Hash: check 4 failed.")
+    CheckResults(A1 == A2)
+    CheckResults(A1 == "79054025255fb1a26e4bc422aef54eb4")
     H1.reset()
     H2.reset()
 
@@ -650,15 +638,13 @@ public func run_HashTest(_ N: Int) {
     let SH256 = SHA256()
     for (K, V) in TestSHA1 {
       SH.update(K)
-      CheckResults(SH.digest() == V,
-                   "Incorrect result in Hash: check 5 failed.")
+      CheckResults(SH.digest() == V)
       SH.reset()
     }
 
     for (K, V) in TestSHA256 {
       SH256.update(K)
-      CheckResults(SH256.digest() == V,
-                   "Incorrect result in Hash: check 5 failed.")
+      CheckResults(SH256.digest() == V)
       SH256.reset()
     }
 
@@ -679,7 +665,6 @@ public func run_HashTest(_ N: Int) {
     }
     let SH2 = SHA1()
     SH2.update(L)
-    CheckResults(SH.digest() == SH2.digest(),
-                 "Incorrect result in Hash: check 5 failed.")
+    CheckResults(SH.digest() == SH2.digest())
   }
 }

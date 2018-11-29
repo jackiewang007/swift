@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -18,7 +18,9 @@
 #ifndef SWIFT_TYPECHECKING_CODESYNTHESIS_H
 #define SWIFT_TYPECHECKING_CODESYNTHESIS_H
 
+#include "TypeCheckObjC.h"
 #include "swift/AST/ForeignErrorConvention.h"
+#include "swift/Basic/ExternalUnion.h"
 #include "swift/Basic/LLVM.h"
 #include "llvm/ADT/Optional.h"
 
@@ -38,36 +40,71 @@ class VarDecl;
 
 class TypeChecker;
 
-enum class ObjCReason;
+class ObjCReason;
+
+/// A function which needs to have its body synthesized.
+///
+/// This class exists in expectation that someone will need to add more
+/// information to it.
+class SynthesizedFunction {
+public:
+  enum Kind {
+    Getter,
+    Setter,
+    ReadCoroutine,
+    ModifyCoroutine,
+    LazyGetter,
+    LazySetter,
+  };
+
+private:
+  FuncDecl *Fn;
+  Kind K;
+
+  using Members = ExternalUnionMembers<void, VarDecl*>;
+  static Members::Index getIndexForKind(Kind kind) {
+    switch (kind) {
+    case Kind::Getter:
+    case Kind::Setter:
+    case Kind::ReadCoroutine:
+    case Kind::ModifyCoroutine:
+      return Members::indexOf<void>();
+    case Kind::LazyGetter:
+    case Kind::LazySetter:
+      return Members::indexOf<VarDecl*>();
+    }
+    llvm_unreachable("bad kind");
+  };
+  ExternalUnion<Kind, Members, getIndexForKind> Extra;
+  static_assert(decltype(Extra)::union_is_trivially_copyable,
+                "expected all members to be trivial");
+
+public:
+  SynthesizedFunction(FuncDecl *fn, Kind kind) : Fn(fn), K(kind) {
+    assert(getIndexForKind(kind) == Members::indexOf<void>() &&
+           "this storage kind requires extra data");
+  }
+
+  SynthesizedFunction(FuncDecl *fn, Kind kind, VarDecl *var) : Fn(fn), K(kind) {
+    Extra.emplace<VarDecl*>(K, var);
+  }
+
+  FuncDecl *getDecl() const { return Fn; }
+  Kind getKind() const { return K; }
+
+  VarDecl *getLazyTargetVariable() const { return Extra.get<VarDecl*>(K); }
+};
 
 // These are implemented in TypeCheckDecl.cpp.
 void makeFinal(ASTContext &ctx, ValueDecl *D);
-void makeDynamic(ASTContext &ctx, ValueDecl *D);
-void markAsObjC(TypeChecker &TC, ValueDecl *D,
-                Optional<ObjCReason> isObjC,
-                Optional<ForeignErrorConvention> errorConvention = None);
-Type configureImplicitSelf(TypeChecker &tc,
-                           AbstractFunctionDecl *func);
-void configureConstructorType(ConstructorDecl *ctor,
-                              Type selfType,
-                              Type argType);
-bool checkOverrides(TypeChecker &TC, ValueDecl *decl);
+
+// Implemented in TypeCheckerOverride.cpp
+bool checkOverrides(ValueDecl *decl);
 
 // These are implemented in CodeSynthesis.cpp.
-void convertStoredVarInProtocolToComputed(VarDecl *VD, TypeChecker &TC);
-void synthesizeObservingAccessors(VarDecl *VD, TypeChecker &TC);
-void synthesizeSetterForMutableAddressedStorage(AbstractStorageDecl *storage,
-                                                TypeChecker &TC);
-void synthesizeMaterializeForSet(FuncDecl *materializeForSet,
-                                 AbstractStorageDecl *storage,
-                                 TypeChecker &TC);
-void maybeAddMaterializeForSet(AbstractStorageDecl *storage,
-                               TypeChecker &TC);
+void maybeAddAccessorsToStorage(TypeChecker &TC, AbstractStorageDecl *storage);
 
-void addTrivialAccessorsToStorage(AbstractStorageDecl *storage,
-                                  TypeChecker &TC);
-
-void maybeAddAccessorsToVariable(VarDecl *var, TypeChecker &TC);
+void triggerAccessorSynthesis(TypeChecker &TC, AbstractStorageDecl *storage);
 
 /// \brief Describes the kind of implicit constructor that will be
 /// generated.

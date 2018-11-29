@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -40,6 +40,7 @@ namespace SourceKit {
   class SwiftEditorDocumentFileMap;
   class SwiftLangSupport;
   class SwiftInvocation;
+  struct SwiftStatistics;
   typedef RefPtr<SwiftInvocation> SwiftInvocationRef;
   class EditorDiagConsumer;
 
@@ -48,7 +49,7 @@ public:
   struct Implementation;
   Implementation &Impl;
 
-  explicit ASTUnit(uint64_t Generation);
+  explicit ASTUnit(uint64_t Generation, std::shared_ptr<SwiftStatistics> Stats);
   ~ASTUnit();
 
   swift::CompilerInstance &getCompilerInstance() const;
@@ -83,9 +84,11 @@ public:
 
 typedef std::shared_ptr<SwiftASTConsumer> SwiftASTConsumerRef;
 
-class SwiftASTManager {
+class SwiftASTManager : public std::enable_shared_from_this<SwiftASTManager> {
 public:
-  explicit SwiftASTManager(SwiftLangSupport &LangSupport);
+  explicit SwiftASTManager(std::shared_ptr<SwiftEditorDocumentFileMap>,
+                           std::shared_ptr<SwiftStatistics> Stats,
+                           StringRef RuntimeResourcePath);
   ~SwiftASTManager();
 
   SwiftInvocationRef getInvocation(ArrayRef<const char *> Args,
@@ -117,14 +120,22 @@ public:
                               StringRef PrimaryFile,
                               std::string &Error);
 
+  /// Initializes \p Invocation as if for typechecking, but with no inputs.
+  ///
+  /// If \p AllowInputs is false, it is an error for \p OrigArgs to contain any
+  /// input files.
+  bool initCompilerInvocationNoInputs(swift::CompilerInvocation &Invocation,
+                                      ArrayRef<const char *> OrigArgs,
+                                      swift::DiagnosticEngine &Diags,
+                                      std::string &Error,
+                                      bool AllowInputs = true);
+
   void removeCachedAST(SwiftInvocationRef Invok);
 
   struct Implementation;
-
-private:
   Implementation &Impl;
 };
 
-} // namespace SourceKit.
+} // namespace SourceKit
 
 #endif

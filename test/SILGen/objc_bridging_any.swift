@@ -1,4 +1,4 @@
-// RUN: %target-swift-frontend(mock-sdk: %clang-importer-sdk) -emit-silgen %s | %FileCheck %s
+// RUN: %target-swift-emit-silgen(mock-sdk: %clang-importer-sdk) -module-name objc_bridging_any -Xllvm -sil-print-debuginfo -enable-sil-ownership %s | %FileCheck %s
 // REQUIRES: objc_interop
 
 import Foundation
@@ -9,7 +9,7 @@ protocol CP: class {}
 
 struct KnownUnbridged {}
 
-// CHECK-LABEL: sil hidden @_TF17objc_bridging_any11passingToId
+// CHECK-LABEL: sil hidden @$s17objc_bridging_any11passingToId{{.*}}F
 func passingToId<T: CP, U>(receiver: NSIdLover,
                            string: String,
                            nsString: NSString,
@@ -24,7 +24,7 @@ func passingToId<T: CP, U>(receiver: NSIdLover,
                            optionalA: String?,
                            optionalB: NSString?,
                            optionalC: Any?) {
-  // CHECK: bb0([[SELF:%.*]] : $NSIdLover,
+  // CHECK: bb0([[SELF:%.*]] : @guaranteed $NSIdLover,
   // CHECK:   debug_value [[STRING:%.*]] : $String
   // CHECK:   debug_value [[NSSTRING:%.*]] : $NSString
   // CHECK:   debug_value [[OBJECT:%.*]] : $AnyObject
@@ -39,153 +39,165 @@ func passingToId<T: CP, U>(receiver: NSIdLover,
   // CHECK:   debug_value [[OPT_NSSTRING:%.*]] : $Optional<NSString>
   // CHECK:   debug_value_addr [[OPT_ANY:%.*]] : $*Optional<Any>
 
-  // CHECK:   [[METHOD:%.*]] = class_method [volatile] [[SELF]]
   // CHECK:   [[STRING_COPY:%.*]] = copy_value [[STRING]]
-  // CHECK:   [[BRIDGE_STRING:%.*]] = function_ref @_TFE10FoundationSS19_bridgeToObjectiveC
-  // CHECK:   [[BRIDGED:%.*]] = apply [[BRIDGE_STRING]]([[STRING_COPY]])
+  // CHECK:   [[BRIDGE_STRING:%.*]] = function_ref @$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF
+  // CHECK:   [[BORROWED_STRING_COPY:%.*]] = begin_borrow [[STRING_COPY]]
+  // CHECK:   [[BRIDGED:%.*]] = apply [[BRIDGE_STRING]]([[BORROWED_STRING_COPY]])
+  // CHECK:   end_borrow [[BORROWED_STRING_COPY]]
   // CHECK:   [[ANYOBJECT:%.*]] = init_existential_ref [[BRIDGED]] : $NSString : $NSString, $AnyObject
-  // CHECK:   apply [[METHOD]]([[ANYOBJECT]], [[SELF]])
-  // CHECK:   destroy_value [[BRIDGED]]
   // CHECK:   destroy_value [[STRING_COPY]]
+  // CHECK:   [[METHOD:%.*]] = objc_method [[SELF]]
+  // CHECK:   apply [[METHOD]]([[ANYOBJECT]], [[SELF]])
+  // CHECK:   destroy_value [[ANYOBJECT]]
   receiver.takesId(string)
 
-  // CHECK:   [[METHOD:%.*]] = class_method [volatile] [[SELF]] : $NSIdLover,
   // CHECK:   [[NSSTRING_COPY:%.*]] = copy_value [[NSSTRING]]
   // CHECK:   [[ANYOBJECT:%.*]] = init_existential_ref [[NSSTRING_COPY]] : $NSString : $NSString, $AnyObject
+  // CHECK:   [[METHOD:%.*]] = objc_method [[SELF]] : $NSIdLover,
   // CHECK:   apply [[METHOD]]([[ANYOBJECT]], [[SELF]])
-  // CHECK:   destroy_value [[NSSTRING_COPY]]
+  // CHECK:   destroy_value [[ANYOBJECT]]
   receiver.takesId(nsString)
 
-  // CHECK:   [[METHOD:%.*]] = class_method [volatile] [[SELF]] : $NSIdLover,
   // CHECK:   [[CLASS_GENERIC_COPY:%.*]] = copy_value [[CLASS_GENERIC]]
   // CHECK:   [[ANYOBJECT:%.*]] = init_existential_ref [[CLASS_GENERIC_COPY]] : $T : $T, $AnyObject
+  // CHECK:   [[METHOD:%.*]] = objc_method [[SELF]] : $NSIdLover,
   // CHECK:   apply [[METHOD]]([[ANYOBJECT]], [[SELF]])
-  // CHECK:   destroy_value [[CLASS_GENERIC_COPY]]
+  // CHECK:   destroy_value [[ANYOBJECT]]
   receiver.takesId(classGeneric)
 
-  // CHECK:   [[METHOD:%.*]] = class_method [volatile] [[SELF]] : $NSIdLover,
   // CHECK:   [[OBJECT_COPY:%.*]] = copy_value [[OBJECT]]
+  // CHECK:   [[METHOD:%.*]] = objc_method [[SELF]] : $NSIdLover,
   // CHECK:   apply [[METHOD]]([[OBJECT_COPY]], [[SELF]])
   // CHECK:   destroy_value [[OBJECT_COPY]]
   receiver.takesId(object)
 
-  // CHECK:   [[METHOD:%.*]] = class_method [volatile] [[SELF]] : $NSIdLover,
   // CHECK:   [[CLASS_EXISTENTIAL_COPY:%.*]] = copy_value [[CLASS_EXISTENTIAL]]
   // CHECK:   [[OPENED:%.*]] = open_existential_ref [[CLASS_EXISTENTIAL_COPY]] : $CP
   // CHECK:   [[ANYOBJECT:%.*]] = init_existential_ref [[OPENED]]
+  // CHECK:   [[METHOD:%.*]] = objc_method [[SELF]] : $NSIdLover,
   // CHECK:   apply [[METHOD]]([[ANYOBJECT]], [[SELF]])
-  // CHECK:   destroy_value [[CLASS_EXISTENTIAL_COPY]]
+  // CHECK:   destroy_value [[ANYOBJECT]]
   receiver.takesId(classExistential)
 
   // These cases perform a universal bridging conversion.
 
-  // CHECK:   [[METHOD:%.*]] = class_method [volatile] [[SELF]] : $NSIdLover,
   // CHECK:   [[COPY:%.*]] = alloc_stack $U
   // CHECK:   copy_addr [[GENERIC]] to [initialization] [[COPY]]
   // CHECK:   // function_ref _bridgeAnythingToObjectiveC
   // CHECK:   [[BRIDGE_ANYTHING:%.*]] = function_ref
   // CHECK:   [[ANYOBJECT:%.*]] = apply [[BRIDGE_ANYTHING]]<U>([[COPY]])
+  // CHECK:   dealloc_stack [[COPY]]
+  // CHECK:   [[METHOD:%.*]] = objc_method [[SELF]] : $NSIdLover,
   // CHECK:   apply [[METHOD]]([[ANYOBJECT]], [[SELF]])
   // CHECK:   destroy_value [[ANYOBJECT]]
-  // CHECK:   dealloc_stack [[COPY]]
   receiver.takesId(generic)
 
-  // CHECK:   [[METHOD:%.*]] = class_method [volatile] [[SELF]] : $NSIdLover,
   // CHECK:   [[COPY:%.*]] = alloc_stack $P
   // CHECK:   copy_addr [[EXISTENTIAL]] to [initialization] [[COPY]]
-  // CHECK:   [[OPENED_COPY:%.*]] = open_existential_addr [[COPY]] : $*P to $*[[OPENED_TYPE:@opened.*P]],
+  // CHECK:   [[OPENED_COPY:%.*]] = open_existential_addr immutable_access [[COPY]] : $*P to $*[[OPENED_TYPE:@opened.*P]],
+  // CHECK:   [[TMP:%.*]] = alloc_stack $[[OPENED_TYPE]]
+  // CHECK:   copy_addr [[OPENED_COPY]] to [initialization] [[TMP]]
   // CHECK:   // function_ref _bridgeAnythingToObjectiveC
   // CHECK:   [[BRIDGE_ANYTHING:%.*]] = function_ref
-  // CHECK:   [[ANYOBJECT:%.*]] = apply [[BRIDGE_ANYTHING]]<[[OPENED_TYPE]]>([[OPENED_COPY]])
+  // CHECK:   [[ANYOBJECT:%.*]] = apply [[BRIDGE_ANYTHING]]<[[OPENED_TYPE]]>([[TMP]])
+  // CHECK:   dealloc_stack [[TMP]]
+  // CHECK:   destroy_addr [[COPY]]
+  // CHECK:   dealloc_stack [[COPY]]
+  // CHECK:   [[METHOD:%.*]] = objc_method [[SELF]] : $NSIdLover,
   // CHECK:   apply [[METHOD]]([[ANYOBJECT]], [[SELF]])
   // CHECK:   destroy_value [[ANYOBJECT]]
-  // CHECK:   deinit_existential_addr [[COPY]]
-  // CHECK:   dealloc_stack [[COPY]]
   receiver.takesId(existential)
 
-  // CHECK:   [[METHOD:%.*]] = class_method [volatile] [[SELF]] : $NSIdLover,
   // CHECK:   [[ERROR_COPY:%.*]] = copy_value [[ERROR]] : $Error
   // CHECK:   [[ERROR_BOX:%[0-9]+]] = open_existential_box [[ERROR_COPY]] : $Error to $*@opened([[ERROR_ARCHETYPE:"[^"]*"]]) Error
   // CHECK:   [[ERROR_STACK:%[0-9]+]] = alloc_stack $@opened([[ERROR_ARCHETYPE]]) Error
   // CHECK:   copy_addr [[ERROR_BOX]] to [initialization] [[ERROR_STACK]] : $*@opened([[ERROR_ARCHETYPE]]) Error
-  // CHECK:   [[BRIDGE_FUNCTION:%[0-9]+]] = function_ref @_TFs27_bridgeAnythingToObjectiveCurFxPs9AnyObject_
+  // CHECK:   [[BRIDGE_FUNCTION:%[0-9]+]] = function_ref @$ss27_bridgeAnythingToObjectiveCyyXlxlF
   // CHECK:   [[BRIDGED_ERROR:%[0-9]+]] = apply [[BRIDGE_FUNCTION]]<@opened([[ERROR_ARCHETYPE]]) Error>([[ERROR_STACK]])
-  // CHECK:   apply [[METHOD]]([[BRIDGED_ERROR]], [[SELF]])
-  // CHECK:   destroy_value [[BRIDGED_ERROR]] : $AnyObject
   // CHECK:   dealloc_stack [[ERROR_STACK]] : $*@opened([[ERROR_ARCHETYPE]]) Error
   // CHECK:   destroy_value [[ERROR_COPY]] : $Error
+  // CHECK:   [[METHOD:%.*]] = objc_method [[SELF]] : $NSIdLover,
+  // CHECK:   apply [[METHOD]]([[BRIDGED_ERROR]], [[SELF]])
+  // CHECK:   destroy_value [[BRIDGED_ERROR]] : $AnyObject
   receiver.takesId(error)
 
-  // CHECK:   [[METHOD:%.*]] = class_method [volatile] [[SELF]] : $NSIdLover,
   // CHECK:   [[COPY:%.*]] = alloc_stack $Any
   // CHECK:   copy_addr [[ANY]] to [initialization] [[COPY]]
-  // CHECK:   [[OPENED_COPY:%.*]] = open_existential_addr [[COPY]] : $*Any to $*[[OPENED_TYPE:@opened.*Any]],
+  // CHECK:   [[OPENED_COPY:%.*]] = open_existential_addr immutable_access [[COPY]] : $*Any to $*[[OPENED_TYPE:@opened.*Any]],
+  // CHECK:   [[TMP:%.*]] = alloc_stack $[[OPENED_TYPE]]
+  // CHECK:   copy_addr [[OPENED_COPY]] to [initialization] [[TMP]]
   // CHECK:   // function_ref _bridgeAnythingToObjectiveC
   // CHECK:   [[BRIDGE_ANYTHING:%.*]] = function_ref
-  // CHECK:   [[ANYOBJECT:%.*]] = apply [[BRIDGE_ANYTHING]]<[[OPENED_TYPE]]>([[OPENED_COPY]])
+  // CHECK:   [[ANYOBJECT:%.*]] = apply [[BRIDGE_ANYTHING]]<[[OPENED_TYPE]]>([[TMP]])
+  // CHECK:   destroy_addr [[COPY]]
+  // CHECK:   dealloc_stack [[COPY]]
+  // CHECK:   [[METHOD:%.*]] = objc_method [[SELF]] : $NSIdLover,
   // CHECK:   apply [[METHOD]]([[ANYOBJECT]], [[SELF]])
   // CHECK:   destroy_value [[ANYOBJECT]]
-  // CHECK:   deinit_existential_addr [[COPY]]
-  // CHECK:   dealloc_stack [[COPY]]
   receiver.takesId(any)
 
-  // CHECK:   [[METHOD:%.*]] = class_method [volatile] [[SELF]] : $NSIdLover,
   // CHECK:   [[TMP:%.*]] = alloc_stack $KnownUnbridged
   // CHECK:   store [[KNOWN_UNBRIDGED]] to [trivial] [[TMP]]
-  // CHECK:   [[BRIDGE_ANYTHING:%.*]] = function_ref @_TFs27_bridgeAnythingToObjectiveC
+  // CHECK:   [[BRIDGE_ANYTHING:%.*]] = function_ref @$ss27_bridgeAnythingToObjectiveC{{.*}}F
   // CHECK:   [[ANYOBJECT:%.*]] = apply [[BRIDGE_ANYTHING]]<KnownUnbridged>([[TMP]])
+  // CHECK:   [[METHOD:%.*]] = objc_method [[SELF]] : $NSIdLover,
   // CHECK:   apply [[METHOD]]([[ANYOBJECT]], [[SELF]])
   receiver.takesId(knownUnbridged)
 
   // These cases bridge using Optional's _ObjectiveCBridgeable conformance.
 
-  // CHECK:   [[METHOD:%.*]] = class_method [volatile] [[SELF]] : $NSIdLover,
   // CHECK:   [[OPT_STRING_COPY:%.*]] = copy_value [[OPT_STRING]]
-  // CHECK:   [[BRIDGE_OPTIONAL:%.*]] = function_ref @_TFSq19_bridgeToObjectiveCfT_Ps9AnyObject_
+  // CHECK:   [[BRIDGE_OPTIONAL:%.*]] = function_ref @$sSq19_bridgeToObjectiveCyXlyF
   // CHECK:   [[TMP:%.*]] = alloc_stack $Optional<String>
-  // CHECK:   store [[OPT_STRING_COPY]] to [init] [[TMP]]
+  // CHECK:   [[BORROWED_OPT_STRING_COPY:%.*]] = begin_borrow [[OPT_STRING_COPY]]
+  // CHECK:   store_borrow [[BORROWED_OPT_STRING_COPY]] to [[TMP]]
   // CHECK:   [[ANYOBJECT:%.*]] = apply [[BRIDGE_OPTIONAL]]<String>([[TMP]])
+  // CHECK:   end_borrow [[BORROWED_OPT_STRING_COPY]]
+  // CHECK:   [[METHOD:%.*]] = objc_method [[SELF]] : $NSIdLover,
   // CHECK:   apply [[METHOD]]([[ANYOBJECT]], [[SELF]])
   receiver.takesId(optionalA)
 
-  // CHECK:   [[METHOD:%.*]] = class_method [volatile] [[SELF]] : $NSIdLover,
   // CHECK:   [[OPT_NSSTRING_COPY:%.*]] = copy_value [[OPT_NSSTRING]]
-  // CHECK:   [[BRIDGE_OPTIONAL:%.*]] = function_ref @_TFSq19_bridgeToObjectiveCfT_Ps9AnyObject_
+  // CHECK:   [[BRIDGE_OPTIONAL:%.*]] = function_ref @$sSq19_bridgeToObjectiveCyXlyF
   // CHECK:   [[TMP:%.*]] = alloc_stack $Optional<NSString>
-  // CHECK:   store [[OPT_NSSTRING_COPY]] to [init] [[TMP]]
+  // CHECK:   [[BORROWED_OPT_NSSTRING_COPY:%.*]] = begin_borrow [[OPT_NSSTRING_COPY]]
+  // CHECK:   store_borrow [[BORROWED_OPT_NSSTRING_COPY]] to [[TMP]]
   // CHECK:   [[ANYOBJECT:%.*]] = apply [[BRIDGE_OPTIONAL]]<NSString>([[TMP]])
+  // CHECK:   end_borrow [[BORROWED_OPT_NSSTRING_COPY]]
+  // CHECK:   [[METHOD:%.*]] = objc_method [[SELF]] : $NSIdLover,
   // CHECK:   apply [[METHOD]]([[ANYOBJECT]], [[SELF]])
   receiver.takesId(optionalB)
 
-  // CHECK:   [[METHOD:%.*]] = class_method [volatile] [[SELF]] : $NSIdLover,
   // CHECK:   [[TMP:%.*]] = alloc_stack $Optional<Any>
   // CHECK:   copy_addr [[OPT_ANY]] to [initialization] [[TMP]]
-  // CHECK:   [[BRIDGE_OPTIONAL:%.*]] = function_ref @_TFSq19_bridgeToObjectiveCfT_Ps9AnyObject_
+  // CHECK:   [[BRIDGE_OPTIONAL:%.*]] = function_ref @$sSq19_bridgeToObjectiveCyXlyF
   // CHECK:   [[ANYOBJECT:%.*]] = apply [[BRIDGE_OPTIONAL]]<Any>([[TMP]])
+  // CHECK:   [[METHOD:%.*]] = objc_method [[SELF]] : $NSIdLover,
   // CHECK:   apply [[METHOD]]([[ANYOBJECT]], [[SELF]])
   receiver.takesId(optionalC)
 
   // TODO: Property and subscript setters
 }
 
-// Workaround for rdar://problem/28318984. Skip the peephole for types with
-// nontrivial SIL lowerings because we don't correctly form the substitutions
-// for a generic _bridgeAnythingToObjectiveC call.
+// Once upon a time, as a workaround for rdar://problem/28318984, we had
+// to skip the peephole for types with nontrivial SIL lowerings because we
+// didn't correctly form the substitutions for a generic
+// _bridgeAnythingToObjectiveC call.  That's not true anymore.
 func zim() {}
 struct Zang {}
-// CHECK-LABEL: sil hidden @_TF17objc_bridging_any27typesWithNontrivialLoweringFT8receiverCSo9NSIdLover_T_
+// CHECK-LABEL: sil hidden @$s17objc_bridging_any27typesWithNontrivialLowering8receiverySo9NSIdLoverC_tF
 func typesWithNontrivialLowering(receiver: NSIdLover) {
-  // CHECK: init_existential_addr {{%.*}} : $*Any, $() -> ()
+  // CHECK: apply {{.*}}<() -> ()>
   receiver.takesId(zim)
-  // CHECK: init_existential_addr {{%.*}} : $*Any, $Zang.Type
+  // CHECK: apply {{.*}}<Zang.Type>
   receiver.takesId(Zang.self)
-  // CHECK: init_existential_addr {{%.*}} : $*Any, $(() -> (), Zang.Type)
+  // CHECK: apply {{.*}}<(() -> (), Zang.Type)>
   receiver.takesId((zim, Zang.self))
   // CHECK: apply {{%.*}}<(Int, String)>
   receiver.takesId((0, "one"))
 }
 
-// CHECK-LABEL: sil hidden @_TF17objc_bridging_any19passingToNullableId
+// CHECK-LABEL: sil hidden @$s17objc_bridging_any19passingToNullableId{{.*}}F
 func passingToNullableId<T: CP, U>(receiver: NSIdLover,
                                    string: String,
                                    nsString: NSString,
@@ -210,7 +222,7 @@ func passingToNullableId<T: CP, U>(receiver: NSIdLover,
                                    optOptB: NSString??,
                                    optOptC: Any??)
 {
-  // CHECK: bb0([[SELF:%.*]] : $NSIdLover,
+  // CHECK: bb0([[SELF:%.*]] : @guaranteed $NSIdLover,
   // CHECK: [[STRING:%.*]] : $String,
   // CHECK: [[NSSTRING:%.*]] : $NSString
   // CHECK: [[OBJECT:%.*]] : $AnyObject
@@ -234,125 +246,149 @@ func passingToNullableId<T: CP, U>(receiver: NSIdLover,
   // CHECK: [[OPT_OPT_B:%.*]] : $Optional<Optional<NSString>>
   // CHECK: [[OPT_OPT_C:%.*]] : $*Optional<Optional<Any>>
 
-  // CHECK: [[METHOD:%.*]] = class_method [volatile] [[SELF]]
   // CHECK: [[STRING_COPY:%.*]] = copy_value [[STRING]]
-  // CHECK: [[BRIDGE_STRING:%.*]] = function_ref @_TFE10FoundationSS19_bridgeToObjectiveC
-  // CHECK: [[BRIDGED:%.*]] = apply [[BRIDGE_STRING]]([[STRING_COPY]])
+  // CHECK: [[BRIDGE_STRING:%.*]] = function_ref @$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF
+  // CHECK: [[BORROWED_STRING_COPY:%.*]] = begin_borrow [[STRING_COPY]]
+  // CHECK: [[BRIDGED:%.*]] = apply [[BRIDGE_STRING]]([[BORROWED_STRING_COPY]])
+  // CHECK: end_borrow [[BORROWED_STRING_COPY]]
   // CHECK: [[ANYOBJECT:%.*]] = init_existential_ref [[BRIDGED]] : $NSString : $NSString, $AnyObject
   // CHECK: [[OPT_ANYOBJECT:%.*]] = enum {{.*}} [[ANYOBJECT]]
+  // CHECK: destroy_value [[STRING_COPY]]
+  // CHECK: [[METHOD:%.*]] = objc_method [[SELF]]
   // CHECK: apply [[METHOD]]([[OPT_ANYOBJECT]], [[SELF]])
+  // CHECK: destroy_value [[OPT_ANYOBJECT]]
   receiver.takesNullableId(string)
 
-  // CHECK: [[METHOD:%.*]] = class_method [volatile] [[SELF]] : $NSIdLover,
   // CHECK: [[NSSTRING_COPY:%.*]] = copy_value [[NSSTRING]]
   // CHECK: [[ANYOBJECT:%.*]] = init_existential_ref [[NSSTRING_COPY]] : $NSString : $NSString, $AnyObject
   // CHECK: [[OPT_ANYOBJECT:%.*]] = enum {{.*}} [[ANYOBJECT]]
+  // CHECK: [[METHOD:%.*]] = objc_method [[SELF]] : $NSIdLover,
   // CHECK: apply [[METHOD]]([[OPT_ANYOBJECT]], [[SELF]])
   receiver.takesNullableId(nsString)
 
-  // CHECK: [[METHOD:%.*]] = class_method [volatile] [[SELF]] : $NSIdLover,
   // CHECK: [[OBJECT_COPY:%.*]] = copy_value [[OBJECT]]
   // CHECK: [[OPT_ANYOBJECT:%.*]] = enum {{.*}} [[OBJECT_COPY]]
+  // CHECK: [[METHOD:%.*]] = objc_method [[SELF]] : $NSIdLover,
   // CHECK: apply [[METHOD]]([[OPT_ANYOBJECT]], [[SELF]])
   receiver.takesNullableId(object)
 
-  // CHECK: [[METHOD:%.*]] = class_method [volatile] [[SELF]] : $NSIdLover,
   // CHECK: [[CLASS_GENERIC_COPY:%.*]] = copy_value [[CLASS_GENERIC]]
   // CHECK: [[ANYOBJECT:%.*]] = init_existential_ref [[CLASS_GENERIC_COPY]] : $T : $T, $AnyObject
   // CHECK: [[OPT_ANYOBJECT:%.*]] = enum {{.*}} [[ANYOBJECT]]
+  // CHECK: [[METHOD:%.*]] = objc_method [[SELF]] : $NSIdLover,
   // CHECK: apply [[METHOD]]([[OPT_ANYOBJECT]], [[SELF]])
   receiver.takesNullableId(classGeneric)
 
-  // CHECK: [[METHOD:%.*]] = class_method [volatile] [[SELF]] : $NSIdLover,
   // CHECK: [[CLASS_EXISTENTIAL_COPY:%.*]] = copy_value [[CLASS_EXISTENTIAL]]
   // CHECK: [[OPENED:%.*]] = open_existential_ref [[CLASS_EXISTENTIAL_COPY]] : $CP
   // CHECK: [[ANYOBJECT:%.*]] = init_existential_ref [[OPENED]]
   // CHECK: [[OPT_ANYOBJECT:%.*]] = enum {{.*}} [[ANYOBJECT]]
+  // CHECK: [[METHOD:%.*]] = objc_method [[SELF]] : $NSIdLover,
   // CHECK: apply [[METHOD]]([[OPT_ANYOBJECT]], [[SELF]])
+  // CHECK: destroy_value [[OPT_ANYOBJECT]]
   receiver.takesNullableId(classExistential)
 
-  // CHECK: [[METHOD:%.*]] = class_method [volatile] [[SELF]] : $NSIdLover,
   // CHECK-NEXT: [[COPY:%.*]] = alloc_stack $U
   // CHECK-NEXT: copy_addr [[GENERIC]] to [initialization] [[COPY]]
   // CHECK-NEXT: // function_ref _bridgeAnythingToObjectiveC
   // CHECK-NEXT: [[BRIDGE_ANYTHING:%.*]] = function_ref
   // CHECK-NEXT: [[ANYOBJECT:%.*]] = apply [[BRIDGE_ANYTHING]]<U>([[COPY]])
   // CHECK-NEXT: [[OPT_ANYOBJECT:%.*]] = enum {{.*}} [[ANYOBJECT]]
-  // CHECK-NEXT: apply [[METHOD]]([[OPT_ANYOBJECT]], [[SELF]])
-  // CHECK-NEXT: destroy_value [[ANYOBJECT]]
+  // CHECK-NEXT: destroy_addr [[COPY]]
   // CHECK-NEXT: dealloc_stack [[COPY]]
+  // CHECK: [[METHOD:%.*]] = objc_method [[SELF]] : $NSIdLover,
+  // CHECK-NEXT: apply [[METHOD]]([[OPT_ANYOBJECT]], [[SELF]])
+  // CHECK-NEXT: destroy_value [[OPT_ANYOBJECT]]
   receiver.takesNullableId(generic)
 
-  // CHECK: [[METHOD:%.*]] = class_method [volatile] [[SELF]] : $NSIdLover,
   // CHECK-NEXT: [[COPY:%.*]] = alloc_stack $P
   // CHECK-NEXT: copy_addr [[EXISTENTIAL]] to [initialization] [[COPY]]
-  // CHECK-NEXT: [[OPENED_COPY:%.*]] = open_existential_addr [[COPY]] : $*P to $*[[OPENED_TYPE:@opened.*P]],
+  // CHECK-NEXT: [[OPENED_COPY:%.*]] = open_existential_addr immutable_access [[COPY]] : $*P to $*[[OPENED_TYPE:@opened.*P]],
+  // CHECK: [[TMP:%.*]] = alloc_stack $[[OPENED_TYPE]]
+  // CHECK: copy_addr [[OPENED_COPY]] to [initialization] [[TMP]]
   // CHECK-NEXT: // function_ref _bridgeAnythingToObjectiveC
   // CHECK-NEXT: [[BRIDGE_ANYTHING:%.*]] = function_ref
-  // CHECK-NEXT: [[ANYOBJECT:%.*]] = apply [[BRIDGE_ANYTHING]]<[[OPENED_TYPE]]>([[OPENED_COPY]])
+  // CHECK-NEXT: [[ANYOBJECT:%.*]] = apply [[BRIDGE_ANYTHING]]<[[OPENED_TYPE]]>([[TMP]])
   // CHECK-NEXT: [[OPT_ANYOBJECT:%.*]] = enum {{.*}} [[ANYOBJECT]]
-  // CHECK-NEXT: apply [[METHOD]]([[OPT_ANYOBJECT]], [[SELF]])
-  // CHECK-NEXT: destroy_value [[ANYOBJECT]]
-  // CHECK-NEXT: deinit_existential_addr [[COPY]]
+  // CHECK-NEXT: destroy_addr [[TMP]]
+  // CHECK-NEXT: dealloc_stack [[TMP]]
+  // CHECK-NEXT: destroy_addr [[COPY]]
   // CHECK-NEXT: dealloc_stack [[COPY]]
+  // CHECK: [[METHOD:%.*]] = objc_method [[SELF]] : $NSIdLover,
+  // CHECK-NEXT: apply [[METHOD]]([[OPT_ANYOBJECT]], [[SELF]])
+  // CHECK-NEXT: destroy_value [[OPT_ANYOBJECT]]
   receiver.takesNullableId(existential)
 
-  // CHECK: [[METHOD:%.*]] = class_method [volatile] [[SELF]] : $NSIdLover,
   // CHECK-NEXT: [[ERROR_COPY:%.*]] = copy_value [[ERROR]] : $Error
   // CHECK-NEXT: [[ERROR_BOX:%[0-9]+]] = open_existential_box [[ERROR_COPY]] : $Error to $*@opened([[ERROR_ARCHETYPE:"[^"]*"]]) Error
   // CHECK-NEXT: [[ERROR_STACK:%[0-9]+]] = alloc_stack $@opened([[ERROR_ARCHETYPE]]) Error
   // CHECK-NEXT: copy_addr [[ERROR_BOX]] to [initialization] [[ERROR_STACK]] : $*@opened([[ERROR_ARCHETYPE]]) Error
-  // CHECK: [[BRIDGE_FUNCTION:%[0-9]+]] = function_ref @_TFs27_bridgeAnythingToObjectiveCurFxPs9AnyObject_
+  // CHECK: [[BRIDGE_FUNCTION:%[0-9]+]] = function_ref @$ss27_bridgeAnythingToObjectiveCyyXlxlF
   // CHECK-NEXT: [[BRIDGED_ERROR:%[0-9]+]] = apply [[BRIDGE_FUNCTION]]<@opened([[ERROR_ARCHETYPE]]) Error>([[ERROR_STACK]])
   // CHECK-NEXT: [[BRIDGED_ERROR_OPT:%[0-9]+]] = enum $Optional<AnyObject>, #Optional.some!enumelt.1, [[BRIDGED_ERROR]] : $AnyObject
-  // CHECK-NEXT: apply [[METHOD]]([[BRIDGED_ERROR_OPT]], [[SELF]])
-  // CHECK-NEXT: destroy_value [[BRIDGED_ERROR]] : $AnyObject
+  // CHECK-NEXT: destroy_addr [[ERROR_STACK]]
   // CHECK-NEXT: dealloc_stack [[ERROR_STACK]] : $*@opened([[ERROR_ARCHETYPE]]) Error
   // CHECK-NEXT: destroy_value [[ERROR_COPY]] : $Error
+  // CHECK: [[METHOD:%.*]] = objc_method [[SELF]] : $NSIdLover,
+  // CHECK-NEXT: apply [[METHOD]]([[BRIDGED_ERROR_OPT]], [[SELF]])
+  // CHECK-NEXT: destroy_value [[BRIDGED_ERROR_OPT]]
   receiver.takesNullableId(error)
 
-  // CHECK: [[METHOD:%.*]] = class_method [volatile] [[SELF]] : $NSIdLover,
   // CHECK-NEXT: [[COPY:%.*]] = alloc_stack $Any
   // CHECK-NEXT: copy_addr [[ANY]] to [initialization] [[COPY]]
-  // CHECK-NEXT: [[OPENED_COPY:%.*]] = open_existential_addr [[COPY]] : $*Any to $*[[OPENED_TYPE:@opened.*Any]],
+  // CHECK-NEXT: [[OPENED_COPY:%.*]] = open_existential_addr immutable_access [[COPY]] : $*Any to $*[[OPENED_TYPE:@opened.*Any]],
+  // CHECK: [[TMP:%.*]] = alloc_stack $[[OPENED_TYPE]]
+  // CHECK: copy_addr [[OPENED_COPY]] to [initialization] [[TMP]]
   // CHECK-NEXT: // function_ref _bridgeAnythingToObjectiveC
   // CHECK-NEXT: [[BRIDGE_ANYTHING:%.*]] = function_ref
-  // CHECK-NEXT: [[ANYOBJECT:%.*]] = apply [[BRIDGE_ANYTHING]]<[[OPENED_TYPE]]>([[OPENED_COPY]])
+  // CHECK-NEXT: [[ANYOBJECT:%.*]] = apply [[BRIDGE_ANYTHING]]<[[OPENED_TYPE]]>([[TMP]])
   // CHECK-NEXT: [[OPT_ANYOBJECT:%.*]] = enum {{.*}} [[ANYOBJECT]]
-  // CHECK-NEXT: apply [[METHOD]]([[OPT_ANYOBJECT]], [[SELF]])
-  // CHECK-NEXT: destroy_value [[ANYOBJECT]]
-  // CHECK-NEXT: deinit_existential_addr [[COPY]]
+  // CHECK-NEXT: destroy_addr [[TMP]]
+  // CHECK-NEXT: dealloc_stack [[TMP]]
+  // CHECK-NEXT: destroy_addr [[COPY]]
   // CHECK-NEXT: dealloc_stack [[COPY]]
+  // CHECK: [[METHOD:%.*]] = objc_method [[SELF]] : $NSIdLover,
+  // CHECK-NEXT: apply [[METHOD]]([[OPT_ANYOBJECT]], [[SELF]])
+  // CHECK-NEXT: destroy_value [[OPT_ANYOBJECT]]
   receiver.takesNullableId(any)
 
-  // CHECK: [[METHOD:%.*]] = class_method [volatile] [[SELF]] : $NSIdLover,
   // CHECK: [[TMP:%.*]] = alloc_stack $KnownUnbridged
   // CHECK: store [[KNOWN_UNBRIDGED]] to [trivial] [[TMP]]
-  // CHECK: [[BRIDGE_ANYTHING:%.*]] = function_ref @_TFs27_bridgeAnythingToObjectiveC
+  // CHECK: [[BRIDGE_ANYTHING:%.*]] = function_ref @$ss27_bridgeAnythingToObjectiveC{{.*}}F
   // CHECK: [[ANYOBJECT:%.*]] = apply [[BRIDGE_ANYTHING]]<KnownUnbridged>([[TMP]])
   // CHECK: [[OPT_ANYOBJECT:%.*]] = enum {{.*}} [[ANYOBJECT]]
+  // CHECK: [[METHOD:%.*]] = objc_method [[SELF]] : $NSIdLover,
   // CHECK: apply [[METHOD]]([[OPT_ANYOBJECT]], [[SELF]])
   receiver.takesNullableId(knownUnbridged)
 
-  // CHECK: [[METHOD:%.*]] = class_method [volatile] [[SELF]]
   // CHECK: [[OPT_STRING_COPY:%.*]] = copy_value [[OPT_STRING]]
-  // CHECK: select_enum [[OPT_STRING_COPY]]
-  // CHECK: cond_br
-  // CHECK: [[STRING_DATA:%.*]] = unchecked_enum_data [[OPT_STRING_COPY]]
-  // CHECK: [[BRIDGE_STRING:%.*]] = function_ref @_TFE10FoundationSS19_bridgeToObjectiveC
-  // CHECK: [[BRIDGED:%.*]] = apply [[BRIDGE_STRING]]([[STRING_DATA]])
-  // CHECK: [[ANYOBJECT:%.*]] = init_existential_ref [[BRIDGED]] : $NSString : $NSString, $AnyObject
-  // CHECK: [[OPT_ANYOBJECT:%.*]] = enum {{.*}} [[ANYOBJECT]]
-  // CHECK: br [[JOIN:bb.*]]([[OPT_ANYOBJECT]]
-  // CHECK: [[JOIN]]([[PHI:%.*]] : $Optional<AnyObject>):
-  // CHECK: apply [[METHOD]]([[PHI]], [[SELF]])
+  // CHECK: switch_enum [[OPT_STRING_COPY]] : $Optional<String>, case #Optional.some!enumelt.1: [[SOME_BB:bb[0-9]+]], case #Optional.none!enumelt: [[NONE_BB:bb[0-9]+]]
+  //
+  // CHECK: [[SOME_BB]]([[STRING_DATA:%.*]] : @owned $String):
+  // CHECK:   [[BRIDGE_STRING:%.*]] = function_ref @$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF
+  // CHECK:   [[BORROWED_STRING_DATA:%.*]] = begin_borrow [[STRING_DATA]]
+  // CHECK:   [[BRIDGED:%.*]] = apply [[BRIDGE_STRING]]([[BORROWED_STRING_DATA]])
+  // CHECK:   end_borrow [[BORROWED_STRING_DATA]]
+  // CHECK:   [[ANYOBJECT:%.*]] = init_existential_ref [[BRIDGED]] : $NSString : $NSString, $AnyObject
+  // CHECK:   [[OPT_ANYOBJECT:%.*]] = enum {{.*}} [[ANYOBJECT]]
+  // CHECK:   destroy_value [[STRING_DATA]]
+  // CHECK:   br [[JOIN:bb.*]]([[OPT_ANYOBJECT]]
+  //
+  // CHECK: [[NONE_BB]]:
+  // CHECK:   [[OPT_NONE:%.*]] = enum $Optional<AnyObject>, #Optional.none!enumelt
+  // CHECK:   br [[JOIN]]([[OPT_NONE]]
+  //
+  // CHECK: [[JOIN]]([[PHI:%.*]] : @owned $Optional<AnyObject>):
+  // CHECK: [[METHOD:%.*]] = objc_method [[SELF]]
+  // CHECK:   apply [[METHOD]]([[PHI]], [[SELF]])
+  // CHECK:   destroy_value [[PHI]]
   receiver.takesNullableId(optString)
 
-  // CHECK: [[METHOD:%.*]] = class_method [volatile] [[SELF]]
+  // CHECK: [[METHOD:%.*]] = objc_method [[SELF]]
   receiver.takesNullableId(optNSString)
 
-  // CHECK: [[METHOD:%.*]] = class_method [volatile] [[SELF]]
   // CHECK: [[OPT_OBJECT_COPY:%.*]] = copy_value [[OPT_OBJECT]]
+  // CHECK: [[METHOD:%.*]] = objc_method [[SELF]]
   // CHECK: apply [[METHOD]]([[OPT_OBJECT_COPY]], [[SELF]])
   receiver.takesNullableId(optObject)
   receiver.takesNullableId(optClassGeneric)
@@ -377,206 +413,224 @@ protocol Anyable {
 // Make sure we generate correct bridging thunks
 class SwiftIdLover : NSObject, Anyable {
 
-  func methodReturningAny() -> Any {}
+  @objc func methodReturningAny() -> Any { fatalError() }
   // SEMANTIC ARC TODO: This is another case of pattern matching the body of one
   // function in a different function... Just pattern match the unreachable case
   // to preserve behavior. We should check if it is correct.
 
-  // CHECK-LABEL: sil hidden @_TFC17objc_bridging_any12SwiftIdLover18methodReturningAnyfT_P_ : $@convention(method) (@guaranteed SwiftIdLover) -> @out Any
+  // CHECK-LABEL: sil hidden @$s17objc_bridging_any12SwiftIdLoverC18methodReturningAnyypyF : $@convention(method) (@guaranteed SwiftIdLover) -> @out Any
   // CHECK: unreachable
-  // CHECK: } // end sil function '_TFC17objc_bridging_any12SwiftIdLover18methodReturningAnyfT_P_'
+  // CHECK: } // end sil function '$s17objc_bridging_any12SwiftIdLoverC18methodReturningAnyypyF'
 
-  // CHECK-LABEL: sil hidden [thunk] @_TToFC17objc_bridging_any12SwiftIdLover18methodReturningAnyfT_P_ : $@convention(objc_method) (SwiftIdLover) -> @autoreleased AnyObject {
-  // CHECK: bb0([[SELF:%[0-9]+]] : $SwiftIdLover):
+  // CHECK-LABEL: sil hidden [thunk] @$s17objc_bridging_any12SwiftIdLoverC18methodReturningAnyypyFTo : $@convention(objc_method) (SwiftIdLover) -> @autoreleased AnyObject {
+  // CHECK: bb0([[SELF:%[0-9]+]] : @unowned $SwiftIdLover):
   // CHECK:   [[NATIVE_RESULT:%.*]] = alloc_stack $Any
   // CHECK:   [[SELF_COPY:%.*]] = copy_value [[SELF]] : $SwiftIdLover
-  // CHECK:   [[NATIVE_IMP:%.*]] = function_ref @_TFC17objc_bridging_any12SwiftIdLover18methodReturningAny
-  // CHECK:   apply [[NATIVE_IMP]]([[NATIVE_RESULT]], [[SELF_COPY]])
+  // CHECK:   [[BORROWED_SELF_COPY:%.*]] = begin_borrow [[SELF_COPY]]
+  // CHECK:   [[NATIVE_IMP:%.*]] = function_ref @$s17objc_bridging_any12SwiftIdLoverC18methodReturningAnyypyF
+  // CHECK:   apply [[NATIVE_IMP]]([[NATIVE_RESULT]], [[BORROWED_SELF_COPY]])
+  // CHECK:   end_borrow [[BORROWED_SELF_COPY]]
   // CHECK:   destroy_value [[SELF_COPY]]
-  // CHECK:   [[OPEN_RESULT:%.*]] = open_existential_addr [[NATIVE_RESULT]]
-  // CHECK:   [[BRIDGE_ANYTHING:%.*]] = function_ref @_TFs27_bridgeAnythingToObjectiveC
-  // CHECK:   [[OBJC_RESULT:%.*]] = apply [[BRIDGE_ANYTHING]]<{{.*}}>([[OPEN_RESULT]])
+  // CHECK:   [[OPEN_RESULT:%.*]] = open_existential_addr immutable_access [[NATIVE_RESULT]]
+	// CHECK:   [[TMP:%.*]] = alloc_stack
+  // CHECK:   copy_addr [[OPEN_RESULT]] to [initialization] [[TMP]]
+  // CHECK:   [[BRIDGE_ANYTHING:%.*]] = function_ref @$ss27_bridgeAnythingToObjectiveC{{.*}}F
+  // CHECK:   [[OBJC_RESULT:%.*]] = apply [[BRIDGE_ANYTHING]]<{{.*}}>([[TMP]])
   // CHECK:   return [[OBJC_RESULT]]
-  // CHECK: } // end sil function '_TToFC17objc_bridging_any12SwiftIdLover18methodReturningAnyfT_P_'
+  // CHECK: } // end sil function '$s17objc_bridging_any12SwiftIdLoverC18methodReturningAnyypyFTo'
 
-  func methodReturningOptionalAny() -> Any? {}
-  // CHECK-LABEL: sil hidden @_TFC17objc_bridging_any12SwiftIdLover26methodReturningOptionalAny
-  // CHECK-LABEL: sil hidden [thunk] @_TToFC17objc_bridging_any12SwiftIdLover26methodReturningOptionalAny
-  // CHECK:       function_ref @_TFs27_bridgeAnythingToObjectiveC
+  @objc func methodReturningOptionalAny() -> Any? { fatalError() }
+  // CHECK-LABEL: sil hidden @$s17objc_bridging_any12SwiftIdLoverC26methodReturningOptionalAnyypSgyF
+  // CHECK-LABEL: sil hidden [thunk] @$s17objc_bridging_any12SwiftIdLoverC26methodReturningOptionalAnyypSgyFTo
+  // CHECK:       function_ref @$ss27_bridgeAnythingToObjectiveC{{.*}}F
 
-  func methodTakingAny(a: Any) {}
-  // CHECK-LABEL: sil hidden [thunk] @_TToFC17objc_bridging_any12SwiftIdLover15methodTakingAnyfT1aP__T_ : $@convention(objc_method) (AnyObject, SwiftIdLover) -> ()
-  // CHECK:     bb0([[ARG:%.*]] : $AnyObject, [[SELF:%.*]] : $SwiftIdLover):
-  // CHECK-NEXT:  [[ARG_COPY:%.*]] = copy_value [[ARG]]
-  // CHECK-NEXT:  [[SELF_COPY:%.*]] = copy_value [[SELF]]
-  // CHECK-NEXT:  [[OPTIONAL_ARG_COPY:%.*]] = unchecked_ref_cast [[ARG_COPY]]
-  // CHECK-NEXT:  // function_ref
-  // CHECK-NEXT:  [[BRIDGE_TO_ANY:%.*]] = function_ref [[BRIDGE_TO_ANY_FUNC:@.*]] :
-  // CHECK-NEXT:  [[RESULT:%.*]] = alloc_stack $Any
-  // CHECK-NEXT:  [[RESULT_VAL:%.*]] = apply [[BRIDGE_TO_ANY]]([[RESULT]], [[OPTIONAL_ARG_COPY]])
-  // CHECK-NEXT:  // function_ref
-  // CHECK-NEXT:  [[METHOD:%.*]] = function_ref @_TFC17objc_bridging_any12SwiftIdLover15methodTakingAnyfT1aP__T_
-  // CHECK-NEXT:  apply [[METHOD]]([[RESULT]], [[SELF_COPY]])
-  // CHECK-NEXT:  dealloc_stack [[RESULT]]
-  // CHECK-NEXT:  destroy_value [[SELF_COPY]]
-  // CHECK-NEXT:  return
+  @objc func methodTakingAny(a: Any) { fatalError() }
+  // CHECK-LABEL: sil hidden [thunk] @$s17objc_bridging_any12SwiftIdLoverC15methodTakingAny1ayyp_tFTo : $@convention(objc_method) (AnyObject, SwiftIdLover) -> ()
+  // CHECK:     bb0([[ARG:%.*]] : @unowned $AnyObject, [[SELF:%.*]] : @unowned $SwiftIdLover):
+  // CHECK:   function_ref [[BRIDGE_ANYOBJECT_TO_ANY:@\$ss018_bridgeAnyObjectToB0yypyXlSgF]] : $@convention(thin) (@guaranteed Optional<AnyObject>) -> @out Any
+  // CHECK:  [[METHOD:%.*]] = function_ref @$s17objc_bridging_any12SwiftIdLoverC15methodTakingAny1ayyp_tF
+  // CHECK-NEXT:  apply [[METHOD]]([[RESULT:%.*]], [[BORROWED_SELF_COPY:%.*]]) :
 
-  func methodTakingOptionalAny(a: Any?) {}
-  // CHECK-LABEL: sil hidden @_TFC17objc_bridging_any12SwiftIdLover23methodTakingOptionalAny
+  @objc func methodTakingOptionalAny(a: Any?) { fatalError() }
+  // CHECK-LABEL: sil hidden @$s17objc_bridging_any12SwiftIdLoverC23methodTakingOptionalAny1ayypSg_tF
 
-  // CHECK-LABEL: sil hidden [thunk] @_TToFC17objc_bridging_any12SwiftIdLover23methodTakingOptionalAny
-  // CHECK: function_ref [[BRIDGE_TO_ANY_FUNC]]
+  // CHECK-LABEL: sil hidden [thunk] @$s17objc_bridging_any12SwiftIdLoverC23methodTakingOptionalAny1ayypSg_tFTo
 
-  // CHECK-LABEL: sil hidden @_TFC17objc_bridging_any12SwiftIdLover26methodTakingBlockTakingAnyfFP_T_T_ : $@convention(method) (@owned @callee_owned (@in Any) -> (), @guaranteed SwiftIdLover) -> ()
+  // CHECK-LABEL: sil hidden @$s17objc_bridging_any12SwiftIdLoverC017methodTakingBlockH3AnyyyyypXEF : $@convention(method) (@noescape @callee_guaranteed (@in_guaranteed Any) -> (), @guaranteed SwiftIdLover) -> ()
 
-  // CHECK-LABEL: sil hidden [thunk] @_TToFC17objc_bridging_any12SwiftIdLover26methodTakingBlockTakingAnyfFP_T_T_ : $@convention(objc_method) (@convention(block) (AnyObject) -> (), SwiftIdLover) -> ()
-  // CHECK:    bb0([[BLOCK:%.*]] : $@convention(block) (AnyObject) -> (), [[SELF:%.*]] : $SwiftIdLover):
+  // CHECK-LABEL: sil hidden [thunk] @$s17objc_bridging_any12SwiftIdLoverC017methodTakingBlockH3AnyyyyypXEFTo : $@convention(objc_method) (@convention(block) @noescape (AnyObject) -> (), SwiftIdLover) -> ()
+  // CHECK:    bb0([[BLOCK:%.*]] : @unowned $@convention(block) @noescape (AnyObject) -> (), [[SELF:%.*]] : @unowned $SwiftIdLover):
   // CHECK-NEXT:  [[BLOCK_COPY:%.*]] = copy_block [[BLOCK]]
   // CHECK-NEXT:  [[SELF_COPY:%.*]] = copy_value [[SELF]]
-  // CHECK:       [[THUNK_FN:%.*]] = function_ref @_TTRXFdCb_dPs9AnyObject___XFo_iP___
-  // CHECK-NEXT:  [[THUNK:%.*]] = partial_apply [[THUNK_FN]]([[BLOCK_COPY]])
-  // CHECK:       [[METHOD:%.*]] = function_ref @_TFC17objc_bridging_any12SwiftIdLover26methodTakingBlockTakingAnyfFP_T_T_
-  // CHECK-NEXT:  [[RESULT:%.*]] = apply [[METHOD]]([[THUNK]], [[SELF_COPY]])
+  // CHECK:       [[THUNK_FN:%.*]] = function_ref @$syXlIyBy_ypIegn_TR
+  // CHECK-NEXT:  [[THUNK:%.*]] = partial_apply [callee_guaranteed] [[THUNK_FN]]([[BLOCK_COPY]])
+  // CHECK-NEXT:  [[THUNK_CVT:%.*]] = convert_escape_to_noescape [not_guaranteed] [[THUNK]]
+  // CHECK:       [[BORROWED_SELF_COPY:%.*]] = begin_borrow [[SELF_COPY]]
+  // CHECK-NEXT:  // function_ref
+  // CHECK-NEXT:  [[METHOD:%.*]] = function_ref @$s17objc_bridging_any12SwiftIdLoverC017methodTakingBlockH3AnyyyyypXEF
+  // CHECK-NEXT:  [[RESULT:%.*]] = apply [[METHOD]]([[THUNK_CVT]], [[BORROWED_SELF_COPY]])
+  // CHECK-NEXT:  end_borrow [[BORROWED_SELF_COPY]]
+  // CHECK-NEXT:  destroy_value [[THUNK]]
   // CHECK-NEXT:  destroy_value [[SELF_COPY]]
   // CHECK-NEXT:  return [[RESULT]]
 
-  // CHECK-LABEL: sil shared [transparent] [reabstraction_thunk] @_TTRXFdCb_dPs9AnyObject___XFo_iP___
-  // CHECK:     bb0([[ANY:%.*]] : $*Any, [[BLOCK:%.*]] : $@convention(block) (AnyObject) -> ()):
-  // CHECK-NEXT:  [[OPENED_ANY:%.*]] = open_existential_addr [[ANY]] : $*Any to $*[[OPENED_TYPE:@opened.*Any]],
+  // CHECK-LABEL: sil shared [transparent] [serializable] [reabstraction_thunk] @$syXlIyBy_ypIegn_TR
+  // CHECK:     bb0([[ANY:%.*]] : @trivial $*Any, [[BLOCK:%.*]] : @guaranteed $@convention(block) @noescape (AnyObject) -> ()):
+  // CHECK-NEXT:  [[OPENED_ANY:%.*]] = open_existential_addr immutable_access [[ANY]] : $*Any to $*[[OPENED_TYPE:@opened.*Any]],
+	// CHECK:   [[TMP:%.*]] = alloc_stack
+  // CHECK:   copy_addr [[OPENED_ANY]] to [initialization] [[TMP]]
   // CHECK-NEXT:  // function_ref _bridgeAnythingToObjectiveC
   // CHECK-NEXT:  [[BRIDGE_ANYTHING:%.*]] = function_ref
-  // CHECK-NEXT:  [[BRIDGED:%.*]] = apply [[BRIDGE_ANYTHING]]<[[OPENED_TYPE]]>([[OPENED_ANY]])
+  // CHECK-NEXT:  [[BRIDGED:%.*]] = apply [[BRIDGE_ANYTHING]]<[[OPENED_TYPE]]>([[TMP]])
   // CHECK-NEXT:  apply [[BLOCK]]([[BRIDGED]])
   // CHECK-NEXT:  [[VOID:%.*]] = tuple ()
-  // CHECK-NEXT:  destroy_value [[BLOCK]]
   // CHECK-NEXT:  destroy_value [[BRIDGED]]
-  // CHECK-NEXT:  deinit_existential_addr [[ANY]]
+  // CHECK-NEXT:  destroy_addr [[TMP]]
+  // CHECK-NEXT:  dealloc_stack [[TMP]]
   // CHECK-NEXT:  return [[VOID]]
 
-  func methodTakingBlockTakingAny(_: (Any) -> ()) {}
+  @objc func methodTakingBlockTakingAny(_: (Any) -> ()) { fatalError() }
 
-  // CHECK-LABEL: sil hidden @_TFC17objc_bridging_any12SwiftIdLover29methodReturningBlockTakingAnyfT_FP_T_ : $@convention(method) (@guaranteed SwiftIdLover) -> @owned @callee_owned (@in Any) -> ()
+  // CHECK-LABEL: sil hidden @$s17objc_bridging_any12SwiftIdLoverC29methodReturningBlockTakingAnyyypcyF : $@convention(method) (@guaranteed SwiftIdLover) -> @owned @callee_guaranteed (@in_guaranteed Any) -> ()
 
-  // CHECK-LABEL: sil hidden [thunk] @_TToFC17objc_bridging_any12SwiftIdLover29methodReturningBlockTakingAnyfT_FP_T_ : $@convention(objc_method) (SwiftIdLover) -> @autoreleased @convention(block) (AnyObject) -> ()
-  // CHECK:     bb0([[SELF:%.*]] : $SwiftIdLover):
+  // CHECK-LABEL: sil hidden [thunk] @$s17objc_bridging_any12SwiftIdLoverC29methodReturningBlockTakingAnyyypcyFTo : $@convention(objc_method) (SwiftIdLover) -> @autoreleased @convention(block) (AnyObject) -> ()
+  // CHECK:     bb0([[SELF:%.*]] : @unowned $SwiftIdLover):
   // CHECK-NEXT:  [[SELF_COPY:%.*]] = copy_value [[SELF]]
-  // CHECK:       [[METHOD:%.*]] = function_ref @_TFC17objc_bridging_any12SwiftIdLover29methodReturningBlockTakingAnyfT_FP_T_
-  // CHECK-NEXT:  [[RESULT:%.*]] = apply [[METHOD:%.*]]([[SELF_COPY]])
+  // CHECK-NEXT:  [[BORROWED_SELF_COPY:%.*]] = begin_borrow [[SELF_COPY]]
+  // CHECK-NEXT:  // function_ref
+  // CHECK-NEXT:  [[METHOD:%.*]] = function_ref @$s17objc_bridging_any12SwiftIdLoverC29methodReturningBlockTakingAnyyypcyF
+  // CHECK-NEXT:  [[RESULT:%.*]] = apply [[METHOD:%.*]]([[BORROWED_SELF_COPY]])
+  // CHECK-NEXT:  end_borrow [[BORROWED_SELF_COPY]]
   // CHECK-NEXT:  destroy_value [[SELF_COPY]]
-  // CHECK-NEXT:  [[BLOCK_STORAGE:%.*]] = alloc_stack $@block_storage @callee_owned (@in Any) -> ()
+  // CHECK-NEXT:  [[BLOCK_STORAGE:%.*]] = alloc_stack $@block_storage @callee_guaranteed (@in_guaranteed Any) -> ()
   // CHECK-NEXT:  [[BLOCK_STORAGE_ADDR:%.*]] = project_block_storage [[BLOCK_STORAGE]]
   // CHECK-NEXT:  store [[RESULT:%.*]] to [init] [[BLOCK_STORAGE_ADDR]]
-  // CHECK:       [[THUNK_FN:%.*]] = function_ref @_TTRXFo_iP___XFdCb_dPs9AnyObject___
-  // CHECK-NEXT:  [[BLOCK_HEADER:%.*]] = init_block_storage_header [[BLOCK_STORAGE]] : $*@block_storage @callee_owned (@in Any) -> (), invoke [[THUNK_FN]]
+  // CHECK:       [[THUNK_FN:%.*]] = function_ref @$sypIegn_yXlIeyBy_TR
+  // CHECK-NEXT:  [[BLOCK_HEADER:%.*]] = init_block_storage_header [[BLOCK_STORAGE]] : $*@block_storage @callee_guaranteed (@in_guaranteed Any) -> (), invoke [[THUNK_FN]]
   // CHECK-NEXT:  [[BLOCK:%.*]] = copy_block [[BLOCK_HEADER]]
+  // CHECK-NEXT:  destroy_addr [[BLOCK_STORAGE_ADDR]]
   // CHECK-NEXT:  dealloc_stack [[BLOCK_STORAGE]]
-  // CHECK-NEXT:  destroy_value [[RESULT]]
   // CHECK-NEXT:  return [[BLOCK]]
 
-  // CHECK-LABEL: sil shared [transparent] [reabstraction_thunk] @_TTRXFo_iP___XFdCb_dPs9AnyObject___ : $@convention(c) (@inout_aliasable @block_storage @callee_owned (@in Any) -> (), AnyObject) -> ()
-  // CHECK:     bb0([[BLOCK_STORAGE:%.*]] : $*@block_storage @callee_owned (@in Any) -> (), [[ANY:%.*]] : $AnyObject):
+  // CHECK-LABEL: sil shared [transparent] [serializable] [reabstraction_thunk] @$sypIegn_yXlIeyBy_TR : $@convention(c) (@inout_aliasable @block_storage @callee_guaranteed (@in_guaranteed Any) -> (), AnyObject) -> ()
+  // CHECK:     bb0([[BLOCK_STORAGE:%.*]] : @trivial $*@block_storage @callee_guaranteed (@in_guaranteed Any) -> (), [[ANY:%.*]] : @unowned $AnyObject):
   // CHECK-NEXT:  [[BLOCK_STORAGE_ADDR:%.*]] = project_block_storage [[BLOCK_STORAGE]]
   // CHECK-NEXT:  [[FUNCTION:%.*]] = load [copy] [[BLOCK_STORAGE_ADDR]]
   // CHECK-NEXT:  [[ANY_COPY:%.*]] = copy_value [[ANY]]
-  // CHECK-NEXT:  [[OPTIONAL:%.*]] = unchecked_ref_cast [[ANY_COPY]]
-  // CHECK-NEXT:  // function_ref
-  // CHECK-NEXT:  [[BRIDGE_TO_ANY:%.*]] = function_ref [[BRIDGE_TO_ANY_FUNC:@.*]] :
+  // CHECK-NEXT:  [[OPENED_ANY:%.*]] = open_existential_ref [[ANY_COPY]]
   // CHECK-NEXT:  [[RESULT:%.*]] = alloc_stack $Any
-  // CHECK-NEXT:  [[RESULT_VAL:%.*]] = apply [[BRIDGE_TO_ANY]]([[RESULT]], [[OPTIONAL]])
-  // CHECK-NEXT:  apply [[FUNCTION]]([[RESULT]])
+  // CHECK-NEXT:  [[INIT:%.*]] = init_existential_addr [[RESULT]] : $*Any
+  // CHECK-NEXT:  store [[OPENED_ANY]] to [init] [[INIT]]
+  // CHECK-NEXT:  [[BORROW_FUN:%.*]] =  begin_borrow [[FUNCTION]]
+  // CHECK-NEXT:  apply [[BORROW_FUN]]([[RESULT]])
+  // CHECK-NEXT:  end_borrow [[BORROW_FUN]]
   // CHECK-NEXT:  [[VOID:%.*]] = tuple ()
+  // CHECK-NEXT:  destroy_addr [[RESULT]]
   // CHECK-NEXT:  dealloc_stack [[RESULT]]
+  // CHECK-NEXT:  destroy_value [[FUNCTION]]
   // CHECK-NEXT:  return [[VOID]] : $()
 
-  func methodTakingBlockTakingOptionalAny(_: (Any?) -> ()) {}
+  @objc func methodTakingBlockTakingOptionalAny(_: (Any?) -> ()) { fatalError() }
 
-  func methodReturningBlockTakingAny() -> ((Any) -> ()) {}
+  @objc func methodReturningBlockTakingAny() -> ((Any) -> ()) { fatalError() }
 
-  // CHECK-LABEL: sil hidden @_TFC17objc_bridging_any12SwiftIdLover29methodTakingBlockReturningAnyfFT_P_T_ : $@convention(method) (@owned @callee_owned () -> @out Any, @guaranteed SwiftIdLover) -> () {
+  // CHECK-LABEL: sil hidden @$s17objc_bridging_any12SwiftIdLoverC29methodTakingBlockReturningAnyyyypyXEF : $@convention(method) (@noescape @callee_guaranteed () -> @out Any, @guaranteed SwiftIdLover) -> () {
 
-  // CHECK-LABEL: sil hidden [thunk] @_TToFC17objc_bridging_any12SwiftIdLover29methodTakingBlockReturningAnyfFT_P_T_ : $@convention(objc_method) (@convention(block) () -> @autoreleased AnyObject, SwiftIdLover) -> ()
-  // CHECK:     bb0([[BLOCK:%.*]] : $@convention(block) () -> @autoreleased AnyObject, [[ANY:%.*]] : $SwiftIdLover):
+  // CHECK-LABEL: sil hidden [thunk] @$s17objc_bridging_any12SwiftIdLoverC29methodTakingBlockReturningAnyyyypyXEFTo : $@convention(objc_method) (@convention(block) @noescape () -> @autoreleased AnyObject, SwiftIdLover) -> ()
+  // CHECK:     bb0([[BLOCK:%.*]] : @unowned $@convention(block) @noescape () -> @autoreleased AnyObject, [[ANY:%.*]] : @unowned $SwiftIdLover):
   // CHECK-NEXT:  [[BLOCK_COPY:%.*]] = copy_block [[BLOCK]]
   // CHECK-NEXT:  [[ANY_COPY:%.*]] = copy_value [[ANY]]
-  // CHECK:       [[THUNK_FN:%.*]] = function_ref @_TTRXFdCb__aPs9AnyObject__XFo__iP__
-  // CHECK-NEXT:  [[THUNK:%.*]] = partial_apply [[THUNK_FN]]([[BLOCK_COPY]])
-  // CHECK:       [[METHOD:%.*]] = function_ref @_TFC17objc_bridging_any12SwiftIdLover29methodTakingBlockReturningAnyfFT_P_T_
-  // CHECK-NEXT:  [[RESULT:%.*]] = apply [[METHOD]]([[THUNK]], [[ANY_COPY]])
+  // CHECK-NEXT:  // function_ref
+  // CHECK-NEXT:  [[THUNK_FN:%.*]] = function_ref @$syXlIyBa_ypIegr_TR
+  // CHECK-NEXT:  [[THUNK:%.*]] = partial_apply [callee_guaranteed] [[THUNK_FN]]([[BLOCK_COPY]])
+  // CHECK-NEXT:  [[THUNK_CVT:%.*]] = convert_escape_to_noescape [not_guaranteed] [[THUNK]]
+  // CHECK-NEXT:  [[BORROWED_ANY_COPY:%.*]] = begin_borrow [[ANY_COPY]]
+  // CHECK-NEXT:  // function_ref
+  // CHECK-NEXT:  [[METHOD:%.*]] = function_ref @$s17objc_bridging_any12SwiftIdLoverC29methodTakingBlockReturningAnyyyypyXEF
+  // CHECK-NEXT:  [[RESULT:%.*]] = apply [[METHOD]]([[THUNK_CVT]], [[BORROWED_ANY_COPY]])
+  // CHECK-NEXT:  end_borrow [[BORROWED_ANY_COPY]]
+  // CHECK-NEXT:  destroy_value [[THUNK]]
   // CHECK-NEXT:  destroy_value [[ANY_COPY]]
   // CHECK-NEXT:  return [[RESULT]]
 
-  // CHECK-LABEL: sil shared [transparent] [reabstraction_thunk] @_TTRXFdCb__aPs9AnyObject__XFo__iP__ : $@convention(thin) (@owned @convention(block) () -> @autoreleased AnyObject) -> @out Any
-  // CHECK:     bb0([[ANY_ADDR:%.*]] : $*Any, [[BLOCK:%.*]] : $@convention(block) () -> @autoreleased AnyObject):
+  // CHECK-LABEL: sil shared [transparent] [serializable] [reabstraction_thunk] @$syXlIyBa_ypIegr_TR : $@convention(thin) (@guaranteed @convention(block) @noescape () -> @autoreleased AnyObject) -> @out Any
+  // CHECK:     bb0([[ANY_ADDR:%.*]] : @trivial $*Any, [[BLOCK:%.*]] : @guaranteed $@convention(block) @noescape () -> @autoreleased AnyObject):
   // CHECK-NEXT:  [[BRIDGED:%.*]] = apply [[BLOCK]]()
   // CHECK-NEXT:  [[OPTIONAL:%.*]] = unchecked_ref_cast [[BRIDGED]]
   // CHECK-NEXT:  // function_ref
   // CHECK-NEXT:  [[BRIDGE_TO_ANY:%.*]] = function_ref [[BRIDGE_TO_ANY_FUNC:@.*]] :
-  // CHECK-NEXT:  [[RESULT:%.*]] = alloc_stack $Any
-  // CHECK-NEXT:  [[RESULT_VAL:%.*]] = apply [[BRIDGE_TO_ANY]]([[RESULT]], [[OPTIONAL]])
-
-  // TODO: Should elide the copy
-  // CHECK-NEXT:  copy_addr [take] [[RESULT]] to [initialization] [[ANY_ADDR]]
+  // CHECK-NEXT:  [[RESULT_VAL:%.*]] = apply [[BRIDGE_TO_ANY]]([[ANY_ADDR]], [[OPTIONAL]])
   // CHECK-NEXT:  [[EMPTY:%.*]] = tuple ()
-  // CHECK-NEXT:  dealloc_stack [[RESULT]]
-  // CHECK-NEXT:  destroy_value [[BLOCK]]
+  // CHECK-NEXT:  destroy_value [[OPTIONAL]]
   // CHECK-NEXT:  return [[EMPTY]]
 
-  func methodReturningBlockTakingOptionalAny() -> ((Any?) -> ()) {}
+  @objc func methodReturningBlockTakingOptionalAny() -> ((Any?) -> ()) { fatalError() }
 
-  func methodTakingBlockReturningAny(_: () -> Any) {}
+  @objc func methodTakingBlockReturningAny(_: () -> Any) { fatalError() }
 
-  // CHECK-LABEL: sil hidden @_TFC17objc_bridging_any12SwiftIdLover32methodReturningBlockReturningAnyfT_FT_P_ : $@convention(method) (@guaranteed SwiftIdLover) -> @owned @callee_owned () -> @out Any
+  // CHECK-LABEL: sil hidden @$s17objc_bridging_any12SwiftIdLoverC020methodReturningBlockH3AnyypycyF : $@convention(method) (@guaranteed SwiftIdLover) -> @owned @callee_guaranteed () -> @out Any
 
-  // CHECK-LABEL: sil hidden [thunk] @_TToFC17objc_bridging_any12SwiftIdLover32methodReturningBlockReturningAnyfT_FT_P_ : $@convention(objc_method) (SwiftIdLover) -> @autoreleased @convention(block) () -> @autoreleased AnyObject
-  // CHECK:     bb0([[SELF:%.*]] : $SwiftIdLover):
+  // CHECK-LABEL: sil hidden [thunk] @$s17objc_bridging_any12SwiftIdLoverC020methodReturningBlockH3AnyypycyFTo : $@convention(objc_method) (SwiftIdLover) -> @autoreleased @convention(block) () -> @autoreleased AnyObject
+  // CHECK:     bb0([[SELF:%.*]] : @unowned $SwiftIdLover):
   // CHECK-NEXT:  [[SELF_COPY:%.*]] = copy_value [[SELF]]
-  // CHECK:       [[METHOD:%.*]] = function_ref @_TFC17objc_bridging_any12SwiftIdLover32methodReturningBlockReturningAnyfT_FT_P_
-  // CHECK-NEXT:  [[FUNCTION:%.*]] = apply [[METHOD]]([[SELF_COPY]])
+  // CHECK-NEXT:  [[BORROWED_SELF_COPY:%.*]] = begin_borrow [[SELF_COPY]]
+  // CHECK-NEXT:  // function_ref
+  // CHECK-NEXT:  [[METHOD:%.*]] = function_ref @$s17objc_bridging_any12SwiftIdLoverC020methodReturningBlockH3AnyypycyF
+  // CHECK-NEXT:  [[FUNCTION:%.*]] = apply [[METHOD]]([[BORROWED_SELF_COPY]])
+  // CHECK-NEXT:  end_borrow [[BORROWED_SELF_COPY]]
   // CHECK-NEXT:  destroy_value [[SELF_COPY]]
-  // CHECK-NEXT:  [[BLOCK_STORAGE:%.*]] = alloc_stack $@block_storage @callee_owned () -> @out Any
+  // CHECK-NEXT:  [[BLOCK_STORAGE:%.*]] = alloc_stack $@block_storage @callee_guaranteed () -> @out Any
   // CHECK-NEXT:  [[BLOCK_STORAGE_ADDR:%.*]] = project_block_storage [[BLOCK_STORAGE]]
   // CHECK-NEXT:  store [[FUNCTION]] to [init] [[BLOCK_STORAGE_ADDR]]
-  // CHECK:       [[THUNK_FN:%.*]] = function_ref @_TTRXFo__iP__XFdCb__aPs9AnyObject__
-  // CHECK-NEXT:  [[BLOCK_HEADER:%.*]] = init_block_storage_header [[BLOCK_STORAGE]] : $*@block_storage @callee_owned () -> @out Any, invoke [[THUNK_FN]]
+  // CHECK-NEXT:  // function_ref
+  // CHECK-NEXT:  [[THUNK_FN:%.*]] = function_ref @$sypIegr_yXlIeyBa_TR
+  // CHECK-NEXT:  [[BLOCK_HEADER:%.*]] = init_block_storage_header [[BLOCK_STORAGE]] : $*@block_storage @callee_guaranteed () -> @out Any, invoke [[THUNK_FN]]
   // CHECK-NEXT:  [[BLOCK:%.*]] = copy_block [[BLOCK_HEADER]]
+  // CHECK-NEXT:  destroy_addr [[BLOCK_STORAGE_ADDR]]
   // CHECK-NEXT:  dealloc_stack [[BLOCK_STORAGE]]
-  // CHECK-NEXT:  destroy_value [[FUNCTION]]
   // CHECK-NEXT:  return [[BLOCK]]
 
-  // CHECK-LABEL: sil shared [transparent] [reabstraction_thunk] @_TTRXFo__iP__XFdCb__aPs9AnyObject__ : $@convention(c) (@inout_aliasable @block_storage @callee_owned () -> @out Any) -> @autoreleased AnyObject
-  // CHECK:     bb0(%0 : $*@block_storage @callee_owned () -> @out Any):
+  // CHECK-LABEL: sil shared [transparent] [serializable] [reabstraction_thunk] @$sypIegr_yXlIeyBa_TR : $@convention(c) (@inout_aliasable @block_storage @callee_guaranteed () -> @out Any) -> @autoreleased AnyObject
+  // CHECK:     bb0(%0 : @trivial $*@block_storage @callee_guaranteed () -> @out Any):
   // CHECK-NEXT:  [[BLOCK_STORAGE_ADDR:%.*]] = project_block_storage %0
   // CHECK-NEXT:  [[FUNCTION:%.*]] = load [copy] [[BLOCK_STORAGE_ADDR]]
   // CHECK-NEXT:  [[RESULT:%.*]] = alloc_stack $Any
-  // CHECK-NEXT:  apply [[FUNCTION]]([[RESULT]])
-  // CHECK-NEXT:  [[OPENED:%.*]] = open_existential_addr [[RESULT]] : $*Any to $*[[OPENED_TYPE:@opened.*Any]],
+  // CHECK-NEXT:  [[BORROW_FUN:%.*]] = begin_borrow [[FUNCTION]]
+  // CHECK-NEXT:  apply [[BORROW_FUN]]([[RESULT]])
+  // CHECK-NEXT:  end_borrow [[BORROW_FUN]]
+  // CHECK-NEXT:  [[OPENED:%.*]] = open_existential_addr immutable_access [[RESULT]] : $*Any to $*[[OPENED_TYPE:@opened.*Any]],
+  // CHECK:       [[TMP:%.*]] = alloc_stack $[[OPENED_TYPE]]
+  // CHECK:       copy_addr [[OPENED]] to [initialization] [[TMP]]
   // CHECK-NEXT:  // function_ref _bridgeAnythingToObjectiveC
   // CHECK-NEXT:  [[BRIDGE_ANYTHING:%.*]] = function_ref
-  // CHECK-NEXT:  [[BRIDGED:%.*]] = apply [[BRIDGE_ANYTHING]]<[[OPENED_TYPE]]>([[OPENED]])
-  // CHECK-NEXT:  deinit_existential_addr [[RESULT]]
+  // CHECK-NEXT:  [[BRIDGED:%.*]] = apply [[BRIDGE_ANYTHING]]<[[OPENED_TYPE]]>([[TMP]])
+  // CHECK-NEXT:  destroy_addr [[TMP]]
+  // CHECK-NEXT:  dealloc_stack [[TMP]]
+  // CHECK-NEXT:  destroy_addr [[RESULT]]
   // CHECK-NEXT:  dealloc_stack [[RESULT]]
+  // CHECK-NEXT:  destroy_value [[FUNCTION]]
   // CHECK-NEXT:  return [[BRIDGED]]
 
-  func methodTakingBlockReturningOptionalAny(_: () -> Any?) {}
+  @objc func methodTakingBlockReturningOptionalAny(_: () -> Any?) { fatalError() }
 
-  func methodReturningBlockReturningAny() -> (() -> Any) {}
+  @objc func methodReturningBlockReturningAny() -> (() -> Any) { fatalError() }
 
-  func methodReturningBlockReturningOptionalAny() -> (() -> Any?) {}
-  // CHECK-LABEL: sil shared [transparent] [reabstraction_thunk] @_TTRXFo__iGSqP___XFdCb__aGSqPs9AnyObject___
-  // CHECK: function_ref @_TFs27_bridgeAnythingToObjectiveC
+  @objc func methodReturningBlockReturningOptionalAny() -> (() -> Any?) { fatalError() }
+  // CHECK-LABEL: sil shared [transparent] [serializable] [reabstraction_thunk] @$sypSgIegr_yXlSgIeyBa_TR
+  // CHECK: function_ref @$ss27_bridgeAnythingToObjectiveC{{.*}}F
 
-  override init() { super.init() }
-  dynamic required convenience init(any: Any) { self.init() }
-  dynamic required convenience init(anyMaybe: Any?) { self.init() }
-  dynamic var anyProperty: Any
-  dynamic var maybeAnyProperty: Any?
+  override init() { fatalError() }
+  @objc dynamic required convenience init(any: Any) { fatalError() }
+  @objc dynamic required convenience init(anyMaybe: Any?) { fatalError() }
+  @objc dynamic var anyProperty: Any
+  @objc dynamic var maybeAnyProperty: Any?
 
-  subscript(_: IndexForAnySubscript) -> Any { get {} set {} }
+  subscript(_: IndexForAnySubscript) -> Any { get { fatalError() } set { fatalError() } }
 
-  func methodReturningAnyOrError() throws -> Any {}
+  @objc func methodReturningAnyOrError() throws -> Any { fatalError() }
 }
 
-class IndexForAnySubscript {}
+class IndexForAnySubscript { }
 
 func dynamicLookup(x: AnyObject) {
   _ = x.anyProperty
@@ -584,31 +638,63 @@ func dynamicLookup(x: AnyObject) {
 }
 
 extension GenericClass {
-  // CHECK-LABEL: sil hidden @_TFE17objc_bridging_anyCSo12GenericClass23pseudogenericAnyErasurefT1xx_P_ :
-  func pseudogenericAnyErasure(x: T) -> Any {
-    // CHECK: bb0([[ANY_OUT:%.*]] : $*Any, [[ARG:%.*]] : $T, [[SELF:%.*]] : $GenericClass<T>
-    // CHECK:   [[ANY_BUF:%.*]] = init_existential_addr [[ANY_OUT]] : $*Any, $AnyObject
+  // CHECK-LABEL: sil hidden @$sSo12GenericClassC17objc_bridging_anyE23pseudogenericAnyErasure1xypx_tF :
+  @objc func pseudogenericAnyErasure(x: T) -> Any {
+    // CHECK: bb0([[ANY_OUT:%.*]] : @trivial $*Any, [[ARG:%.*]] : @guaranteed $T, [[SELF:%.*]] : @guaranteed $GenericClass<T>
     // CHECK:   [[ARG_COPY:%.*]] = copy_value [[ARG]]
     // CHECK:   [[ANYOBJECT:%.*]] = init_existential_ref [[ARG_COPY]] : $T : $T, $AnyObject
+    // CHECK:   [[ANY_BUF:%.*]] = init_existential_addr [[ANY_OUT]] : $*Any, $AnyObject
     // CHECK:   store [[ANYOBJECT]] to [init] [[ANY_BUF]]
-    // CHECK:   destroy_value [[ARG]]
     return x
   }
-  // CHECK: } // end sil function '_TFE17objc_bridging_anyCSo12GenericClass23pseudogenericAnyErasurefT1xx_P_'
+  // CHECK: } // end sil function '$sSo12GenericClassC17objc_bridging_anyE23pseudogenericAnyErasure1xypx_tF'
 }
 
 // Make sure AnyHashable erasure marks Hashable conformance as used
 class AnyHashableClass : NSObject {
-  // CHECK-LABEL: sil hidden @_TFC17objc_bridging_any16AnyHashableClass18returnsAnyHashablefT_Vs11AnyHashable
-  // CHECK: [[FN:%.*]] = function_ref @_swift_convertToAnyHashable
+  // CHECK-LABEL: sil hidden @$s17objc_bridging_any16AnyHashableClassC07returnsdE0s0dE0VyF
+  // CHECK: [[FN:%.*]] = function_ref @$ss21_convertToAnyHashableys0cD0VxSHRzlF
   // CHECK: apply [[FN]]<GenericOption>({{.*}})
   func returnsAnyHashable() -> AnyHashable {
     return GenericOption.multithreaded
   }
 }
 
-// CHECK-LABEL: sil_witness_table shared [fragile] GenericOption: Hashable module objc_generics {
-// CHECK-NEXT: base_protocol _Hashable: GenericOption: _Hashable module objc_generics
+// CHECK-LABEL: sil hidden @$s17objc_bridging_any33bridgeOptionalFunctionToAnyObject2fnyXlyycSg_tF : $@convention(thin) (@guaranteed Optional<@callee_guaranteed () -> ()>) -> @owned AnyObject
+// CHECK: [[BRIDGE:%.*]] = function_ref @$sSq19_bridgeToObjectiveCyXlyF
+// CHECK: [[FN:%.*]] = function_ref @$sIeg_ytIegr_TR
+// CHECK: partial_apply [callee_guaranteed] [[FN]]
+// CHECK: [[SELF:%.*]] = alloc_stack $Optional<@callee_guaranteed () -> @out ()>
+// CHECK: apply [[BRIDGE]]<() -> ()>([[SELF]])
+func bridgeOptionalFunctionToAnyObject(fn: (() -> ())?) -> AnyObject {
+  return fn as AnyObject
+}
+
+// When bridging `id _Nonnull` values incoming from unknown ObjC code,
+// turn them into `Any` using a runtime call that defends against the
+// possibility they still may be nil.
+
+// CHECK-LABEL: sil hidden @$s17objc_bridging_any22bridgeIncomingAnyValueyypSo9NSIdLoverCF
+func bridgeIncomingAnyValue(_ receiver: NSIdLover) -> Any {
+  // CHECK: function_ref [[BRIDGE_ANYOBJECT_TO_ANY]]
+  return receiver.makesId()
+}
+
+class SwiftAnyEnjoyer: NSIdLover, NSIdLoving {
+  // CHECK-LABEL: sil hidden [thunk] @$s17objc_bridging_any15SwiftAnyEnjoyerC7takesIdyyypFTo
+  // CHECK: function_ref [[BRIDGE_ANYOBJECT_TO_ANY]]
+  override func takesId(_ x: Any) { }
+
+  // CHECK-LABEL: sil hidden [thunk] @$s17objc_bridging_any15SwiftAnyEnjoyerC7takesId11viaProtocolyyp_tFTo 
+  // CHECK: function_ref [[BRIDGE_ANYOBJECT_TO_ANY]]
+  func takesId(viaProtocol x: Any) { }
+}
+
+
+
+// CHECK-LABEL: sil_witness_table shared [serialized] GenericOption: Hashable module objc_generics {
 // CHECK-NEXT: base_protocol Equatable: GenericOption: Equatable module objc_generics
-// CHECK-NEXT: method #Hashable.hashValue!getter.1: @_TTWVSC13GenericOptions8Hashable13objc_genericsFS0_g9hashValueSi
+// CHECK-NEXT: method #Hashable.hashValue!getter.1: {{.*}} : @$sSo13GenericOptionaSHSCSH9hashValueSivgTW
+// CHECK-NEXT: method #Hashable.hash!1: {{.*}} : @$sSo13GenericOptionaSHSCSH4hash4intoys6HasherVz_tFTW
+// CHECK-NEXT: method #Hashable._rawHashValue!1: {{.*}} : @$sSo13GenericOptionaSHSCSH13_rawHashValue4seedS2i_tFTW
 // CHECK-NEXT: }

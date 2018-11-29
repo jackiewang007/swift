@@ -8,14 +8,14 @@ extension Int32 {
 
 // This function has an unused metatype argument.
 
-// CHECK-LABEL: sil [thunk] [always_inline] @_TZFE4testVs5Int328lessthanfT3lhsS0_3rhsS0__Sb : $@convention(method) (Int32, Int32, @thin Int32.Type) -> Bool
+// CHECK-LABEL: sil [signature_optimized_thunk] [always_inline] @$ss5Int32V4testE8lessthan3lhs3rhsSbAB_ABtFZ : $@convention(method) (Int32, Int32, @thin Int32.Type) -> Bool
   public static func lessthan (lhs: Int32, rhs: Int32) -> Bool {
     return lhs < rhs
   }
 }
 
-// CHECK-LABEL: sil hidden @_TF4test6callitFT_FTVs5Int32S0__Sb : $@convention(thin) () -> @owned @callee_owned (Int32, Int32) -> Bool
-// CHECK: [[F:%[0-9]+]] = function_ref @_TTSf4n_n_d___TZFE4testVs5Int328lessthanfT3lhsS0_3rhsS0__Sb
+// CHECK-LABEL: sil hidden @$s4test6callitSbs5Int32V_ADtcyF : $@convention(thin) () -> @owned @callee_guaranteed (Int32, Int32) -> Bool
+// CHECK: [[F:%[0-9]+]] = function_ref @$ss5Int32V4testE8lessthan3lhs3rhsSbAB_ABtFZTf4nnd_n
 // CHECK: [[R:%[0-9]+]] = thin_to_thick_function [[F]]
 // CHECK: return [[R]]
 func callit()  -> (Int32, Int32) -> Bool {

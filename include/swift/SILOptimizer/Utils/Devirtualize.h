@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -31,32 +31,77 @@
 #include "llvm/ADT/ArrayRef.h"
 
 namespace swift {
-/// A pair representing results of devirtualization.
-///  - The first element is the value representing the result of the
-///    devirtualized call.
-///  - The second element is the new apply/try_apply instruction.
-/// If no devirtualization was possible, the pair:
-/// <nullptr, FullApplySite()> is returned.
-///
-/// Two elements are required, because a result of the new devirtualized
-/// apply/try_apply instruction (second element) eventually needs to be
-/// casted to produce a properly typed value (first element).
-typedef std::pair<ValueBase *, ApplySite> DevirtualizationResult;
+namespace OptRemark {
+class Emitter;
+}
 
-DevirtualizationResult tryDevirtualizeApply(FullApplySite AI);
-DevirtualizationResult tryDevirtualizeApply(FullApplySite AI,
-                                            ClassHierarchyAnalysis *CHA);
+/// Compute all subclasses of a given class.
+///
+/// \p CHA class hierarchy analysis
+/// \p CD class declaration
+/// \p ClassType type of the instance
+/// \p M SILModule
+/// \p Subs a container to be used for storing the set of subclasses
+void getAllSubclasses(ClassHierarchyAnalysis *CHA,
+                      ClassDecl *CD,
+                      SILType ClassType,
+                      SILModule &M,
+                      ClassHierarchyAnalysis::ClassList &Subs);
+
+/// Attempt to devirtualize the given apply site.  If this fails,
+/// the returned ApplySite will be null.
+///
+/// If this succeeds, the caller must call deleteDevirtualizedApply on
+/// the original apply site.
+ApplySite tryDevirtualizeApply(ApplySite AI,
+                               ClassHierarchyAnalysis *CHA,
+                               OptRemark::Emitter *ORE = nullptr);
+bool canDevirtualizeApply(FullApplySite AI, ClassHierarchyAnalysis *CHA);
 bool isNominalTypeWithUnboundGenericParameters(SILType Ty, SILModule &M);
-bool canDevirtualizeClassMethod(FullApplySite AI, SILType ClassInstanceType);
+bool canDevirtualizeClassMethod(FullApplySite AI, SILType ClassInstanceType,
+                                OptRemark::Emitter *ORE = nullptr,
+                                bool isEffectivelyFinalMethod = false);
 SILFunction *getTargetClassMethod(SILModule &M, SILType ClassOrMetatypeType,
                                   MethodInst *MI);
-DevirtualizationResult devirtualizeClassMethod(FullApplySite AI,
-                                               SILValue ClassInstance);
-DevirtualizationResult tryDevirtualizeClassMethod(FullApplySite AI,
-                                                  SILValue ClassInstance);
-DevirtualizationResult tryDevirtualizeWitnessMethod(ApplySite AI); 
-/// Check if an upcast is legal.
-bool isLegalUpcast(SILType FromTy, SILType ToTy);
-}
+
+/// Devirtualize the given apply site, which is known to be devirtualizable.
+///
+/// The caller must call deleteDevirtualizedApply on the original apply site.
+FullApplySite devirtualizeClassMethod(FullApplySite AI,
+                                      SILValue ClassInstance,
+                                      OptRemark::Emitter *ORE);
+
+/// Attempt to devirtualize the given apply site, which is known to be
+/// of a class method.  If this fails, the returned FullApplySite will be null.
+///
+/// If this succeeds, the caller must call deleteDevirtualizedApply on
+/// the original apply site.
+FullApplySite
+tryDevirtualizeClassMethod(FullApplySite AI, SILValue ClassInstance,
+                           OptRemark::Emitter *ORE,
+                           bool isEffectivelyFinalMethod = false);
+
+/// Attempt to devirtualize the given apply site, which is known to be
+/// of a witness method.  If this fails, the returned FullApplySite
+/// will be null.
+///
+/// If this succeeds, the caller must call deleteDevirtualizedApply on
+/// the original apply site.
+ApplySite tryDevirtualizeWitnessMethod(ApplySite AI, OptRemark::Emitter *ORE);
+
+/// Delete a successfully-devirtualized apply site.  This must always be
+/// called after devirtualizing an apply; not only is it not semantically
+/// equivalent to leave the old apply in-place, but the SIL isn't necessary
+/// well-formed.
+///
+/// Devirtualization is responsible for replacing uses of the original
+/// apply site with uses of the new one.  The only thing this does is delete
+/// the instruction and any now-trivially-dead operands; it is separated
+/// from the actual devirtualization step only to apply the caller to log
+/// information about the original apply site.  This is probably not a
+/// good enough reason to complicate the API.
+void deleteDevirtualizedApply(ApplySite AI);
+
+} // end namespace swift
 
 #endif

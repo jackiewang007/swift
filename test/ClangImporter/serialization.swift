@@ -1,9 +1,6 @@
-// RUN: rm -rf %t
-// RUN: mkdir -p %t
-// RUN: %target-swift-frontend -emit-module-path %t/SerializationHelper.swiftmodule -I %S/Inputs/custom-modules %S/Inputs/SerializationHelper.swift -sdk "" -disable-objc-attr-requires-foundation-module
-// RUN: %target-swift-frontend -parse -sdk "" -I %t -I %S/Inputs/custom-modules %s -verify
-
-// XFAIL: linux
+// RUN: %empty-directory(%t)
+// RUN: %target-swift-frontend -emit-module-path %t/SerializationHelper.swiftmodule -I %S/Inputs/custom-modules %S/Inputs/SerializationHelper.swift -sdk "" -enable-objc-interop -disable-objc-attr-requires-foundation-module
+// RUN: %target-swift-frontend -enable-objc-interop -typecheck -sdk "" -I %t -I %S/Inputs/custom-modules %s -verify
 
 import SerializationHelper
 

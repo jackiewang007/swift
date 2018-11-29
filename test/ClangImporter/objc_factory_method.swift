@@ -1,7 +1,7 @@
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: %empty-directory(%t)
 // RUN: %build-clang-importer-objc-overlays
 
-// RUN: %target-swift-frontend(mock-sdk: %clang-importer-sdk-nosource -I %t) -target x86_64-apple-macosx10.51 -parse %s -verify
+// RUN: %target-swift-frontend(mock-sdk: %clang-importer-sdk-nosource -I %t) -target x86_64-apple-macosx10.51 -typecheck %s -verify
 
 // REQUIRES: OS=macosx
 // REQUIRES: objc_interop
@@ -22,14 +22,14 @@ func testInstanceTypeFactoryMethodInherited() {
   _ = NSObjectFactorySub() // okay, prefers init method
   _ = NSObjectFactorySub(integer: 1)
   _ = NSObjectFactorySub(double: 314159)
-  _ = NSObjectFactorySub(float: 314159) // expected-error{{argument labels '(float:)' do not match any available overloads}} 
-  // expected-note @-1 {{overloads for 'NSObjectFactorySub' exist with these partially matching parameter lists: (integer: Int), (double: Double)}}
+  _ = NSObjectFactorySub(float: 314159) // expected-error{{incorrect argument label in call (have 'float:', expected 'integer:')}}
   let a = NSObjectFactorySub(buildingWidgets: ()) // expected-error{{argument labels '(buildingWidgets:)' do not match any available overloads}}
   // expected-note @-1 {{overloads for 'NSObjectFactorySub' exist with these partially matching parameter lists: (integer: Int), (double: Double)}}
   _ = a
 }
 
 func testFactoryWithLaterIntroducedInit() {
+    // expected-note @-1 4{{add @available attribute to enclosing global function}}
   // Prefer importing more available factory initializer over less
   // less available convenience initializer
   _ = NSHavingConvenienceFactoryAndLaterConvenienceInit(flim:5)
@@ -44,22 +44,19 @@ func testFactoryWithLaterIntroducedInit() {
   // available designated initializer
   _ = NSHavingConvenienceFactoryAndLaterDesignatedInit(flim:5) // expected-error {{'init(flim:)' is only available on OS X 10.52 or newer}} 
     // expected-note @-1 {{add 'if #available' version check}}
-    // expected-note @-2 {{add @available attribute to enclosing global function}}
   
   _ = NSHavingConvenienceFactoryAndLaterDesignatedInit(flam:5) // expected-error {{'init(flam:)' is only available on OS X 10.52 or newer}}
   // expected-note @-1 {{add 'if #available' version check}}  {{3-63=if #available(OSX 10.52, *) {\n      _ = NSHavingConvenienceFactoryAndLaterDesignatedInit(flam:5)\n  \} else {\n      // Fallback on earlier versions\n  \}}}
-  // expected-note @-2 {{add @available attribute to enclosing global function}} {{1-1=@available(OSX 10.52, *)\n}}
 
   
   // Don't prefer more available factory initializer over less
   // available designated initializer
   _ = NSHavingFactoryAndLaterConvenienceInit(flim:5) // expected-error {{'init(flim:)' is only available on OS X 10.52 or newer}} 
   // expected-note @-1 {{add 'if #available' version check}}
-  // expected-note @-2 {{add @available attribute to enclosing global function}}
+  
 
   _ = NSHavingFactoryAndLaterConvenienceInit(flam:5) // expected-error {{'init(flam:)' is only available on OS X 10.52 or newer}} 
   // expected-note @-1 {{add 'if #available' version check}}
-  // expected-note @-2 {{add @available attribute to enclosing global function}}
 
 
   // When both a convenience factory and a convenience initializer have the
@@ -84,29 +81,29 @@ func testNonInstanceTypeFactoryMethod(_ s: String) {
 }
 
 func testUseOfFactoryMethod(_ queen: Bee) {
-  _ = Hive.withQueen(queen) // expected-error{{'withQueen' is unavailable: use object construction 'Hive(queen:)'}}
+  _ = Hive.hiveWithQueen(queen) // expected-error{{'hiveWithQueen' has been replaced by 'init(queen:)'}} {{11-25=}} {{26-26=queen: }}
 }
 
 func testNonsplittableFactoryMethod() {
   _ = NSObjectFactory.factoryBuildingWidgets()
 }
 
-func testFactoryMethodBlacklist() {
+func testFactoryMethodAPINotes() {
   _ = NCWidgetController.widgetController()
 }
 
 func test17261609() {
   _ = NSDecimalNumber(mantissa:1, exponent:1, isNegative:true)
-  _ = NSDecimalNumber.withMantissa(1, exponent:1, isNegative:true) // expected-error{{'withMantissa(_:exponent:isNegative:)' is unavailable: use object construction 'NSDecimalNumber(mantissa:exponent:isNegative:)'}}
+  _ = NSDecimalNumber.decimalNumberWithMantissa(1, exponent:1, isNegative:true) // expected-error{{'decimalNumberWithMantissa(_:exponent:isNegative:)' has been replaced by 'init(mantissa:exponent:isNegative:)'}} {{22-48=}} {{49-49=mantissa: }}
 }
 
 func testURL() {
   let url = NSURL(string: "http://www.llvm.org")!
-  _ = NSURL.withString("http://www.llvm.org") // expected-error{{'withString' is unavailable: use object construction 'NSURL(string:)'}}
+  _ = NSURL.URLWithString("http://www.llvm.org") // expected-error{{'URLWithString' has been replaced by 'init(string:)'}} {{12-26=}} {{27-27=string: }}
 
   NSURLRequest(string: "http://www.llvm.org") // expected-warning{{unused}}
   NSURLRequest(url: url as URL) // expected-warning{{unused}}
 
-  _ = NSURLRequest.withString("http://www.llvm.org") // expected-error{{'withString' is unavailable: use object construction 'NSURLRequest(string:)'}}
-  _ = NSURLRequest.withURL(url as URL) // expected-error{{'withURL' is unavailable: use object construction 'NSURLRequest(url:)'}}
+  _ = NSURLRequest.requestWithString("http://www.llvm.org") // expected-error{{'requestWithString' has been replaced by 'init(string:)'}}
+  _ = NSURLRequest.URLRequestWithURL(url as URL) // expected-error{{'URLRequestWithURL' has been replaced by 'init(url:)'}}
 }

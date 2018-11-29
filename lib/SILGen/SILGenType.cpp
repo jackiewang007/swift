@@ -2,132 +2,158 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
 // This file contains code for emitting code associated with types:
 //   - methods
-//   - ObjC dispatch thunks
-//   - SIL v-tables
-//   - etc.
+//   - vtables and vtable thunks
+//   - witness tables and witness thunks
 //
 //===----------------------------------------------------------------------===//
 
-#include "SILGenFunction.h"
-#include "Scope.h"
 #include "ManagedValue.h"
-#include "swift/AST/AST.h"
+#include "SILGenFunction.h"
+#include "SILGenFunctionBuilder.h"
+#include "Scope.h"
+#include "swift/AST/ASTMangler.h"
+#include "swift/AST/GenericEnvironment.h"
+#include "swift/AST/ProtocolConformance.h"
+#include "swift/AST/SubstitutionMap.h"
 #include "swift/AST/TypeMemberVisitor.h"
-#include "swift/Basic/Fallthrough.h"
+#include "swift/SIL/FormalLinkage.h"
+#include "swift/SIL/PrettyStackTrace.h"
 #include "swift/SIL/SILArgument.h"
+#include "swift/SIL/SILVTableVisitor.h"
+#include "swift/SIL/SILWitnessVisitor.h"
 #include "swift/SIL/TypeLowering.h"
 
 using namespace swift;
 using namespace Lowering;
 
-SILFunction *SILGenModule::getDynamicThunk(SILDeclRef constant,
-                                           SILConstantInfo constantInfo) {
-  // Mangle the constant with a _TTD header.
-  auto name = constant.mangle(SILDeclRef::ManglingKind::DynamicThunk);
 
-  IsFragile_t isFragile = IsNotFragile;
-  if (makeModuleFragile)
-    isFragile = IsFragile;
-  if (constant.isFragile())
-    isFragile = IsFragile;
-  auto F = M.getOrCreateFunction(constant.getDecl(), name, SILLinkage::Shared,
-                            constantInfo.getSILType().castTo<SILFunctionType>(),
-                            IsBare, IsTransparent, isFragile, IsThunk);
+Optional<SILVTable::Entry>
+SILGenModule::emitVTableMethod(ClassDecl *theClass,
+                               SILDeclRef derived, SILDeclRef base) {
+  assert(base.kind == derived.kind);
 
-  if (F->empty()) {
-    // Emit the thunk if we haven't yet.
-    // Currently a dynamic thunk looks just like a foreign-to-native thunk around
-    // an ObjC method. This would change if we introduced a native
-    // runtime-hookable mechanism.
-    SILGenFunction SGF(*this, *F);
-    SGF.emitForeignToNativeThunk(constant);
+  auto *baseDecl = base.getDecl();
+  auto *derivedDecl = derived.getDecl();
+
+  // Note: We intentionally don't support extension members here.
+  //
+  // Once extensions can override or introduce new vtable entries, this will
+  // all likely change anyway.
+  auto *baseClass = cast<ClassDecl>(baseDecl->getDeclContext());
+  auto *derivedClass = cast<ClassDecl>(derivedDecl->getDeclContext());
+
+  // Figure out if the vtable entry comes from the superclass, in which
+  // case we won't emit it if building a resilient module.
+  SILVTable::Entry::Kind implKind;
+  if (baseClass == theClass) {
+    // This is a vtable entry for a method of the immediate class.
+    implKind = SILVTable::Entry::Kind::Normal;
+  } else if (derivedClass == theClass) {
+    // This is a vtable entry for a method of a base class, but it is being
+    // overridden in the immediate class.
+    implKind = SILVTable::Entry::Kind::Override;
+  } else {
+    // This vtable entry is copied from the superclass.
+    implKind = SILVTable::Entry::Kind::Inherited;
+
+    // If the override is defined in a class from a different resilience
+    // domain, don't emit the vtable entry.
+    if (derivedClass->isResilient(M.getSwiftModule(),
+                                  ResilienceExpansion::Maximal)) {
+      return None;
+    }
   }
 
-  return F;
-}
+  SILFunction *implFn;
+  SILLinkage implLinkage;
 
-SILFunction *
-SILGenModule::emitVTableMethod(SILDeclRef derived, SILDeclRef base) {
+  // If the member is dynamic, reference its dynamic dispatch thunk so that
+  // it will be redispatched, funneling the method call through the runtime
+  // hook point.
+  if (derivedDecl->isObjCDynamic()
+      && derived.kind != SILDeclRef::Kind::Allocator) {
+    implFn = getDynamicThunk(derived, Types.getConstantInfo(derived).SILFnType);
+    implLinkage = SILLinkage::Public;
+  } else {
+    implFn = getFunction(derived, NotForDefinition);
+    implLinkage = stripExternalFromLinkage(implFn->getLinkage());
+  }
+
   // As a fast path, if there is no override, definitely no thunk is necessary.
   if (derived == base)
-    return getFunction(derived, NotForDefinition);
+    return SILVTable::Entry(base, implFn, implKind, implLinkage);
 
   // Determine the derived thunk type by lowering the derived type against the
   // abstraction pattern of the base.
   auto baseInfo = Types.getConstantInfo(base);
   auto derivedInfo = Types.getConstantInfo(derived);
-  auto basePattern = AbstractionPattern(baseInfo.LoweredInterfaceType);
+  auto basePattern = AbstractionPattern(baseInfo.LoweredType);
   
   auto overrideInfo = M.Types.getConstantOverrideInfo(derived, base);
 
   // The override member type is semantically a subtype of the base
   // member type. If the override is ABI compatible, we do not need
   // a thunk.
-  if (overrideInfo == derivedInfo)
-    return getFunction(derived, NotForDefinition);
+  if (M.Types.checkFunctionForABIDifferences(derivedInfo.SILFnType,
+                                             overrideInfo.SILFnType)
+      == TypeConverter::ABIDifference::Trivial)
+    return SILVTable::Entry(base, implFn, implKind, implLinkage);
 
   // Generate the thunk name.
-  // TODO: If we allocated a new vtable slot for the derived method, then
-  // further derived methods would potentially need multiple thunks, and we
-  // would need to mangle the base method into the symbol as well.
-  auto name = derived.mangle(SILDeclRef::ManglingKind::VTableMethod);
-
-  // If we already emitted this thunk, reuse it.
-  // TODO: Allocating new vtable slots for derived methods with different ABIs
-  // would invalidate the assumption that the same thunk is correct, as above.
-  if (auto existingThunk = M.lookUpFunction(name))
-    return existingThunk;
-
-  auto *derivedDecl = cast<AbstractFunctionDecl>(derived.getDecl());
-  SILLocation loc(derivedDecl);
-  auto thunk =
-      M.createFunction(SILLinkage::Private,
-                       name, overrideInfo.SILFnType,
-                       derivedDecl->getGenericEnvironment(), loc, IsBare,
-                       IsNotTransparent, IsNotFragile);
-  thunk->setDebugScope(new (M) SILDebugScope(loc, thunk));
-
-  SILGenFunction(*this, *thunk)
-    .emitVTableThunk(derived, basePattern,
-                     overrideInfo.LoweredInterfaceType,
-                     derivedInfo.LoweredInterfaceType);
-
-  return thunk;
-}
-
-SILValue SILGenFunction::emitDynamicMethodRef(SILLocation loc,
-                                              SILDeclRef constant,
-                                              SILConstantInfo constantInfo) {
-  // If the method is foreign, its foreign thunk will handle the dynamic
-  // dispatch for us.
-  if (constant.isForeignToNativeThunk()) {
-    if (!SGM.hasFunction(constant))
-      SGM.emitForeignToNativeThunk(constant);
-    return B.createFunctionRef(loc, SGM.getFunction(constant, NotForDefinition));
+  std::string name;
+  {
+    Mangle::ASTMangler mangler;
+    if (isa<FuncDecl>(baseDecl)) {
+      name = mangler.mangleVTableThunk(
+        cast<FuncDecl>(baseDecl),
+        cast<FuncDecl>(derivedDecl));
+    } else {
+      name = mangler.mangleConstructorVTableThunk(
+        cast<ConstructorDecl>(baseDecl),
+        cast<ConstructorDecl>(derivedDecl),
+        base.kind == SILDeclRef::Kind::Allocator);
+    }
   }
 
-  // Otherwise, we need a dynamic dispatch thunk.
-  SILFunction *F = SGM.getDynamicThunk(constant, constantInfo);
+  // If we already emitted this thunk, reuse it.
+  if (auto existingThunk = M.lookUpFunction(name))
+    return SILVTable::Entry(base, existingThunk, implKind, implLinkage);
 
-  return B.createFunctionRef(loc, F);
+  // Emit the thunk.
+  SILLocation loc(derivedDecl);
+  SILGenFunctionBuilder builder(*this);
+  auto thunk = builder.createFunction(
+      SILLinkage::Private, name, overrideInfo.SILFnType,
+      cast<AbstractFunctionDecl>(derivedDecl)->getGenericEnvironment(), loc,
+      IsBare, IsNotTransparent, IsNotSerialized, IsNotDynamic);
+  thunk->setDebugScope(new (M) SILDebugScope(loc, thunk));
+
+  SILGenFunction(*this, *thunk, theClass)
+    .emitVTableThunk(derived, implFn, basePattern,
+                     overrideInfo.LoweredType,
+                     derivedInfo.LoweredType);
+
+  return SILVTable::Entry(base, thunk, implKind, implLinkage);
 }
 
 bool SILGenModule::requiresObjCMethodEntryPoint(FuncDecl *method) {
   // Property accessors should be generated alongside the property unless
   // the @NSManaged attribute is present.
-  if (method->isGetterOrSetter()) {
-    auto asd = method->getAccessorStorageDecl();
-    return asd->isObjC() && !asd->getAttrs().hasAttribute<NSManagedAttr>();
+  if (auto accessor = dyn_cast<AccessorDecl>(method)) {
+    if (accessor->isGetterOrSetter()) {
+      auto asd = accessor->getStorage();
+      return asd->isObjC() && !asd->getAttrs().hasAttribute<NSManagedAttr>();
+    }
   }
 
   if (method->getAttrs().hasAttribute<NSManagedAttr>())
@@ -143,165 +169,638 @@ bool SILGenModule::requiresObjCMethodEntryPoint(ConstructorDecl *constructor) {
 namespace {
 
 /// An ASTVisitor for populating SILVTable entries from ClassDecl members.
-class SILGenVTable : public Lowering::ASTVisitor<SILGenVTable> {
+class SILGenVTable : public SILVTableVisitor<SILGenVTable> {
 public:
   SILGenModule &SGM;
   ClassDecl *theClass;
-  std::vector<SILVTable::Pair> vtableEntries;
+  bool isResilient;
+
+  // Map a base SILDeclRef to the corresponding element in vtableMethods.
+  llvm::DenseMap<SILDeclRef, unsigned> baseToIndexMap;
+
+  // For each base method, store the corresponding override.
+  SmallVector<std::pair<SILDeclRef, SILDeclRef>, 8> vtableMethods;
 
   SILGenVTable(SILGenModule &SGM, ClassDecl *theClass)
-    : SGM(SGM), theClass(theClass)
-  {
-    // Populate the superclass members, if any.
-    Type super = theClass->getSuperclass();
-    if (super && super->getClassOrBoundGenericClass())
-      visitAncestor(super->getClassOrBoundGenericClass());
+    : SGM(SGM), theClass(theClass) {
+    isResilient = theClass->isResilient();
   }
 
-  ~SILGenVTable() {
-    // Create the vtable.
-    SILVTable::create(SGM.M, theClass, vtableEntries);
+  void emitVTable() {
+    // Imported types don't have vtables right now.
+    if (theClass->hasClangNode())
+      return;
+
+    // Populate our list of base methods and overrides.
+    visitAncestor(theClass);
+
+    SmallVector<SILVTable::Entry, 8> vtableEntries;
+    vtableEntries.reserve(vtableMethods.size() + 2);
+
+    // For each base method/override pair, emit a vtable thunk or direct
+    // reference to the method implementation.
+    for (auto method : vtableMethods) {
+      SILDeclRef baseRef, derivedRef;
+      std::tie(baseRef, derivedRef) = method;
+
+      auto entry = SGM.emitVTableMethod(theClass, derivedRef, baseRef);
+
+      // We might skip emitting entries if the base class is resilient.
+      if (entry)
+        vtableEntries.push_back(*entry);
+    }
+
+    // Add the deallocating destructor to the vtable just for the purpose
+    // that it is referenced and cannot be eliminated by dead function removal.
+    // In reality, the deallocating destructor is referenced directly from
+    // the HeapMetadata for the class.
+    {
+      auto *dtor = theClass->getDestructor();
+      SILDeclRef dtorRef(dtor, SILDeclRef::Kind::Deallocator);
+      auto *dtorFn = SGM.getFunction(dtorRef, NotForDefinition);
+      vtableEntries.push_back({dtorRef, dtorFn,
+                               SILVTable::Entry::Kind::Normal,
+                               dtorFn->getLinkage()});
+    }
+
+    if (SGM.requiresIVarDestroyer(theClass)) {
+      SILDeclRef dtorRef(theClass, SILDeclRef::Kind::IVarDestroyer);
+      auto *dtorFn = SGM.getFunction(dtorRef, NotForDefinition);
+      vtableEntries.push_back({dtorRef, dtorFn,
+                               SILVTable::Entry::Kind::Normal,
+                               dtorFn->getLinkage()});
+    }
+
+    IsSerialized_t serialized = IsNotSerialized;
+    auto classIsPublic = theClass->getEffectiveAccess() >= AccessLevel::Public;
+    // Only public, fixed-layout classes should have serialized vtables.
+    if (classIsPublic && !theClass->isResilient())
+      serialized = IsSerialized;
+
+    // Finally, create the vtable.
+    SILVTable::create(SGM.M, theClass, serialized, vtableEntries);
   }
 
   void visitAncestor(ClassDecl *ancestor) {
-    // Recursively visit all our ancestors.
-    Type super = ancestor->getSuperclass();
-    if (super && super->getClassOrBoundGenericClass())
-      visitAncestor(super->getClassOrBoundGenericClass());
+    auto superTy = ancestor->getSuperclass();
+    if (superTy)
+      visitAncestor(superTy->getClassOrBoundGenericClass());
 
-    // Only visit the members for a class defined natively.
-    if (!ancestor->hasClangNode()) {
-      for (auto member : ancestor->getMembers())
-        visit(member);
-    }
+    addVTableEntries(ancestor);
+  }
+
+  // Try to find an overridden entry.
+  void addMethodOverride(SILDeclRef baseRef, SILDeclRef declRef) {
+    auto found = baseToIndexMap.find(baseRef);
+    assert(found != baseToIndexMap.end());
+    auto &method = vtableMethods[found->second];
+    assert(method.first == baseRef);
+    method.second = declRef;
   }
 
   // Add an entry to the vtable.
-  void addEntry(SILDeclRef member) {
-    /// Get the function to reference from the vtable.
-    auto getVtableEntryFn = [&](SILDeclRef entry) -> SILFunction* {
-      // If the member is dynamic, reference its dynamic dispatch thunk so that
-      // it will be redispatched, funneling the method call through the runtime
-      // hook point.
-      // TODO: Dynamic thunks could conceivably require reabstraction too.
-      if (member.getDecl()->getAttrs().hasAttribute<DynamicAttr>())
-        return SGM.getDynamicThunk(member, SGM.Types.getConstantInfo(member));
-
-      // The derived method may require thunking to match up to the ABI of the
-      // base method.
-      return SGM.emitVTableMethod(member, entry);
-    };
-
-    // Try to find an overridden entry.
-    // NB: Mutates vtableEntries in-place
-    // FIXME: O(n^2)
-    if (auto overridden = member.getNextOverriddenVTableEntry()) {
-      for (SILVTable::Pair &entry : vtableEntries) {
-        SILDeclRef ref = overridden;
-
-        do {
-          // Replace the overridden member.
-          if (entry.first == ref) {
-            // The entry is keyed by the least derived method.
-            entry = {ref, getVtableEntryFn(ref)};
-            return;
-          }
-        } while ((ref = ref.getOverridden()));
-      }
-      llvm_unreachable("no overridden vtable entry?!");
-    }
-
-    // If this is a final member and isn't overriding something, we don't need
-    // to add it to the vtable.
-    if (member.getDecl()->isFinal())
-      return;
-    // If this is dynamic and isn't overriding a non-dynamic method, it'll
-    // always be accessed by objc_msgSend, so we don't need to add it to the
-    // vtable.
-    if (member.getDecl()->getAttrs().hasAttribute<DynamicAttr>())
-      return;
-
-    // Otherwise, introduce a new vtable entry.
-    vtableEntries.emplace_back(member, getVtableEntryFn(member));
+  void addMethod(SILDeclRef member) {
+    unsigned index = vtableMethods.size();
+    vtableMethods.push_back(std::make_pair(member, member));
+    auto result = baseToIndexMap.insert(std::make_pair(member, index));
+    assert(result.second);
+    (void) result;
   }
 
-  // Default for members that don't require vtable entries.
-  void visitDecl(Decl*) {}
-
-  void visitFuncDecl(FuncDecl *fd) {
-    // ObjC decls don't go in vtables.
-    if (fd->hasClangNode())
-      return;
-
-    // Observers don't get separate vtable entries.
-    if (fd->isObservingAccessor())
-      return;
-
-    addEntry(SILDeclRef(fd));
-  }
-
-  void visitConstructorDecl(ConstructorDecl *cd) {
-    // Stub constructors don't get an entry, unless they were synthesized to
-    // override a non-required designated initializer in the superclass.
-    if (cd->hasStubImplementation() && !cd->getOverriddenDecl())
-      return;
-
-    // Required constructors (or overrides thereof) have their allocating entry
-    // point in the vtable.
-    bool isRequired = false;
-    auto override = cd;
-    while (override) {
-      if (override->isRequired()) {
-        isRequired = true;
-        break;
-      }
-      override = override->getOverriddenDecl();
-    }
-    if (isRequired) {
-      addEntry(SILDeclRef(cd, SILDeclRef::Kind::Allocator));
-    }
-
-    // All constructors have their initializing constructor in the
-    // vtable, which can be used by a convenience initializer.
-    addEntry(SILDeclRef(cd, SILDeclRef::Kind::Initializer));
-  }
-
-  void visitVarDecl(VarDecl *vd) {
-    // Note: dynamically-dispatched properties have their getter and setter
-    // added to the vtable when they are visited.
-  }
-
-  void visitDestructorDecl(DestructorDecl *dd) {
-    if (dd->getParent()->getAsClassOrClassExtensionContext() == theClass) {
-      // Add the deallocating destructor to the vtable just for the purpose
-      // that it is referenced and cannot be eliminated by dead function removal.
-      // In reality, the deallocating destructor is referenced directly from
-      // the HeapMetadata for the class.
-      addEntry(SILDeclRef(dd, SILDeclRef::Kind::Deallocator));
-
-      if (SGM.requiresIVarDestroyer(theClass))
-        addEntry(SILDeclRef(theClass, SILDeclRef::Kind::IVarDestroyer));
-    }
-  }
-
-  void visitSubscriptDecl(SubscriptDecl *sd) {
-    // Note: dynamically-dispatched properties have their getter and setter
-    // added to the vtable when they are visited.
+  void addPlaceholder(MissingMemberDecl *m) {
+    assert(m->getNumberOfVTableEntries() == 0
+           && "Should not be emitting class with missing members");
   }
 };
 
+} // end anonymous namespace
+
 static void emitTypeMemberGlobalVariable(SILGenModule &SGM,
-                                         GenericParamList *generics,
-                                         NominalTypeDecl *theType,
                                          VarDecl *var) {
-  assert(!generics && "generic static properties not implemented");
-  if (var->getDeclContext()->getAsClassOrClassExtensionContext()) {
+  if (var->getDeclContext()->isGenericContext()) {
+    assert(var->getDeclContext()->getGenericSignatureOfContext()
+              ->areAllParamsConcrete()
+           && "generic static vars are not implemented yet");
+  }
+
+  if (var->getDeclContext()->getSelfClassDecl()) {
     assert(var->isFinal() && "only 'static' ('class final') stored properties are implemented in classes");
   }
 
   SGM.addGlobalVariable(var);
 }
 
+namespace {
+
+// Is this a free function witness satisfying a static method requirement?
+static IsFreeFunctionWitness_t isFreeFunctionWitness(ValueDecl *requirement,
+                                                     ValueDecl *witness) {
+  if (!witness->getDeclContext()->isTypeContext()) {
+    assert(!requirement->isInstanceMember()
+           && "free function satisfying instance method requirement?!");
+    return IsFreeFunctionWitness;
+  }
+
+  return IsNotFreeFunctionWitness;
+}
+
+/// A CRTP class for emitting witness thunks for the requirements of a
+/// protocol.
+///
+/// There are two subclasses:
+///
+/// - SILGenConformance: emits witness thunks for a conformance of a
+///   a concrete type to a protocol
+/// - SILGenDefaultWitnessTable: emits default witness thunks for
+///   default implementations of protocol requirements
+///
+template<typename T> class SILGenWitnessTable : public SILWitnessVisitor<T> {
+  T &asDerived() { return *static_cast<T*>(this); }
+
+public:
+  void addMethod(SILDeclRef requirementRef) {
+    auto reqAccessor = dyn_cast<AccessorDecl>(requirementRef.getDecl());
+
+    // If it's not an accessor, just look for the witness.
+    if (!reqAccessor) {
+      if (auto witness = asDerived().getWitness(requirementRef.getDecl())) {
+        return addMethodImplementation(requirementRef,
+                                       SILDeclRef(witness.getDecl(),
+                                                  requirementRef.kind),
+                                       witness);
+      }
+
+      return asDerived().addMissingMethod(requirementRef);
+    }
+
+    // Otherwise, we need to map the storage declaration and then get
+    // the appropriate accessor for it.
+    auto witness = asDerived().getWitness(reqAccessor->getStorage());
+    if (!witness)
+      return asDerived().addMissingMethod(requirementRef);
+
+    auto witnessStorage = cast<AbstractStorageDecl>(witness.getDecl());
+    auto witnessAccessor =
+      witnessStorage->getAccessor(reqAccessor->getAccessorKind());
+    if (!witnessAccessor)
+      return asDerived().addMissingMethod(requirementRef);
+
+    return addMethodImplementation(requirementRef,
+                                   SILDeclRef(witnessAccessor,
+                                              SILDeclRef::Kind::Func),
+                                   witness);
+  }
+
+private:
+  void addMethodImplementation(SILDeclRef requirementRef,
+                               SILDeclRef witnessRef,
+                               Witness witness) {
+    // Free function witnesses have an implicit uncurry layer imposed on them by
+    // the inserted metatype argument.
+    auto isFree =
+      isFreeFunctionWitness(requirementRef.getDecl(), witnessRef.getDecl());
+    asDerived().addMethodImplementation(requirementRef, witnessRef,
+                                        isFree, witness);
+  }
+};
+
+/// Emit a witness table for a protocol conformance.
+class SILGenConformance : public SILGenWitnessTable<SILGenConformance> {
+  using super = SILGenWitnessTable<SILGenConformance>;
+
+public:
+  SILGenModule &SGM;
+  NormalProtocolConformance *Conformance;
+  std::vector<SILWitnessTable::Entry> Entries;
+  std::vector<SILWitnessTable::ConditionalConformance> ConditionalConformances;
+  SILLinkage Linkage;
+  IsSerialized_t Serialized;
+
+  SILGenConformance(SILGenModule &SGM, NormalProtocolConformance *C)
+    // We only need to emit witness tables for base NormalProtocolConformances.
+    : SGM(SGM), Conformance(C->getRootNormalConformance()),
+      Linkage(getLinkageForProtocolConformance(Conformance,
+                                               ForDefinition))
+  {
+    auto *proto = Conformance->getProtocol();
+
+    Serialized = IsNotSerialized;
+
+    // ... or if the conformance itself thinks it should be.
+    if (SILWitnessTable::conformanceIsSerialized(Conformance))
+      Serialized = IsSerialized;
+
+    // Not all protocols use witness tables; in this case we just skip
+    // all of emit() below completely.
+    if (!Lowering::TypeConverter::protocolRequiresWitnessTable(proto))
+      Conformance = nullptr;
+  }
+
+  SILWitnessTable *emit() {
+    // Nothing to do if this wasn't a normal conformance.
+    if (!Conformance)
+      return nullptr;
+
+    auto *proto = Conformance->getProtocol();
+    visitProtocolDecl(proto);
+
+    addConditionalRequirements();
+
+    // Check if we already have a declaration or definition for this witness
+    // table.
+    if (auto *wt = SGM.M.lookUpWitnessTable(Conformance, false)) {
+      // If we have a definition already, just return it.
+      //
+      // FIXME: I am not sure if this is possible, if it is not change this to an
+      // assert.
+      if (wt->isDefinition())
+        return wt;
+
+      // If we have a declaration, convert the witness table to a definition.
+      if (wt->isDeclaration()) {
+        wt->convertToDefinition(Entries, ConditionalConformances, Serialized);
+
+        // Since we had a declaration before, its linkage should be external,
+        // ensure that we have a compatible linkage for sanity. *NOTE* we are ok
+        // with both being shared since we do not have a shared_external
+        // linkage.
+        assert(stripExternalFromLinkage(wt->getLinkage()) == Linkage &&
+               "Witness table declaration has inconsistent linkage with"
+               " silgen definition.");
+
+        // And then override the linkage with the new linkage.
+        wt->setLinkage(Linkage);
+        return wt;
+      }
+    }
+
+    // Otherwise if we have no witness table yet, create it.
+    return SILWitnessTable::create(SGM.M, Linkage, Serialized, Conformance,
+                                   Entries, ConditionalConformances);
+  }
+
+  void addProtocolConformanceDescriptor() {
+  }
+
+
+  void addOutOfLineBaseProtocol(ProtocolDecl *baseProtocol) {
+    assert(Lowering::TypeConverter::protocolRequiresWitnessTable(baseProtocol));
+
+    auto conformance = Conformance->getInheritedConformance(baseProtocol);
+
+    Entries.push_back(SILWitnessTable::BaseProtocolWitness{
+      baseProtocol,
+      conformance,
+    });
+
+    // Emit the witness table for the base conformance if it is shared.
+    if (getLinkageForProtocolConformance(
+                                        conformance->getRootNormalConformance(),
+                                        NotForDefinition)
+          == SILLinkage::Shared)
+      SGM.getWitnessTable(conformance->getRootNormalConformance());
+  }
+
+  Witness getWitness(ValueDecl *decl) {
+    return Conformance->getWitness(decl, nullptr);
+  }
+
+  void addPlaceholder(MissingMemberDecl *placeholder) {
+    llvm_unreachable("generating a witness table with placeholders in it");
+  }
+
+  void addMissingMethod(SILDeclRef requirement) {
+    llvm_unreachable("generating a witness table with placeholders in it");
+  }
+
+  void addMethodImplementation(SILDeclRef requirementRef,
+                               SILDeclRef witnessRef,
+                               IsFreeFunctionWitness_t isFree,
+                               Witness witness) {
+    // Emit the witness thunk and add it to the table.
+    auto witnessLinkage = witnessRef.getLinkage(ForDefinition);
+    auto witnessSerialized = Serialized;
+    if (witnessSerialized &&
+        fixmeWitnessHasLinkageThatNeedsToBePublic(witnessLinkage)) {
+      witnessLinkage = SILLinkage::Public;
+      witnessSerialized = IsNotSerialized;
+    } else {
+      // This is the "real" rule; the above case should go away once we
+      // figure out what's going on.
+      witnessLinkage = (witnessSerialized
+                        ? SILLinkage::Shared
+                        : SILLinkage::Private);
+    }
+
+    SILFunction *witnessFn = SGM.emitProtocolWitness(
+        ProtocolConformanceRef(Conformance), witnessLinkage, witnessSerialized,
+        requirementRef, witnessRef, isFree, witness);
+    Entries.push_back(
+                    SILWitnessTable::MethodWitness{requirementRef, witnessFn});
+  }
+
+  void addAssociatedType(AssociatedType requirement) {
+    // Find the substitution info for the witness type.
+    auto td = requirement.getAssociation();
+    Type witness = Conformance->getTypeWitness(td, /*resolver=*/nullptr);
+
+    // Emit the record for the type itself.
+    Entries.push_back(SILWitnessTable::AssociatedTypeWitness{td,
+                                                witness->getCanonicalType()});
+  }
+
+  void addAssociatedConformance(AssociatedConformance req) {
+    auto assocConformance =
+      Conformance->getAssociatedConformance(req.getAssociation(),
+                                            req.getAssociatedRequirement());
+
+    SGM.useConformance(assocConformance);
+
+    Entries.push_back(SILWitnessTable::AssociatedTypeProtocolWitness{
+        req.getAssociation(), req.getAssociatedRequirement(),
+        assocConformance});
+  }
+
+  void addConditionalRequirements() {
+    SILWitnessTable::enumerateWitnessTableConditionalConformances(
+        Conformance, [&](unsigned, CanType type, ProtocolDecl *protocol) {
+          auto conformance =
+              Conformance->getGenericSignature()->lookupConformance(type,
+                                                                    protocol);
+          assert(conformance &&
+                 "unable to find conformance that should be known");
+
+          ConditionalConformances.push_back(
+              SILWitnessTable::ConditionalConformance{type, *conformance});
+
+          return /*finished?*/ false;
+        });
+  }
+};
+
+} // end anonymous namespace
+
+static SILWitnessTable *
+getWitnessTableToInsertAfter(SILGenModule &SGM,
+                             NormalProtocolConformance *insertAfter) {
+  while (insertAfter) {
+    // If the table was emitted, emit after it.
+    auto found = SGM.emittedWitnessTables.find(insertAfter);
+    if (found != SGM.emittedWitnessTables.end())
+      return found->second;
+
+    // Otherwise, try inserting after the table we would transitively be
+    // inserted after.
+    auto foundDelayed = SGM.delayedConformances.find(insertAfter);
+    if (foundDelayed != SGM.delayedConformances.end())
+      insertAfter = foundDelayed->second.insertAfter;
+    else
+      break;
+  }
+
+  return nullptr;
+}
+
+SILWitnessTable *
+SILGenModule::getWitnessTable(ProtocolConformance *conformance) {
+  auto normal = conformance->getRootNormalConformance();
+
+  // If we've already emitted this witness table, return it.
+  auto found = emittedWitnessTables.find(normal);
+  if (found != emittedWitnessTables.end())
+    return found->second;
+
+  SILWitnessTable *table = SILGenConformance(*this, normal).emit();
+  emittedWitnessTables.insert({normal, table});
+
+  // If we delayed emission of this witness table, move it to its rightful
+  // place within the module.
+  auto foundDelayed = delayedConformances.find(normal);
+  if (foundDelayed != delayedConformances.end()) {
+    M.witnessTables.remove(table);
+    auto insertAfter = getWitnessTableToInsertAfter(*this,
+                                              foundDelayed->second.insertAfter);
+    if (!insertAfter) {
+      M.witnessTables.push_front(table);
+    } else {
+      M.witnessTables.insertAfter(insertAfter->getIterator(), table);
+    }
+  } else {
+    // We would have marked a delayed conformance as "last emitted" when it
+    // was delayed.
+    lastEmittedConformance = normal;
+  }
+  return table;
+}
+
+SILFunction *SILGenModule::emitProtocolWitness(
+    ProtocolConformanceRef conformance, SILLinkage linkage,
+    IsSerialized_t isSerialized, SILDeclRef requirement, SILDeclRef witnessRef,
+    IsFreeFunctionWitness_t isFree, Witness witness) {
+  auto requirementInfo = Types.getConstantInfo(requirement);
+
+  // Work out the lowered function type of the SIL witness thunk.
+  auto reqtOrigTy = cast<GenericFunctionType>(requirementInfo.LoweredType);
+
+  // Mapping from the requirement's generic signature to the witness
+  // thunk's generic signature.
+  auto reqtSubMap = witness.getRequirementToSyntheticSubs();
+
+  // The generic environment for the witness thunk.
+  auto *genericEnv = witness.getSyntheticEnvironment();
+
+  // The type of the witness thunk.
+  auto substReqtTy =
+        cast<AnyFunctionType>(reqtOrigTy.subst(reqtSubMap)->getCanonicalType());
+
+  // If there's something to map to for the witness thunk, the conformance
+  // should be phrased in the same terms. This particularly applies to classes
+  // where a thunk for a method in a conformance like `extension Class: P where
+  // T: Q` will go from its native signature of `<τ_0_0 where τ_0_0: Q>` (with T
+  // canonicalised to τ_0_0), to `<τ_0_0, τ_1_0 where τ_0_0: Class<τ_1_0>,
+  // τ_1_0: Q>` (with T now represented by τ_1_0). Find the right conformance by
+  // looking for the conformance of 'Self'.
+  if (reqtSubMap) {
+    auto requirement = conformance.getRequirement();
+    auto self = requirement->getSelfInterfaceType()->getCanonicalType();
+
+    conformance = *reqtSubMap.lookupConformance(self, requirement);
+  }
+
+  CanAnyFunctionType reqtSubstTy;
+  if (genericEnv) {
+    auto *genericSig = genericEnv->getGenericSignature();
+    reqtSubstTy = CanGenericFunctionType::get(
+        genericSig->getCanonicalSignature(),
+        substReqtTy->getParams(), substReqtTy.getResult(),
+        reqtOrigTy->getExtInfo());
+  } else {
+    reqtSubstTy = CanFunctionType::get(substReqtTy->getParams(),
+                                       substReqtTy.getResult(),
+                                       reqtOrigTy->getExtInfo());
+  }
+
+  // Coroutine lowering requires us to provide these substitutions
+  // in order to recreate the appropriate yield types for the accessor
+  // because they aren't reflected in the accessor's AST type.
+  // But this is expensive, so we only do it for coroutine lowering.
+  // When they're part of the AST function type, we can remove this
+  // parameter completely.
+  Optional<SubstitutionMap> witnessSubsForTypeLowering;
+  if (auto accessor = dyn_cast<AccessorDecl>(requirement.getDecl())) {
+    if (accessor->isCoroutine()) {
+      witnessSubsForTypeLowering =
+        witness.getSubstitutions().mapReplacementTypesOutOfContext();
+    }
+  }
+
+  // FIXME: this needs to pull out the conformances/witness-tables for any
+  // conditional requirements from the witness table and pass them to the
+  // underlying function in the thunk.
+
+  // Lower the witness thunk type with the requirement's abstraction level.
+  auto witnessSILFnType = getNativeSILFunctionType(
+      M, AbstractionPattern(reqtOrigTy), reqtSubstTy,
+      requirement, witnessRef, witnessSubsForTypeLowering, conformance);
+
+  // Mangle the name of the witness thunk.
+  Mangle::ASTMangler NewMangler;
+  auto manglingConformance =
+      conformance.isConcrete() ? conformance.getConcrete() : nullptr;
+  std::string nameBuffer =
+      NewMangler.mangleWitnessThunk(manglingConformance, requirement.getDecl());
+
+  // If the thunked-to function is set to be always inlined, do the
+  // same with the witness, on the theory that the user wants all
+  // calls removed if possible, e.g. when we're able to devirtualize
+  // the witness method call. Otherwise, use the default inlining
+  // setting on the theory that forcing inlining off should only
+  // effect the user's function, not otherwise invisible thunks.
+  Inline_t InlineStrategy = InlineDefault;
+  if (witnessRef.isAlwaysInline())
+    InlineStrategy = AlwaysInline;
+
+  SILGenFunctionBuilder builder(*this);
+  auto *f = builder.createFunction(
+      linkage, nameBuffer, witnessSILFnType, genericEnv,
+      SILLocation(witnessRef.getDecl()), IsNotBare, IsTransparent, isSerialized,
+      IsNotDynamic, ProfileCounter(), IsThunk, SubclassScope::NotApplicable,
+      InlineStrategy);
+
+  f->setDebugScope(new (M)
+                   SILDebugScope(RegularLocation(witnessRef.getDecl()), f));
+
+  PrettyStackTraceSILFunction trace("generating protocol witness thunk", f);
+
+  // Create the witness.
+  SILGenFunction SGF(*this, *f, SwiftModule);
+
+  // Substitutions mapping the generic parameters of the witness to
+  // archetypes of the witness thunk generic environment.
+  auto witnessSubs = witness.getSubstitutions();
+
+  SGF.emitProtocolWitness(AbstractionPattern(reqtOrigTy), reqtSubstTy,
+                          requirement, reqtSubMap, witnessRef,
+                          witnessSubs, isFree);
+
+  return f;
+}
+
+namespace {
+
+/// Emit a default witness table for a resilient protocol definition.
+class SILGenDefaultWitnessTable
+    : public SILGenWitnessTable<SILGenDefaultWitnessTable> {
+  using super = SILGenWitnessTable<SILGenDefaultWitnessTable>;
+
+public:
+  SILGenModule &SGM;
+  ProtocolDecl *Proto;
+  SILLinkage Linkage;
+
+  SmallVector<SILDefaultWitnessTable::Entry, 8> DefaultWitnesses;
+
+  SILGenDefaultWitnessTable(SILGenModule &SGM, ProtocolDecl *proto,
+                            SILLinkage linkage)
+      : SGM(SGM), Proto(proto), Linkage(linkage) { }
+
+  void addMissingDefault() {
+    DefaultWitnesses.push_back(SILDefaultWitnessTable::Entry());
+  }
+
+  void addProtocolConformanceDescriptor() { }
+
+  void addOutOfLineBaseProtocol(ProtocolDecl *baseProto) {
+    addMissingDefault();
+  }
+
+  void addMissingMethod(SILDeclRef ref) {
+    addMissingDefault();
+  }
+
+  void addPlaceholder(MissingMemberDecl *placeholder) {
+    llvm_unreachable("generating a witness table with placeholders in it");
+  }
+
+  Witness getWitness(ValueDecl *decl) {
+    return Proto->getDefaultWitness(decl);
+  }
+
+  void addMethodImplementation(SILDeclRef requirementRef,
+                               SILDeclRef witnessRef,
+                               IsFreeFunctionWitness_t isFree,
+                               Witness witness) {
+    SILFunction *witnessFn = SGM.emitProtocolWitness(
+        ProtocolConformanceRef(Proto), SILLinkage::Private, IsNotSerialized,
+        requirementRef, witnessRef, isFree, witness);
+    auto entry = SILWitnessTable::MethodWitness{requirementRef, witnessFn};
+    DefaultWitnesses.push_back(entry);
+  }
+
+  void addAssociatedType(AssociatedType req) {
+    Type witness = Proto->getDefaultTypeWitness(req.getAssociation());
+    if (!witness)
+      return addMissingDefault();
+
+    Type witnessInContext = Proto->mapTypeIntoContext(witness);
+    auto entry = SILWitnessTable::AssociatedTypeWitness{
+                                          req.getAssociation(),
+                                          witnessInContext->getCanonicalType()};
+    DefaultWitnesses.push_back(entry);
+  }
+
+  void addAssociatedConformance(const AssociatedConformance &req) {
+    auto witness =
+        Proto->getDefaultAssociatedConformanceWitness(
+          req.getAssociation(),
+          req.getAssociatedRequirement());
+    if (!witness)
+      return addMissingDefault();
+
+    auto entry =
+        SILWitnessTable::AssociatedTypeProtocolWitness{
+          req.getAssociation(),
+          req.getAssociatedRequirement(),
+          *witness};
+    DefaultWitnesses.push_back(entry);
+  }
+};
+
+} // end anonymous namespace
+
+void SILGenModule::emitDefaultWitnessTable(ProtocolDecl *protocol) {
+  SILLinkage linkage =
+      getSILLinkage(getDeclLinkage(protocol), ForDefinition);
+
+  SILGenDefaultWitnessTable builder(*this, protocol, linkage);
+  builder.visitProtocolDecl(protocol);
+
+  SILDefaultWitnessTable *defaultWitnesses =
+      M.createDefaultWitnessTableDeclaration(protocol, linkage);
+  defaultWitnesses->convertToDefinition(builder.DefaultWitnesses);
+}
+
+namespace {
 
 /// An ASTVisitor for generating SIL from method declarations
 /// inside nominal types.
@@ -309,27 +808,28 @@ class SILGenType : public TypeMemberVisitor<SILGenType> {
 public:
   SILGenModule &SGM;
   NominalTypeDecl *theType;
-  Optional<SILGenVTable> genVTable;
 
   SILGenType(SILGenModule &SGM, NominalTypeDecl *theType)
     : SGM(SGM), theType(theType) {}
 
   /// Emit SIL functions for all the members of the type.
   void emitType() {
-    // Start building a vtable if this is a class.
-    if (auto theClass = dyn_cast<ClassDecl>(theType))
-      genVTable.emplace(SGM, theClass);
-
-    for (Decl *member : theType->getMembers()) {
-      if (genVTable)
-        genVTable->visit(member);
-
+    for (Decl *member : theType->getMembers())
       visit(member);
+
+    // Build a vtable if this is a class.
+    if (auto theClass = dyn_cast<ClassDecl>(theType)) {
+      SILGenVTable genVTable(SGM, theClass);
+      genVTable.emitVTable();
     }
 
+    // Build a default witness table if this is a protocol that needs one.
     if (auto protocol = dyn_cast<ProtocolDecl>(theType)) {
-      if (!protocol->isObjC())
-        SGM.emitDefaultWitnessTable(protocol);
+      if (!protocol->isObjC() && protocol->isResilient()) {
+        auto *SF = protocol->getParentSourceFile();
+        if (!SF || SF->Kind != SourceFileKind::Interface)
+          SGM.emitDefaultWitnessTable(protocol);
+      }
       return;
     }
 
@@ -350,11 +850,11 @@ public:
   void visitTypeAliasDecl(TypeAliasDecl *tad) {}
   void visitAbstractTypeParamDecl(AbstractTypeParamDecl *tpd) {}
   void visitModuleDecl(ModuleDecl *md) {}
+  void visitMissingMemberDecl(MissingMemberDecl *) {}
   void visitNominalTypeDecl(NominalTypeDecl *ntd) {
     SILGenType(SGM, ntd).emitType();
   }
   void visitFuncDecl(FuncDecl *fd) {
-    ProfilerRAII Profiler(SGM, fd);
     SGM.emitFunction(fd);
     // FIXME: Default implementations in protocols.
     if (SGM.requiresObjCMethodEntryPoint(fd) &&
@@ -362,7 +862,6 @@ public:
       SGM.emitObjCMethodThunk(fd);
   }
   void visitConstructorDecl(ConstructorDecl *cd) {
-    ProfilerRAII Profiler(SGM, cd);
     SGM.emitConstructor(cd);
 
     if (SGM.requiresObjCMethodEntryPoint(cd) &&
@@ -371,7 +870,6 @@ public:
   }
   void visitDestructorDecl(DestructorDecl *dd) {
     assert(isa<ClassDecl>(theType) && "destructor in a non-class type");
-    ProfilerRAII Profiler(SGM, dd);
     SGM.emitDestructor(cast<ClassDecl>(theType), dd);
   }
 
@@ -381,7 +879,7 @@ public:
   void visitPatternBindingDecl(PatternBindingDecl *pd) {
     // Emit initializers.
     for (unsigned i = 0, e = pd->getNumPatternEntries(); i != e; ++i) {
-      if (pd->getInit(i)) {
+      if (pd->getNonLazyInit(i)) {
         if (pd->isStatic())
           SGM.emitGlobalInitialization(pd, i);
         else
@@ -397,8 +895,7 @@ public:
     // Collect global variables for static properties.
     // FIXME: We can't statically emit a global variable for generic properties.
     if (vd->isStatic() && vd->hasStorage()) {
-      return emitTypeMemberGlobalVariable(SGM, theType->getGenericParams(),
-                                          theType, vd);
+      return emitTypeMemberGlobalVariable(SGM, vd);
     }
 
     visitAbstractStorageDecl(vd);
@@ -408,6 +905,8 @@ public:
     // FIXME: Default implementations in protocols.
     if (asd->isObjC() && !isa<ProtocolDecl>(asd->getDeclContext()))
       SGM.emitObjCPropertyMethodThunks(asd);
+    
+    SGM.tryEmitPropertyDescriptor(asd);
   }
 };
 
@@ -415,10 +914,6 @@ public:
 
 void SILGenModule::visitNominalTypeDecl(NominalTypeDecl *ntd) {
   SILGenType(*this, ntd).emitType();
-}
-
-void SILGenFunction::visitNominalTypeDecl(NominalTypeDecl *ntd) {
-  SILGenType(SGM, ntd).emitType();
 }
 
 /// SILGenExtension - an ASTVisitor for generating SIL from method declarations
@@ -435,7 +930,7 @@ public:
     for (Decl *member : e->getMembers())
       visit(member);
 
-    if (!e->getExtendedType()->isExistentialType()) {
+    if (!isa<ProtocolDecl>(e->getExtendedNominal())) {
       // Emit witness tables for protocol conformances introduced by the
       // extension.
       for (auto *conformance : e->getLocalConformances(
@@ -454,17 +949,16 @@ public:
   void visitTypeAliasDecl(TypeAliasDecl *tad) {}
   void visitAbstractTypeParamDecl(AbstractTypeParamDecl *tpd) {}
   void visitModuleDecl(ModuleDecl *md) {}
+  void visitMissingMemberDecl(MissingMemberDecl *) {}
   void visitNominalTypeDecl(NominalTypeDecl *ntd) {
     SILGenType(SGM, ntd).emitType();
   }
   void visitFuncDecl(FuncDecl *fd) {
-    ProfilerRAII Profiler(SGM, fd);
     SGM.emitFunction(fd);
     if (SGM.requiresObjCMethodEntryPoint(fd))
       SGM.emitObjCMethodThunk(fd);
   }
   void visitConstructorDecl(ConstructorDecl *cd) {
-    ProfilerRAII Profiler(SGM, cd);
     SGM.emitConstructor(cd);
     if (SGM.requiresObjCMethodEntryPoint(cd))
       SGM.emitObjCConstructorThunk(cd);
@@ -476,7 +970,7 @@ public:
   void visitPatternBindingDecl(PatternBindingDecl *pd) {
     // Emit initializers for static variables.
     for (unsigned i = 0, e = pd->getNumPatternEntries(); i != e; ++i) {
-      if (pd->getInit(i)) {
+      if (pd->getNonLazyInit(i)) {
         assert(pd->isStatic() && "stored property in extension?!");
         SGM.emitGlobalInitialization(pd, i);
       }
@@ -488,10 +982,7 @@ public:
       SGM.emitPropertyBehavior(vd);
     if (vd->hasStorage()) {
       assert(vd->isStatic() && "stored property in extension?!");
-      ExtensionDecl *ext = cast<ExtensionDecl>(vd->getDeclContext());
-      NominalTypeDecl *theType = ext->getExtendedType()->getAnyNominal();
-      return emitTypeMemberGlobalVariable(SGM, ext->getGenericParams(),
-                                          theType, vd);
+      return emitTypeMemberGlobalVariable(SGM, vd);
     }
     visitAbstractStorageDecl(vd);
   }
@@ -504,6 +995,8 @@ public:
   void visitAbstractStorageDecl(AbstractStorageDecl *vd) {
     if (vd->isObjC())
       SGM.emitObjCPropertyMethodThunks(vd);
+    
+    SGM.tryEmitPropertyDescriptor(vd);
   }
 };
 

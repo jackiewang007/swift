@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -55,7 +55,7 @@ enum class AAKind : unsigned {
 } // end anonymous namespace
 
 static llvm::cl::opt<AAKind>
-DebugAAKinds("aa", llvm::cl::desc("Alias Analysis Kinds:"),
+DebugAAKinds("aa-kind", llvm::cl::desc("Alias Analysis Kinds:"),
              llvm::cl::init(AAKind::All),
              llvm::cl::values(clEnumValN(AAKind::None,
                                          "none",
@@ -68,8 +68,7 @@ DebugAAKinds("aa", llvm::cl::desc("Alias Analysis Kinds:"),
                                          "typed-access-tb-aa"),
                               clEnumValN(AAKind::All,
                                          "all",
-                                         "all"),
-                              clEnumValEnd));
+                                         "all")));
 
 static inline bool shouldRunAA() {
   return unsigned(AAKind(DebugAAKinds));
@@ -98,6 +97,8 @@ llvm::raw_ostream &swift::operator<<(llvm::raw_ostream &OS, AliasResult R) {
   case AliasResult::PartialAlias: return OS << "PartialAlias";
   case AliasResult::MustAlias:    return OS << "MustAlias";
   }
+
+  llvm_unreachable("Unhandled AliasResult in switch.");
 }
 
 SILValue getAccessedMemory(SILInstruction *User) {
@@ -119,10 +120,7 @@ SILValue getAccessedMemory(SILInstruction *User) {
 /// Return true if the given SILArgument is an argument to the first BB of a
 /// function.
 static bool isFunctionArgument(SILValue V) {
-  auto *Arg = dyn_cast<SILArgument>(V);
-  if (!Arg)
-    return false;
-  return Arg->isFunctionArg();
+  return isa<SILFunctionArgument>(V);
 }
 
 /// Return true if V is an object that at compile time can be uniquely
@@ -192,8 +190,8 @@ static bool aliasUnequalObjects(SILValue O1, SILValue O2) {
   // If O1 and O2 do not equal and they are both values that can be statically
   // and uniquely identified, they cannot alias.
   if (areDistinctIdentifiableObjects(O1, O2)) {
-    DEBUG(llvm::dbgs() << "            Found two unequal identified "
-          "objects.\n");
+    LLVM_DEBUG(llvm::dbgs() << "            Found two unequal identified "
+               "objects.\n");
     return true;
   }
 
@@ -206,8 +204,8 @@ static bool aliasUnequalObjects(SILValue O1, SILValue O2) {
   // @owned object.
   if ((isFunctionArgument(O1) && isIdentifiedFunctionLocal(O2)) ||
       (isFunctionArgument(O2) && isIdentifiedFunctionLocal(O1))) {
-    DEBUG(llvm::dbgs() << "            Found unequal function arg and "
-          "identified function local!\n");
+    LLVM_DEBUG(llvm::dbgs() << "            Found unequal function arg and "
+               "identified function local!\n");
     return true;
   }
 
@@ -304,18 +302,18 @@ AliasResult AliasAnalysis::aliasAddressProjection(SILValue V1, SILValue V2,
 /// TBAA to know what the real types associated with the SILInstruction are.
 static bool isTypedAccessOracle(SILInstruction *I) {
   switch (I->getKind()) {
-  case ValueKind::RefElementAddrInst:
-  case ValueKind::RefTailAddrInst:
-  case ValueKind::StructElementAddrInst:
-  case ValueKind::TupleElementAddrInst:
-  case ValueKind::UncheckedTakeEnumDataAddrInst:
-  case ValueKind::LoadInst:
-  case ValueKind::StoreInst:
-  case ValueKind::AllocStackInst:
-  case ValueKind::AllocBoxInst:
-  case ValueKind::ProjectBoxInst:
-  case ValueKind::DeallocStackInst:
-  case ValueKind::DeallocBoxInst:
+  case SILInstructionKind::RefElementAddrInst:
+  case SILInstructionKind::RefTailAddrInst:
+  case SILInstructionKind::StructElementAddrInst:
+  case SILInstructionKind::TupleElementAddrInst:
+  case SILInstructionKind::UncheckedTakeEnumDataAddrInst:
+  case SILInstructionKind::LoadInst:
+  case SILInstructionKind::StoreInst:
+  case SILInstructionKind::AllocStackInst:
+  case SILInstructionKind::AllocBoxInst:
+  case SILInstructionKind::ProjectBoxInst:
+  case SILInstructionKind::DeallocStackInst:
+  case SILInstructionKind::DeallocBoxInst:
     return true;
   default:
     return false;
@@ -331,8 +329,8 @@ static bool isTypedAccessOracle(SILInstruction *I) {
 /// alias. Call arguments also cannot alias because they must follow \@in, @out,
 /// @inout, or \@in_guaranteed conventions.
 static bool isAddressRootTBAASafe(SILValue V) {
-  if (auto *Arg = dyn_cast<SILArgument>(V))
-    return Arg->isFunctionArg();
+  if (isa<SILFunctionArgument>(V))
+    return true;
 
   if (auto *PtrToAddr = dyn_cast<PointerToAddressInst>(V))
     return PtrToAddr->isStrict();
@@ -354,7 +352,8 @@ static bool isAddressRootTBAASafe(SILValue V) {
 static SILType findTypedAccessType(SILValue V) {
   // First look at the origin of V and see if we have any instruction that is a
   // typed oracle.
-  if (auto *I = dyn_cast<SILInstruction>(V))
+  // TODO: MultiValueInstruction
+  if (auto *I = dyn_cast<SingleValueInstruction>(V))
     if (isTypedAccessOracle(I))
       return V->getType();
 
@@ -575,8 +574,8 @@ AliasResult AliasAnalysis::aliasInner(SILValue V1, SILValue V2,
   if (isSameValueOrGlobal(V1, V2))
     return AliasResult::MustAlias;
 
-  DEBUG(llvm::dbgs() << "ALIAS ANALYSIS:\n    V1: " << *V1
-        << "    V2: " << *V2);
+  LLVM_DEBUG(llvm::dbgs() << "ALIAS ANALYSIS:\n    V1: " << *V1
+             << "    V2: " << *V2);
 
   // Pass in both the TBAA types so we can perform typed access TBAA and the
   // actual types of V1, V2 so we can perform class based TBAA.
@@ -591,15 +590,15 @@ AliasResult AliasAnalysis::aliasInner(SILValue V1, SILValue V2,
   // Strip off any casts on V1, V2.
   V1 = stripCasts(V1);
   V2 = stripCasts(V2);
-  DEBUG(llvm::dbgs() << "        After Cast Stripping V1:" << *V1);
-  DEBUG(llvm::dbgs() << "        After Cast Stripping V2:" << *V2);
+  LLVM_DEBUG(llvm::dbgs() << "        After Cast Stripping V1:" << *V1);
+  LLVM_DEBUG(llvm::dbgs() << "        After Cast Stripping V2:" << *V2);
 
   // Ok, we need to actually compute an Alias Analysis result for V1, V2. Begin
   // by finding the "base" of V1, V2 by stripping off all casts and GEPs.
   SILValue O1 = getUnderlyingObject(V1);
   SILValue O2 = getUnderlyingObject(V2);
-  DEBUG(llvm::dbgs() << "        Underlying V1:" << *O1);
-  DEBUG(llvm::dbgs() << "        Underlying V2:" << *O2);
+  LLVM_DEBUG(llvm::dbgs() << "        Underlying V1:" << *O1);
+  LLVM_DEBUG(llvm::dbgs() << "        Underlying V2:" << *O2);
 
   // If O1 and O2 do not equal, see if we can prove that they cannot be the
   // same object. If we can, return No Alias.
@@ -615,8 +614,8 @@ AliasResult AliasAnalysis::aliasInner(SILValue V1, SILValue V2,
   // Note that escape analysis must work with the original pointers and not the
   // underlying objects because it treats projections differently.
   if (!EA->canPointToSameMemory(V1, V2)) {
-    DEBUG(llvm::dbgs() << "            Found not-aliased objects based on"
-                                      "escape analysis\n");
+    LLVM_DEBUG(llvm::dbgs() << "            Found not-aliased objects based on "
+                               "escape analysis\n");
     return AliasResult::NoAlias;
   }
 
@@ -653,8 +652,8 @@ bool AliasAnalysis::canApplyDecrementRefCount(FullApplySite FAS, SILValue Ptr) {
   if (!EA->canEscapeTo(Ptr, FAS))
     return false;
 
-  SideEffectAnalysis::FunctionEffects ApplyEffects;
-  SEA->getEffects(ApplyEffects, FAS);
+  FunctionSideEffects ApplyEffects;
+  SEA->getCalleeEffects(ApplyEffects, FAS);
 
   auto &GlobalEffects = ApplyEffects.getGlobalEffects();
   if (ApplyEffects.mayReadRC() || GlobalEffects.mayRelease())
@@ -750,7 +749,7 @@ bool swift::isLetPointer(SILValue V) {
 
 
   // Check if a parent of a tuple is a "let"
-  if (TupleElementAddrInst *TEA = dyn_cast<TupleElementAddrInst>(V))
+  if (auto *TEA = dyn_cast<TupleElementAddrInst>(V))
     return isLetPointer(TEA->getOperand());
 
   return false;

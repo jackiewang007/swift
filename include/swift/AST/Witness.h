@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -19,7 +19,6 @@
 #define SWIFT_AST_WITNESS_H
 
 #include "swift/AST/ConcreteDeclRef.h"
-#include "swift/AST/SubstitutionMap.h"
 #include "llvm/ADT/PointerUnion.h"
 #include "llvm/Support/Compiler.h"
 
@@ -93,7 +92,7 @@ class Witness {
     /// the witness declaration from the synthetic environment.
     ConcreteDeclRef declRef;
     GenericEnvironment *syntheticEnvironment;
-    SubstitutionMap reqToSyntheticEnvMap;
+    SubstitutionMap reqToSyntheticEnvSubs;
   };
 
   llvm::PointerUnion<ValueDecl *, StoredWitness *> storage;
@@ -108,6 +107,25 @@ public:
   /// not generic (excepting \c Self)  and the conforming type is non-generic.
   Witness(ValueDecl *witness) : storage(witness) { assert(witness != nullptr); }
 
+  /// Create an opaque witness for the given requirement.
+  ///
+  /// This indicates that a witness exists, but is not visible to the current
+  /// module.
+  static Witness forOpaque(ValueDecl *requirement) {
+    // TODO: It's probably a good idea to have a separate 'opaque' bit.
+    // Making req == witness is kind of a hack.
+    return Witness(requirement);
+  }
+
+  /// Create a witness for the given requirement.
+  ///
+  /// Deserialized witnesses do not have a synthetic environment.
+  static Witness forDeserialized(ValueDecl *decl,
+                                 SubstitutionMap substitutions) {
+    // TODO: It's probably a good idea to have a separate 'deserialized' bit.
+    return Witness(decl, substitutions, nullptr, SubstitutionMap());
+  }
+
   /// Create a witness that requires substitutions.
   ///
   /// \param decl The declaration for the witness.
@@ -117,11 +135,12 @@ public:
   ///
   /// \param syntheticEnv The synthetic environment.
   ///
-  /// \param reqToSyntheticEnvMap The mapping from the interface types of the
+  /// \param reqToSyntheticEnvSubs The mapping from the interface types of the
   /// requirement into the interface types of the synthetic environment.
-  Witness(ValueDecl *decl, ArrayRef<Substitution> substitutions,
+  Witness(ValueDecl *decl,
+          SubstitutionMap substitutions,
           GenericEnvironment *syntheticEnv,
-          SubstitutionMap reqToSyntheticEnvMap);
+          SubstitutionMap reqToSyntheticEnvSubs);
 
   /// Retrieve the witness declaration reference, which includes the
   /// substitutions needed to use the witness from the synthetic environment
@@ -139,45 +158,28 @@ public:
   /// Determines whether there is a witness at all.
   explicit operator bool() const { return !storage.isNull(); }
 
-  /// Implicit conversion to the \c ConcreteDeclRef, which is used by a
-  /// number of clients.
-  ///
-  /// FIXME: We probably want this to go away eventually, because clients using
-  /// it will all need to be cognizant of the synthetic environment.
-  operator ConcreteDeclRef() const { return getDeclRef(); }
-
-  /// Determine whether this witness requires any substitutions.
-  bool requiresSubstitution() const { return storage.is<StoredWitness *>(); }
-
   /// Retrieve the substitutions required to use this witness from the
   /// synthetic environment.
   ///
   /// The substitutions are substitutions for the witness, providing interface
   /// types from the synthetic environment.
-  ArrayRef<Substitution> getSubstitutions() const {
+  SubstitutionMap getSubstitutions() const {
     return getDeclRef().getSubstitutions();
-  }
-
-  /// Retrieve the generic signature of the synthetic environment.
-  GenericSignature *getSyntheticSignature() const {
-    assert(requiresSubstitution() && "No substitutions required for witness");
-    if (auto *env = getSyntheticEnvironment())
-      return env->getGenericSignature();
-    else
-      return nullptr;
   }
 
   /// Retrieve the synthetic generic environment.
   GenericEnvironment *getSyntheticEnvironment() const {
-    assert(requiresSubstitution() && "No substitutions required for witness");
-    return storage.get<StoredWitness *>()->syntheticEnvironment;
+    if (auto *storedWitness = storage.dyn_cast<StoredWitness *>())
+      return storedWitness->syntheticEnvironment;
+    return nullptr;
   }
 
   /// Retrieve the substitution map that maps the interface types of the
   /// requirement to the interface types of the synthetic environment.
-  const SubstitutionMap &getRequirementToSyntheticMap() const {
-    assert(requiresSubstitution() && "No substitutions required for witness");
-    return storage.get<StoredWitness *>()->reqToSyntheticEnvMap;
+  SubstitutionMap getRequirementToSyntheticSubs() const {
+    if (auto *storedWitness = storage.dyn_cast<StoredWitness *>())
+      return storedWitness->reqToSyntheticEnvSubs;
+    return {};
   }
 
   LLVM_ATTRIBUTE_DEPRECATED(

@@ -1,6 +1,19 @@
-#if os(OSX) || os(iOS) || os(tvOS) || os(watchOS)
+//===----------------------------------------------------------------------===//
+//
+// This source file is part of the Swift.org open source project
+//
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
+// Licensed under Apache License v2.0 with Runtime Library Exception
+//
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+//
+//===----------------------------------------------------------------------===//
+
+#if os(macOS) || os(iOS) || os(tvOS) || os(watchOS)
 /// Enumeration describing Mach error codes.
-@objc public enum MachErrorCode : Int32 {
+@objc
+public enum MachErrorCode : Int32 {
   case success                  = 0
 
   /// Specified address is not currently valid.
@@ -189,4 +202,4 @@
   /// The requested property cannot be changed at this time.
   case policyStatic             = 51
 }
-#endif // os(OSX) || os(iOS) || os(tvOS) || os(watchOS)
+#endif // os(macOS) || os(iOS) || os(tvOS) || os(watchOS)

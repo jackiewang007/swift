@@ -2,27 +2,16 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
 @_exported import Foundation // Clang module
-
-@_silgen_name("__NSCalendarIsAutoupdating")
-internal func __NSCalendarIsAutoupdating(_ calendar: NSCalendar) -> Bool
-
-@_silgen_name("__NSCalendarAutoupdating")
-internal func __NSCalendarAutoupdating() -> NSCalendar
-
-@_silgen_name("__NSCalendarCurrent")
-internal func __NSCalendarCurrent() -> NSCalendar
-
-@_silgen_name("__NSCalendarInit")
-internal func __NSCalendarInit(_ identifier : NSString) -> NSCalendar?
+import _SwiftFoundationOverlayShims
 
 /**
  `Calendar` encapsulates information about systems of reckoning time in which the beginning, length, and divisions of a year are defined. It provides information about the calendar and support for calendrical computations such as determining the range of a given calendrical unit and adding units to a given absolute time.
@@ -53,11 +42,11 @@ public struct Calendar : Hashable, Equatable, ReferenceConvertible, _MutableBoxi
         case republicOfChina
         
         /// A simple tabular Islamic calendar using the astronomical/Thursday epoch of CE 622 July 15
-        @available(OSX 10.10, iOS 8.0, *)
+        @available(macOS 10.10, iOS 8.0, *)
         case islamicTabular
         
         /// The Islamic Umm al-Qura calendar used in Saudi Arabia. This is based on astronomical calculation, instead of tabular behavior.
-        @available(OSX 10.10, iOS 8.0, *)
+        @available(macOS 10.10, iOS 8.0, *)
         case islamicUmmAlQura
         
     }
@@ -86,18 +75,20 @@ public struct Calendar : Hashable, Equatable, ReferenceConvertible, _MutableBoxi
         case timeZone
     }
     
-    /// Returns the user's current calendar. This calendar does not track changes that the user makes to their preferences.
+    /// Returns the user's current calendar.
+    ///
+    /// This calendar does not track changes that the user makes to their preferences.
     public static var current : Calendar {
-        return Calendar(adoptingReference: __NSCalendarCurrent(), autoupdating: false)
+        return Calendar(adoptingReference: __NSCalendarCurrent() as! NSCalendar, autoupdating: false)
     }
     
-    /// A Calendar that tracks changes to user's preferred calendar identifier.
+    /// A Calendar that tracks changes to user's preferred calendar.
     ///
-    /// If mutated, this calendar will no longer autoupdate.
+    /// If mutated, this calendar will no longer track the user's preferred calendar.
     ///
-    /// - note: The autoupdating Calendar will only compare equal to another autoupdating calendar.
+    /// - note: The autoupdating Calendar will only compare equal to another autoupdating Calendar.
     public static var autoupdatingCurrent : Calendar {
-        return Calendar(adoptingReference: __NSCalendarAutoupdating(), autoupdating: true)
+        return Calendar(adoptingReference: __NSCalendarAutoupdating() as! NSCalendar, autoupdating: true)
     }
 
     // MARK: -
@@ -106,16 +97,16 @@ public struct Calendar : Hashable, Equatable, ReferenceConvertible, _MutableBoxi
     /// Returns a new Calendar.
     ///
     /// - parameter identifier: The kind of calendar to use.
-    public init(identifier: Identifier) {
-        let result = __NSCalendarInit(Calendar._toNSCalendarIdentifier(identifier).rawValue as NSString)!
-        _handle = _MutableHandle(adoptingReference: result)
+    public init(identifier: __shared Identifier) {
+        let result = __NSCalendarCreate(Calendar._toNSCalendarIdentifier(identifier))
+        _handle = _MutableHandle(adoptingReference: result as! NSCalendar)
         _autoupdating = false
     }
     
     // MARK: -
     // MARK: Bridging
     
-    fileprivate init(reference : NSCalendar) {
+    fileprivate init(reference : __shared NSCalendar) {
         _handle = _MutableHandle(reference: reference)
         if __NSCalendarIsAutoupdating(reference) {
             _autoupdating = true
@@ -366,7 +357,7 @@ public struct Calendar : Hashable, Equatable, ReferenceConvertible, _MutableBoxi
     /// - parameter component: A component to calculate a range for.
     /// - returns: The range, or nil if it could not be calculated.
     public func minimumRange(of component: Component) -> Range<Int>? {
-        return _handle.map { $0.minimumRange(of: Calendar._toCalendarUnit([component])).toRange() }
+        return _handle.map { Range($0.minimumRange(of: Calendar._toCalendarUnit([component]))) }
     }
     
     /// The maximum range limits of the values that a given component can take on in the receive
@@ -375,7 +366,7 @@ public struct Calendar : Hashable, Equatable, ReferenceConvertible, _MutableBoxi
     /// - parameter component: A component to calculate a range for.
     /// - returns: The range, or nil if it could not be calculated.
     public func maximumRange(of component: Component) -> Range<Int>? {
-        return _handle.map { $0.maximumRange(of: Calendar._toCalendarUnit([component])).toRange() }
+        return _handle.map { Range($0.maximumRange(of: Calendar._toCalendarUnit([component]))) }
     }
     
     
@@ -392,7 +383,7 @@ public struct Calendar : Hashable, Equatable, ReferenceConvertible, _MutableBoxi
     /// - parameter date: The absolute time for which the calculation is performed.
     /// - returns: The range of absolute time values smaller can take on in larger at the time specified by date. Returns `nil` if larger is not logically bigger than smaller in the calendar, or the given combination of components does not make sense (or is a computation which is undefined).
     public func range(of smaller: Component, in larger: Component, for date: Date) -> Range<Int>? {
-        return _handle.map { $0.range(of: Calendar._toCalendarUnit([smaller]), in: Calendar._toCalendarUnit([larger]), for: date).toRange() }
+        return _handle.map { Range($0.range(of: Calendar._toCalendarUnit([smaller]), in: Calendar._toCalendarUnit([larger]), for: date)) }
     }
     
     @available(*, unavailable, message: "use range(of:in:for:) instead")
@@ -413,7 +404,7 @@ public struct Calendar : Hashable, Equatable, ReferenceConvertible, _MutableBoxi
         var nsDate : NSDate?
         var ti : TimeInterval = 0
         if _handle.map({ $0.range(of: Calendar._toCalendarUnit([component]), start: &nsDate, interval: &ti, for: date) }) {
-            start = nsDate as! Date
+            start = nsDate! as Date
             interval = ti
             return true
         } else {
@@ -426,7 +417,7 @@ public struct Calendar : Hashable, Equatable, ReferenceConvertible, _MutableBoxi
     /// - parameter component: A calendar component.
     /// - parameter date: The specified date.
     /// - returns: A new `DateInterval` if the starting time and duration of a component could be calculated, otherwise `nil`.
-    @available(OSX 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
+    @available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
     public func dateInterval(of component: Component, for date: Date) -> DateInterval? {
         var start : Date = Date(timeIntervalSinceReferenceDate: 0)
         var interval : TimeInterval = 0
@@ -600,7 +591,7 @@ public struct Calendar : Hashable, Equatable, ReferenceConvertible, _MutableBoxi
     public func compare(_ date1: Date, to date2: Date, toUnitGranularity unit: NSCalendar.Unit) -> ComparisonResult { fatalError() }
     
     
-    /// Compares the given dates down to the given component, reporting them `orderedSame` if they are the same in the given component and all larger components, otherwise either `orderedAscending` or `orderedAscending`.
+    /// Compares the given dates down to the given component, reporting them `orderedSame` if they are the same in the given component and all larger components, otherwise either `orderedAscending` or `orderedDescending`.
     ///
     /// - parameter date1: A date to compare.
     /// - parameter date2: A date to compare.
@@ -691,7 +682,7 @@ public struct Calendar : Hashable, Equatable, ReferenceConvertible, _MutableBoxi
         var nsDate : NSDate?
         var ti : TimeInterval = 0
         if _handle.map({ $0.range(ofWeekendStart: &nsDate, interval: &ti, containing: date) }) {
-            start = nsDate as! Date
+            start = nsDate! as Date
             interval = ti
             return true
         } else {
@@ -703,12 +694,12 @@ public struct Calendar : Hashable, Equatable, ReferenceConvertible, _MutableBoxi
     ///
     /// - parameter date: The date contained in the weekend.
     /// - returns: A `DateInterval`, or nil if the date is not in a weekend.
-    @available(OSX 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
+    @available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
     public func dateIntervalOfWeekend(containing date: Date) -> DateInterval? {
         var nsDate : NSDate?
         var ti : TimeInterval = 0
         if _handle.map({ $0.range(ofWeekendStart: &nsDate, interval: &ti, containing: date) }) {
-            return DateInterval(start: nsDate as! Date, duration: ti)
+            return DateInterval(start: nsDate! as Date, duration: ti)
         } else {
             return nil
         }
@@ -732,7 +723,7 @@ public struct Calendar : Hashable, Equatable, ReferenceConvertible, _MutableBoxi
         var nsDate : NSDate?
         var ti : TimeInterval = 0
         if _handle.map({ $0.nextWeekendStart(&nsDate, interval: &ti, options: direction == .backward ? [.searchBackwards] : [], after: date) }) {
-            start = nsDate as! Date
+            start = nsDate! as Date
             interval = ti
             return true
         } else {
@@ -748,14 +739,14 @@ public struct Calendar : Hashable, Equatable, ReferenceConvertible, _MutableBoxi
     /// - parameter date: The date at which to begin the search.
     /// - parameter direction: Which direction in time to search. The default value is `.forward`.
     /// - returns: A `DateInterval`, or nil if weekends do not exist in the specific calendar or locale.
-    @available(OSX 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
+    @available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
     public func nextWeekend(startingAfter date: Date, direction: SearchDirection = .forward) -> DateInterval? {
         // The implementation actually overrides previousKeepSmaller and nextKeepSmaller with matchNext, always - but strict still trumps all.
         var nsDate : NSDate?
         var ti : TimeInterval = 0
         if _handle.map({ $0.nextWeekendStart(&nsDate, interval: &ti, options: direction == .backward ? [.searchBackwards] : [], after: date) }) {
             /// WARNING: searching backwards is totally broken! 26643365
-            return DateInterval(start: nsDate as! Date, duration: ti)
+            return DateInterval(start: nsDate! as Date, duration: ti)
         } else {
             return nil
         }
@@ -926,25 +917,25 @@ public struct Calendar : Hashable, Equatable, ReferenceConvertible, _MutableBoxi
         
         switch matchingPolicy {
         case .nextTime:
-            let _ = result.insert(.matchNextTime)
+            result.insert(.matchNextTime)
         case .nextTimePreservingSmallerComponents:
-            let _ = result.insert(.matchNextTimePreservingSmallerUnits)
+            result.insert(.matchNextTimePreservingSmallerUnits)
         case .previousTimePreservingSmallerComponents:
-            let _ = result.insert(.matchPreviousTimePreservingSmallerUnits)
+            result.insert(.matchPreviousTimePreservingSmallerUnits)
         case .strict:
-            let _ = result.insert(.matchStrictly)
+            result.insert(.matchStrictly)
         }
         
         switch repeatedTimePolicy {
         case .first:
-            let _ = result.insert(.matchFirst)
+            result.insert(.matchFirst)
         case .last:
-            let _ = result.insert(.matchLast)
+            result.insert(.matchLast)
         }
         
         switch direction {
         case .backward:
-            let _ = result.insert(.searchBackwards)
+            result.insert(.searchBackwards)
         case .forward:
             break
         }
@@ -973,13 +964,13 @@ public struct Calendar : Hashable, Equatable, ReferenceConvertible, _MutableBoxi
         
         var result = NSCalendar.Unit()
         for u in units {
-            let _ = result.insert(unitMap[u]!)
+            result.insert(unitMap[u]!)
         }
         return result
     }
     
     internal static func _toNSCalendarIdentifier(_ identifier : Identifier) -> NSCalendar.Identifier {
-        if #available(OSX 10.10, iOS 8.0, *) {
+        if #available(macOS 10.10, iOS 8.0, *) {
             let identifierMap : [Identifier : NSCalendar.Identifier] =
                 [.gregorian : .gregorian,
                  .buddhist : .buddhist,
@@ -1018,8 +1009,8 @@ public struct Calendar : Hashable, Equatable, ReferenceConvertible, _MutableBoxi
         }
     }
     
-    private static func _fromNSCalendarIdentifier(_ identifier : NSCalendar.Identifier) -> Identifier {
-        if #available(OSX 10.10, iOS 8.0, *) {
+    internal static func _fromNSCalendarIdentifier(_ identifier : NSCalendar.Identifier) -> Identifier {
+        if #available(macOS 10.10, iOS 8.0, *) {
             let identifierMap : [NSCalendar.Identifier : Identifier] =
                 [.gregorian : .gregorian,
                  .buddhist : .buddhist,
@@ -1075,9 +1066,9 @@ public struct Calendar : Hashable, Equatable, ReferenceConvertible, _MutableBoxi
 
 extension Calendar : CustomDebugStringConvertible, CustomStringConvertible, CustomReflectable {
     private var _kindDescription : String {
-        if (self == Calendar.autoupdatingCurrent) {
+        if self == Calendar.autoupdatingCurrent {
             return "autoupdatingCurrent"
-        } else if (self == Calendar.current) {
+        } else if self == Calendar.current {
             return "current"
         } else {
             return "fixed"
@@ -1093,13 +1084,14 @@ extension Calendar : CustomDebugStringConvertible, CustomStringConvertible, Cust
     }
     
     public var customMirror : Mirror {
-        var c: [(label: String?, value: Any)] = []
-        c.append((label: "identifier", value: identifier))
-        c.append((label: "kind", value: _kindDescription))
-        c.append((label: "locale", value: locale))
-        c.append((label: "timeZone", value: timeZone))
-        c.append((label: "firstWeekday", value: firstWeekday))
-        c.append((label: "minimumDaysInFirstWeek", value: minimumDaysInFirstWeek))
+        let c: [(label: String?, value: Any)] = [
+          ("identifier", identifier),
+          ("kind", _kindDescription),
+          ("locale", locale as Any),
+          ("timeZone", timeZone),
+          ("firstWeekday", firstWeekday),
+          ("minimumDaysInFirstWeek", minimumDaysInFirstWeek),
+        ]
         return Mirror(self, children: c, displayStyle: Mirror.DisplayStyle.struct)
     }
 }
@@ -1121,6 +1113,7 @@ extension Calendar : _ObjectiveCBridgeable {
         return true
     }
     
+    @_effects(readonly)
     public static func _unconditionallyBridgeFromObjectiveC(_ source: NSCalendar?) -> Calendar {
         var result: Calendar?
         _forceBridgeFromObjectiveC(source!, result: &result)
@@ -1136,3 +1129,35 @@ extension NSCalendar : _HasCustomAnyHashableRepresentation {
     }
 }
 
+extension Calendar : Codable {
+    private enum CodingKeys : Int, CodingKey {
+        case identifier
+        case locale
+        case timeZone
+        case firstWeekday
+        case minimumDaysInFirstWeek
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let identifierString = try container.decode(String.self, forKey: .identifier)
+        let identifier = Calendar._fromNSCalendarIdentifier(NSCalendar.Identifier(rawValue: identifierString))
+        self.init(identifier: identifier)
+
+        self.locale = try container.decodeIfPresent(Locale.self, forKey: .locale)
+        self.timeZone = try container.decode(TimeZone.self, forKey: .timeZone)
+        self.firstWeekday = try container.decode(Int.self, forKey: .firstWeekday)
+        self.minimumDaysInFirstWeek = try container.decode(Int.self, forKey: .minimumDaysInFirstWeek)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+
+        let identifier = Calendar._toNSCalendarIdentifier(self.identifier).rawValue
+        try container.encode(identifier, forKey: .identifier)
+        try container.encode(self.locale, forKey: .locale)
+        try container.encode(self.timeZone, forKey: .timeZone)
+        try container.encode(self.firstWeekday, forKey: .firstWeekday)
+        try container.encode(self.minimumDaysInFirstWeek, forKey: .minimumDaysInFirstWeek)
+    }
+}

@@ -2,30 +2,35 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
 #define DEBUG_TYPE "mandatory-inlining"
-#include "swift/SILOptimizer/PassManager/Passes.h"
 #include "swift/AST/DiagnosticEngine.h"
 #include "swift/AST/DiagnosticsSIL.h"
+#include "swift/Basic/BlotSetVector.h"
+#include "swift/SIL/InstructionUtils.h"
+#include "swift/SILOptimizer/PassManager/Passes.h"
+#include "swift/SILOptimizer/PassManager/Transforms.h"
+#include "swift/SILOptimizer/Utils/CFG.h"
 #include "swift/SILOptimizer/Utils/Devirtualize.h"
 #include "swift/SILOptimizer/Utils/Local.h"
 #include "swift/SILOptimizer/Utils/SILInliner.h"
-#include "swift/SILOptimizer/PassManager/Transforms.h"
+#include "swift/SILOptimizer/Utils/SILOptFunctionBuilder.h"
 #include "llvm/ADT/DenseSet.h"
-#include "llvm/ADT/Statistic.h"
 #include "llvm/ADT/ImmutableSet.h"
+#include "llvm/ADT/Statistic.h"
 #include "llvm/Support/Debug.h"
+
 using namespace swift;
 
-typedef llvm::DenseSet<SILFunction*> DenseFunctionSet;
-typedef llvm::ImmutableSet<SILFunction*> ImmutableFunctionSet;
+using DenseFunctionSet = llvm::DenseSet<SILFunction *>;
+using ImmutableFunctionSet = llvm::ImmutableSet<SILFunction *>;
 
 STATISTIC(NumMandatoryInlines,
           "Number of function application sites inlined by the mandatory "
@@ -37,155 +42,243 @@ static void diagnose(ASTContext &Context, SourceLoc loc, Diag<T...> diag,
   Context.Diags.diagnose(loc, diag, std::forward<U>(args)...);
 }
 
-namespace {
-
-/// A helper class to update an instruction iterator if
-/// removal of instructions would invalidate it.
-class DeleteInstructionsHandler : public DeleteNotificationHandler {
-  SILBasicBlock::iterator &CurrentI;
-  SILModule &Module;
-
-public:
-  DeleteInstructionsHandler(SILBasicBlock::iterator &I)
-      : CurrentI(I), Module(I->getModule()) {
-    Module.registerDeleteNotificationHandler(this);
-  }
-
-  ~DeleteInstructionsHandler() {
-     // Unregister the handler.
-    Module.removeDeleteNotificationHandler(this);
-  }
-
-  // Handling of instruction removal notifications.
-  bool needsNotifications() { return true; }
-
-  // Handle notifications about removals of instructions.
-  void handleDeleteNotification(swift::ValueBase *Value) {
-    if (auto DeletedI = dyn_cast<SILInstruction>(Value)) {
-      if (CurrentI == SILBasicBlock::iterator(DeletedI)) {
-        if (CurrentI != CurrentI->getParent()->begin()) {
-          --CurrentI;
-        } else {
-          ++CurrentI;
-        }
-      }
-    }
-  }
-};
-
-} // end of namespace
-
 /// \brief Fixup reference counts after inlining a function call (which is a
 /// no-op unless the function is a thick function). Note that this function
 /// makes assumptions about the release/retain convention of thick function
 /// applications: namely, that an apply of a thick function consumes the callee
 /// and that the function implementing the closure consumes its capture
 /// arguments.
-static void fixupReferenceCounts(SILBasicBlock::iterator I, SILLocation Loc,
-                                 SILValue CalleeValue,
-                                 SmallVectorImpl<SILValue> &CaptureArgs) {
-  // Either release the callee (which the apply would have done) or remove a
-  // retain that happens to be the immediately preceding instruction.
-  SILBuilderWithScope B(I);
-  auto *NewRelease = B.emitStrongReleaseAndFold(Loc, CalleeValue);
+static void fixupReferenceCounts(
+    SILInstruction *I, SILValue CalleeValue,
+    SmallVectorImpl<std::pair<SILValue, ParameterConvention>> &CaptureArgs,
+    bool isCalleeGuaranteed) {
+  // Add a copy of each non-address type capture argument to lifetime extend the
+  // captured argument over the inlined function. This deals with the
+  // possibility of the closure being destroyed by an earlier application and
+  // thus cause the captured argument to be destroyed.
+  for (auto &CaptureArg : CaptureArgs) {
+    if (!CaptureArg.first->getType().isAddress() &&
+        CaptureArg.second != ParameterConvention::Direct_Guaranteed &&
+        CaptureArg.second != ParameterConvention::Direct_Unowned) {
+      createIncrementBefore(CaptureArg.first, I);
+    } else {
+      // FIXME: What about indirectly owned parameters? The invocation of the
+      // closure would perform an indirect copy which we should mimick here.
+      assert(CaptureArg.second != ParameterConvention::Indirect_In &&
+             "Missing indirect copy");
+    }
+  }
 
-  // Important: we move the insertion point before this new release, just in
-  // case this inserted release would have caused the deallocation of the
-  // closure and its contained capture arguments.
-  if (NewRelease)
-    B.setInsertionPoint(NewRelease);
+  // Destroy the callee as the apply would have done.
+  if (!isCalleeGuaranteed)
+    createDecrementBefore(CalleeValue, &*I);
+}
 
-  // Add a retain of each non-address type capture argument, because it will be
-  // consumed by the closure body.
-  for (auto &CaptureArg : CaptureArgs)
-    if (!CaptureArg->getType().isAddress())
-      B.emitCopyValueOperation(Loc, CaptureArg);
+static SILValue cleanupLoadedCalleeValue(SILValue CalleeValue, LoadInst *LI) {
+  auto *PBI = cast<ProjectBoxInst>(LI->getOperand());
+  auto *ABI = cast<AllocBoxInst>(PBI->getOperand());
+
+  // The load instruction must have no more uses left to erase it.
+  if (!LI->use_empty())
+    return SILValue();
+  LI->eraseFromParent();
+
+  // Look through uses of the alloc box the load is loading from to find up to
+  // one store and up to one strong release.
+  StrongReleaseInst *SRI = nullptr;
+  for (Operand *ABIUse : ABI->getUses()) {
+    if (SRI == nullptr && isa<StrongReleaseInst>(ABIUse->getUser())) {
+      SRI = cast<StrongReleaseInst>(ABIUse->getUser());
+      continue;
+    }
+
+    if (ABIUse->getUser() == PBI)
+      continue;
+
+    return SILValue();
+  }
+
+  StoreInst *SI = nullptr;
+  for (Operand *PBIUse : PBI->getUses()) {
+    if (SI == nullptr && isa<StoreInst>(PBIUse->getUser())) {
+      SI = cast<StoreInst>(PBIUse->getUser());
+      continue;
+    }
+
+    return SILValue();
+  }
+
+  // If we found a store, record its source and erase it.
+  if (SI) {
+    CalleeValue = SI->getSrc();
+    SI->eraseFromParent();
+  } else {
+    CalleeValue = SILValue();
+  }
+
+  // If we found a strong release, replace it with a strong release of the
+  // source of the store and erase it.
+  if (SRI) {
+    if (CalleeValue)
+      SILBuilderWithScope(SRI).emitStrongReleaseAndFold(SRI->getLoc(),
+                                                        CalleeValue);
+    SRI->eraseFromParent();
+  }
+
+  assert(PBI->use_empty());
+  PBI->eraseFromParent();
+  assert(ABI->use_empty());
+  ABI->eraseFromParent();
+
+  return CalleeValue;
 }
 
 /// \brief Removes instructions that create the callee value if they are no
 /// longer necessary after inlining.
-static void
-cleanupCalleeValue(SILValue CalleeValue, ArrayRef<SILValue> CaptureArgs,
-                   ArrayRef<SILValue> FullArgs) {
-  SmallVector<SILInstruction*, 16> InstsToDelete;
-  for (SILValue V : FullArgs) {
-    if (SILInstruction *I = dyn_cast<SILInstruction>(V))
-      if (I != CalleeValue &&
-          isInstructionTriviallyDead(I))
-        InstsToDelete.push_back(I);
-  }
-  recursivelyDeleteTriviallyDeadInstructions(InstsToDelete, true);
-
-  // Handle the case where the callee of the apply is a load instruction.
-  if (LoadInst *LI = dyn_cast<LoadInst>(CalleeValue)) {
-    auto *PBI = cast<ProjectBoxInst>(LI->getOperand());
-    auto *ABI = cast<AllocBoxInst>(PBI->getOperand());
-
-    // The load instruction must have no more uses left to erase it.
-    if (!LI->use_empty())
+static void cleanupCalleeValue(SILValue CalleeValue) {
+  // Handle the case where the callee of the apply is a load instruction. If we
+  // fail to optimize, return. Otherwise, see if we can look through other
+  // abstractions on our callee.
+  if (auto *LI = dyn_cast<LoadInst>(CalleeValue)) {
+    CalleeValue = cleanupLoadedCalleeValue(CalleeValue, LI);
+    if (!CalleeValue) {
       return;
-    LI->eraseFromParent();
-
-    // Look through uses of the alloc box the load is loading from to find up to
-    // one store and up to one strong release.
-    StrongReleaseInst *SRI = nullptr;
-    for (Operand *ABIUse : ABI->getUses()) {
-      if (SRI == nullptr && isa<StrongReleaseInst>(ABIUse->getUser())) {
-        SRI = cast<StrongReleaseInst>(ABIUse->getUser());
-      } else if (ABIUse->getUser() != PBI)
-        return;
     }
-    StoreInst *SI = nullptr;
-    for (Operand *PBIUse : PBI->getUses()) {
-      if (SI == nullptr && isa<StoreInst>(PBIUse->getUser())) {
-        SI = cast<StoreInst>(PBIUse->getUser());
-      } else
-        return;
-    }
-
-    // If we found a store, record its source and erase it.
-    if (SI) {
-      CalleeValue = SI->getSrc();
-      SI->eraseFromParent();
-    } else {
-      CalleeValue = SILValue();
-    }
-
-    // If we found a strong release, replace it with a strong release of the
-    // source of the store and erase it.
-    if (SRI) {
-      if (CalleeValue)
-        SILBuilderWithScope(SRI)
-            .emitStrongReleaseAndFold(SRI->getLoc(), CalleeValue);
-      SRI->eraseFromParent();
-    }
-
-    assert(PBI->use_empty());
-    PBI->eraseFromParent();
-    assert(ABI->use_empty());
-    ABI->eraseFromParent();
-    if (!CalleeValue)
-      return;
   }
 
-  if (auto *PAI = dyn_cast<PartialApplyInst>(CalleeValue)) {
+  SILValue CalleeSource = CalleeValue;
+  // Handle partial_apply/thin_to_thick -> convert_function:
+  // tryDeleteDeadClosure must run before deleting a ConvertFunction that
+  // uses the PartialApplyInst or ThinToThickFunctionInst. tryDeleteDeadClosure
+  // will delete any uses of the closure, including a convert_escape_to_noescape
+  // conversion.
+  if (auto *CFI = dyn_cast<ConvertFunctionInst>(CalleeValue))
+    CalleeSource = CFI->getOperand();
+  else if (auto *Cvt = dyn_cast<ConvertEscapeToNoEscapeInst>(CalleeValue))
+    CalleeSource = Cvt->getOperand();
+
+  if (auto *PAI = dyn_cast<PartialApplyInst>(CalleeSource)) {
     SILValue Callee = PAI->getCallee();
     if (!tryDeleteDeadClosure(PAI))
       return;
     CalleeValue = Callee;
-  }
 
-  if (auto *TTTFI = dyn_cast<ThinToThickFunctionInst>(CalleeValue)) {
+  } else if (auto *TTTFI = dyn_cast<ThinToThickFunctionInst>(CalleeSource)) {
     SILValue Callee = TTTFI->getCallee();
     if (!tryDeleteDeadClosure(TTTFI))
       return;
     CalleeValue = Callee;
   }
 
-  if (FunctionRefInst *FRI = dyn_cast<FunctionRefInst>(CalleeValue)) {
+  // Handle function_ref -> convert_function -> partial_apply/thin_to_thick.
+  if (auto *CFI = dyn_cast<ConvertFunctionInst>(CalleeValue)) {
+    if (isInstructionTriviallyDead(CFI)) {
+      recursivelyDeleteTriviallyDeadInstructions(CFI, true);
+      return;
+    }
+  }
+
+  if (auto *FRI = dyn_cast<FunctionRefInst>(CalleeValue)) {
     if (!FRI->use_empty())
       return;
     FRI->eraseFromParent();
+  }
+}
+
+namespace {
+/// Cleanup dead closures after inlining.
+class ClosureCleanup {
+  using DeadInstSet = SmallBlotSetVector<SILInstruction *, 4>;
+
+  /// A helper class to update the set of dead instructions.
+  ///
+  /// Since this is called by the SILModule callback, the instruction may longer
+  /// be well-formed. Do not visit its operands. However, it's position in the
+  /// basic block is still valid.
+  ///
+  /// FIXME: Using the Module's callback mechanism for this is terrible.
+  /// Instead, cleanupCalleeValue could be easily rewritten to use its own
+  /// instruction deletion helper and pass a callback to tryDeleteDeadClosure
+  /// and recursivelyDeleteTriviallyDeadInstructions.
+  class DeleteUpdateHandler : public DeleteNotificationHandler {
+    SILModule &Module;
+    DeadInstSet &DeadInsts;
+
+  public:
+    DeleteUpdateHandler(SILModule &M, DeadInstSet &DeadInsts)
+        : Module(M), DeadInsts(DeadInsts) {
+      Module.registerDeleteNotificationHandler(this);
+    }
+
+    ~DeleteUpdateHandler() override {
+      // Unregister the handler.
+      Module.removeDeleteNotificationHandler(this);
+    }
+
+    // Handling of instruction removal notifications.
+    bool needsNotifications() override { return true; }
+
+    // Handle notifications about removals of instructions.
+    void handleDeleteNotification(SILNode *node) override {
+      auto deletedI = dyn_cast<SILInstruction>(node);
+      if (!deletedI)
+        return;
+
+      DeadInsts.erase(deletedI);
+    }
+  };
+
+  SmallBlotSetVector<SILInstruction *, 4> deadFunctionVals;
+
+public:
+  /// This regular instruction deletion callback checks for any function-type
+  /// values that may be unused after deleting the given instruction.
+  void recordDeadFunction(SILInstruction *deletedInst) {
+    // If the deleted instruction was already recorded as a function producer,
+    // delete it from the map and record its operands instead.
+    deadFunctionVals.erase(deletedInst);
+    for (auto &operand : deletedInst->getAllOperands()) {
+      SILValue operandVal = operand.get();
+      if (!operandVal->getType().is<SILFunctionType>())
+        continue;
+
+      // Simply record all function-producing instructions used by dead
+      // code. Checking for a single use would not be precise because
+      // `deletedInst` could itself use `deadInst` multiple times.
+      if (auto *deadInst = operandVal->getDefiningInstruction())
+        deadFunctionVals.insert(deadInst);
+    }
+  }
+
+  // Note: instructions in the `deadFunctionVals` set may use each other, so the
+  // set needs to continue to be updated (by this handler) when deleting
+  // instructions. This assumes that DeadFunctionValSet::erase() is stable.
+  void cleanupDeadClosures(SILFunction *F) {
+    DeleteUpdateHandler deleteUpdate(F->getModule(), deadFunctionVals);
+    for (Optional<SILInstruction *> I : deadFunctionVals) {
+      if (!I.hasValue())
+        continue;
+
+      if (auto *SVI = dyn_cast<SingleValueInstruction>(I.getValue()))
+        cleanupCalleeValue(SVI);
+    }
+  }
+};
+} // end of namespace
+
+static void collectPartiallyAppliedArguments(
+    PartialApplyInst *PAI,
+    SmallVectorImpl<std::pair<SILValue, ParameterConvention>> &CapturedArgs,
+    SmallVectorImpl<SILValue> &FullArgs) {
+  ApplySite Site(PAI);
+  SILFunctionConventions CalleeConv(Site.getSubstCalleeType(),
+                                    PAI->getModule());
+  for (auto &Arg : PAI->getArgumentOperands()) {
+    unsigned CalleeArgumentIndex = Site.getCalleeArgIndex(Arg);
+    assert(CalleeArgumentIndex >= CalleeConv.getSILArgIndexOfFirstParam());
+    auto ParamInfo = CalleeConv.getParamInfoForSILArg(CalleeArgumentIndex);
+    CapturedArgs.push_back(std::make_pair(Arg.get(), ParamInfo.getConvention()));
+    FullArgs.push_back(Arg.get());
   }
 }
 
@@ -197,12 +290,10 @@ cleanupCalleeValue(SILValue CalleeValue, ArrayRef<SILValue> CaptureArgs,
 ///
 /// In the case that a non-null value is returned, FullArgs contains effective
 /// argument operands for the callee function.
-static SILFunction *
-getCalleeFunction(FullApplySite AI, bool &IsThick,
-                  SmallVectorImpl<SILValue>& CaptureArgs,
-                  SmallVectorImpl<SILValue>& FullArgs,
-                  PartialApplyInst *&PartialApply,
-                  SILModule::LinkingMode Mode) {
+static SILFunction *getCalleeFunction(
+    SILFunction *F, FullApplySite AI, bool &IsThick,
+    SmallVectorImpl<std::pair<SILValue, ParameterConvention>> &CaptureArgs,
+    SmallVectorImpl<SILValue> &FullArgs, PartialApplyInst *&PartialApply) {
   IsThick = false;
   PartialApply = nullptr;
   CaptureArgs.clear();
@@ -212,7 +303,7 @@ getCalleeFunction(FullApplySite AI, bool &IsThick,
     FullArgs.push_back(Arg);
   SILValue CalleeValue = AI.getCallee();
 
-  if (LoadInst *LI = dyn_cast<LoadInst>(CalleeValue)) {
+  if (auto *LI = dyn_cast<LoadInst>(CalleeValue)) {
     // Conservatively only see through alloc_box; we assume this pass is run
     // immediately after SILGen
     auto *PBI = dyn_cast<ProjectBoxInst>(LI->getOperand());
@@ -254,27 +345,79 @@ getCalleeFunction(FullApplySite AI, bool &IsThick,
     CalleeValue = SI->getSrc();
   }
 
+  // PartialApply/ThinToThick -> ConvertFunction patterns are generated
+  // by @noescape closures.
+  //
+  // FIXME: We don't currently handle mismatched return types, however, this
+  // would be a good optimization to handle and would be as simple as inserting
+  // a cast.
+  auto skipFuncConvert = [](SILValue CalleeValue) {
+    // We can also allow a thin @escape to noescape conversion as such:
+    // %1 = function_ref @thin_closure_impl : $@convention(thin) () -> ()
+    // %2 = convert_function %1 :
+    //      $@convention(thin) () -> () to $@convention(thin) @noescape () -> ()
+    // %3 = thin_to_thick_function %2 :
+    //  $@convention(thin) @noescape () -> () to
+    //            $@noescape @callee_guaranteed () -> ()
+    // %4 = apply %3() : $@noescape @callee_guaranteed () -> ()
+    if (auto *ThinToNoescapeCast = dyn_cast<ConvertFunctionInst>(CalleeValue)) {
+      auto FromCalleeTy =
+          ThinToNoescapeCast->getOperand()->getType().castTo<SILFunctionType>();
+      if (FromCalleeTy->getExtInfo().hasContext())
+        return CalleeValue;
+      auto ToCalleeTy = ThinToNoescapeCast->getType().castTo<SILFunctionType>();
+      auto EscapingCalleeTy = ToCalleeTy->getWithExtInfo(
+          ToCalleeTy->getExtInfo().withNoEscape(false));
+      if (FromCalleeTy != EscapingCalleeTy)
+        return CalleeValue;
+      return ThinToNoescapeCast->getOperand();
+    }
+
+    auto *CFI = dyn_cast<ConvertEscapeToNoEscapeInst>(CalleeValue);
+    if (!CFI)
+      return CalleeValue;
+
+    // TODO: Handle argument conversion. All the code in this file needs to be
+    // cleaned up and generalized. The argument conversion handling in
+    // optimizeApplyOfConvertFunctionInst should apply to any combine
+    // involving an apply, not just a specific pattern.
+    //
+    // For now, just handle conversion that doesn't affect argument types,
+    // return types, or throws. We could trivially handle any other
+    // representation change, but the only one that doesn't affect the ABI and
+    // matters here is @noescape, so just check for that.
+    auto FromCalleeTy = CFI->getOperand()->getType().castTo<SILFunctionType>();
+    auto ToCalleeTy = CFI->getType().castTo<SILFunctionType>();
+    auto EscapingCalleeTy =
+      ToCalleeTy->getWithExtInfo(ToCalleeTy->getExtInfo().withNoEscape(false));
+    if (FromCalleeTy != EscapingCalleeTy)
+      return CalleeValue;
+
+    return CFI->getOperand();
+  };
+
+  // Look through a escape to @noescape conversion.
+  CalleeValue = skipFuncConvert(CalleeValue);
+
   // We are allowed to see through exactly one "partial apply" instruction or
   // one "thin to thick function" instructions, since those are the patterns
   // generated when using auto closures.
-  if (PartialApplyInst *PAI =
-        dyn_cast<PartialApplyInst>(CalleeValue)) {
-    for (const auto &Arg : PAI->getArguments()) {
-      CaptureArgs.push_back(Arg);
-      FullArgs.push_back(Arg);
-    }
+  if (auto *PAI = dyn_cast<PartialApplyInst>(CalleeValue)) {
+
+    // Collect the applied arguments and their convention.
+    collectPartiallyAppliedArguments(PAI, CaptureArgs, FullArgs);
 
     CalleeValue = PAI->getCallee();
     IsThick = true;
     PartialApply = PAI;
-  } else if (ThinToThickFunctionInst *TTTFI =
-               dyn_cast<ThinToThickFunctionInst>(CalleeValue)) {
+  } else if (auto *TTTFI = dyn_cast<ThinToThickFunctionInst>(CalleeValue)) {
     CalleeValue = TTTFI->getOperand();
     IsThick = true;
   }
 
-  FunctionRefInst *FRI = dyn_cast<FunctionRefInst>(CalleeValue);
+  CalleeValue = skipFuncConvert(CalleeValue);
 
+  auto *FRI = dyn_cast<FunctionRefInst>(CalleeValue);
   if (!FRI)
     return nullptr;
 
@@ -294,12 +437,48 @@ getCalleeFunction(FullApplySite AI, bool &IsThick,
     return nullptr;
   }
 
-  // If CalleeFunction is a declaration, see if we can load it. If we fail to
-  // load it, bail.
-  if (CalleeFunction->empty()
-      && !AI.getModule().linkFunction(CalleeFunction, Mode))
+  // If the CalleeFunction is a not-transparent definition, we can not process
+  // it.
+  if (CalleeFunction->isTransparent() == IsNotTransparent)
     return nullptr;
+
+  // If CalleeFunction is a declaration, see if we can load it.
+  if (CalleeFunction->empty())
+    AI.getModule().loadFunction(CalleeFunction);
+
+  // If we fail to load it, bail.
+  if (CalleeFunction->empty())
+    return nullptr;
+
+  if (F->isSerialized() &&
+      !CalleeFunction->hasValidLinkageForFragileInline()) {
+    if (!CalleeFunction->hasValidLinkageForFragileRef()) {
+      llvm::errs() << "caller: " << F->getName() << "\n";
+      llvm::errs() << "callee: " << CalleeFunction->getName() << "\n";
+      llvm_unreachable("Should never be inlining a resilient function into "
+                       "a fragile function");
+    }
+    return nullptr;
+  }
+
   return CalleeFunction;
+}
+
+static SILInstruction *tryDevirtualizeApplyHelper(FullApplySite InnerAI,
+                                                  ClassHierarchyAnalysis *CHA) {
+  auto NewInst = tryDevirtualizeApply(InnerAI, CHA);
+  if (!NewInst)
+    return InnerAI.getInstruction();
+
+  deleteDevirtualizedApply(InnerAI);
+
+  // FIXME: Comments at the use of this helper indicate that devirtualization
+  // may return SILArgument. Yet here we assert that it must return an
+  // instruction.
+  auto newApplyAI = NewInst.getInstruction();
+  assert(newApplyAI && "devirtualized but removed apply site?");
+
+  return newApplyAI;
 }
 
 /// \brief Inlines all mandatory inlined functions into the body of a function,
@@ -317,8 +496,8 @@ getCalleeFunction(FullApplySite AI, bool &IsThick,
 ///
 /// \returns true if successful, false if failed due to circular inlining.
 static bool
-runOnFunctionRecursively(SILFunction *F, FullApplySite AI,
-                         SILModule::LinkingMode Mode,
+runOnFunctionRecursively(SILOptFunctionBuilder &FuncBuilder,
+			 SILFunction *F, FullApplySite AI,
                          DenseFunctionSet &FullyInlinedSet,
                          ImmutableFunctionSet::Factory &SetFactory,
                          ImmutableFunctionSet CurrentInliningSet,
@@ -342,57 +521,51 @@ runOnFunctionRecursively(SILFunction *F, FullApplySite AI,
   // during this call and recursive subcalls).
   CurrentInliningSet = SetFactory.add(CurrentInliningSet, F);
 
-  SmallVector<SILValue, 16> CaptureArgs;
+  SmallVector<std::pair<SILValue, ParameterConvention>, 16> CaptureArgs;
   SmallVector<SILValue, 32> FullArgs;
 
-  for (auto FI = F->begin(), FE = F->end(); FI != FE; ++FI) {
-    for (auto I = FI->begin(), E = FI->end(); I != E; ++I) {
-      FullApplySite InnerAI = FullApplySite::isa(&*I);
+  // Visiting blocks in reverse order avoids revisiting instructions after block
+  // splitting, which would be quadratic.
+  for (auto BI = F->rbegin(), BE = F->rend(), nextBB = BI; BI != BE;
+       BI = nextBB) {
+    // After inlining, the block iterator will be adjusted to point to the last
+    // block containing inlined instructions. This way, the inlined function
+    // body will be reprocessed within the caller's context without revisiting
+    // any original instructions.
+    nextBB = std::next(BI);
 
+    // While iterating over this block, instructions are inserted and deleted.
+    // To avoid quadratic block splitting, instructions must be processed in
+    // reverse order (block splitting reassigned the parent pointer of all
+    // instructions below the split point).
+    for (auto II = BI->rbegin(); II != BI->rend(); ++II) {
+      FullApplySite InnerAI = FullApplySite::isa(&*II);
       if (!InnerAI)
         continue;
 
-      auto *ApplyBlock = InnerAI.getParent();
+      // *NOTE* If devirtualization succeeds, devirtInst may not be InnerAI,
+      // but a casted result of InnerAI or even a block argument due to
+      // abstraction changes when calling the witness or class method.
+      auto *devirtInst = tryDevirtualizeApplyHelper(InnerAI, CHA);
+      // Restore II to the current apply site.
+      II = devirtInst->getReverseIterator();
+      // If the devirtualized call result is no longer a invalid FullApplySite,
+      // then it has succeeded, but the result is not immediately inlinable.
+      InnerAI = FullApplySite::isa(devirtInst);
+      if (!InnerAI)
+        continue;
 
-      auto NewInstPair = tryDevirtualizeApply(InnerAI, CHA);
-      if (auto *NewInst = NewInstPair.first) {
-        replaceDeadApply(InnerAI, NewInst);
-        if (auto *II = dyn_cast<SILInstruction>(NewInst))
-          I = II->getIterator();
-        else
-          I = NewInst->getParentBlock()->begin();
-        auto NewAI = FullApplySite::isa(NewInstPair.second.getInstruction());
-        if (!NewAI)
-          continue;
-
-        InnerAI = NewAI;
-      }
-
-      SILLocation Loc = InnerAI.getLoc();
       SILValue CalleeValue = InnerAI.getCallee();
       bool IsThick;
       PartialApplyInst *PAI;
-      SILFunction *CalleeFunction = getCalleeFunction(InnerAI, IsThick,
-                                                      CaptureArgs, FullArgs,
-                                                      PAI,
-                                                      Mode);
-      if (!CalleeFunction ||
-          CalleeFunction->isTransparent() == IsNotTransparent)
-        continue;
+      SILFunction *CalleeFunction = getCalleeFunction(
+          F, InnerAI, IsThick, CaptureArgs, FullArgs, PAI);
 
-      if (F->isFragile() &&
-          !CalleeFunction->hasValidLinkageForFragileRef()) {
-        if (!CalleeFunction->hasValidLinkageForFragileInline()) {
-          llvm::errs() << "caller: " << F->getName() << "\n";
-          llvm::errs() << "callee: " << CalleeFunction->getName() << "\n";
-          llvm_unreachable("Should never be inlining a resilient function into "
-                           "a fragile function");
-        }
+      if (!CalleeFunction)
         continue;
-      }
 
       // Then recursively process it first before trying to inline it.
-      if (!runOnFunctionRecursively(CalleeFunction, InnerAI, Mode,
+      if (!runOnFunctionRecursively(FuncBuilder, CalleeFunction, InnerAI,
                                     FullyInlinedSet, SetFactory,
                                     CurrentInliningSet, CHA)) {
         // If we failed due to circular inlining, then emit some notes to
@@ -409,73 +582,72 @@ runOnFunctionRecursively(SILFunction *F, FullApplySite AI,
         return false;
       }
 
+      // Get our list of substitutions.
+      auto Subs = (PAI
+                   ? PAI->getSubstitutionMap()
+                   : InnerAI.getSubstitutionMap());
+
+      SILOpenedArchetypesTracker OpenedArchetypesTracker(F);
+      F->getModule().registerDeleteNotificationHandler(
+          &OpenedArchetypesTracker);
+      // The callee only needs to know about opened archetypes used in
+      // the substitution list.
+      OpenedArchetypesTracker.registerUsedOpenedArchetypes(
+          InnerAI.getInstruction());
+      if (PAI) {
+        OpenedArchetypesTracker.registerUsedOpenedArchetypes(PAI);
+      }
+
+      SILInliner Inliner(FuncBuilder, SILInliner::InlineKind::MandatoryInline,
+                         Subs, OpenedArchetypesTracker);
+      if (!Inliner.canInlineApplySite(InnerAI))
+        continue;
+
       // Inline function at I, which also changes I to refer to the first
       // instruction inlined in the case that it succeeds. We purposely
       // process the inlined body after inlining, because the inlining may
       // have exposed new inlining opportunities beyond those present in
       // the inlined function when processed independently.
-      DEBUG(llvm::errs() << "Inlining @" << CalleeFunction->getName()
-                         << " into @" << InnerAI.getFunction()->getName()
-                         << "\n");
+      LLVM_DEBUG(llvm::errs() << "Inlining @" << CalleeFunction->getName()
+                              << " into @" << InnerAI.getFunction()->getName()
+                              << "\n");
 
-      // Decrement our iterator (carefully, to avoid going off the front) so it
-      // is valid after inlining is done.  Inlining deletes the apply, and can
-      // introduce multiple new basic blocks.
-      if (I != ApplyBlock->begin())
-        --I;
-      else
-        I = ApplyBlock->end();
-
-      std::vector<Substitution> ApplySubs(InnerAI.getSubstitutions());
-
-      if (PAI) {
-        auto PAISubs = PAI->getSubstitutions();
-        ApplySubs.insert(ApplySubs.end(), PAISubs.begin(), PAISubs.end());
-      }
-
-      SILOpenedArchetypesTracker OpenedArchetypesTracker(*F);
-      F->getModule().registerDeleteNotificationHandler(
-          &OpenedArchetypesTracker);
-      // The callee only needs to know about opened archetypes used in
-      // the substitution list.
-      OpenedArchetypesTracker.registerUsedOpenedArchetypes(InnerAI.getInstruction());
-
-      SILInliner Inliner(*F, *CalleeFunction,
-                         SILInliner::InlineKind::MandatoryInline,
-                         ApplySubs, OpenedArchetypesTracker);
-      if (!Inliner.inlineFunction(InnerAI, FullArgs)) {
-        I = InnerAI.getInstruction()->getIterator();
-        continue;
-      }
-
-      // Inlining was successful. Remove the apply.
-      InnerAI.getInstruction()->eraseFromParent();
-
-      // Reestablish our iterator if it wrapped.
-      if (I == ApplyBlock->end())
-        I = ApplyBlock->begin();
-
-      // Update the iterator when instructions are removed.
-      DeleteInstructionsHandler DeletionHandler(I);
-
-      // If the inlined apply was a thick function, then we need to balance the
+      // If we intend to inline a thick function, then we need to balance the
       // reference counts for correctness.
-      if (IsThick)
-        fixupReferenceCounts(I, Loc, CalleeValue, CaptureArgs);
+      if (IsThick) {
+        bool IsCalleeGuaranteed =
+            PAI &&
+            PAI->getType().castTo<SILFunctionType>()->isCalleeGuaranteed();
+        fixupReferenceCounts(InnerAI.getInstruction(), CalleeValue, CaptureArgs,
+                             IsCalleeGuaranteed);
+      }
 
-      // Now that the IR is correct, see if we can remove dead callee
-      // computations (e.g. dead partial_apply closures).
-      cleanupCalleeValue(CalleeValue, CaptureArgs, FullArgs);
+      // Register a callback to record potentially unused function values after
+      // inlining.
+      ClosureCleanup closureCleanup;
+      Inliner.setDeletionCallback([&closureCleanup](SILInstruction *I) {
+        closureCleanup.recordDeadFunction(I);
+      });
 
-      // Reposition iterators possibly invalidated by mutation.
-      FI = SILFunction::iterator(ApplyBlock);
-      E = ApplyBlock->end();
-      assert(FI == SILFunction::iterator(I->getParent()) &&
-             "Mismatch between the instruction and basic block");
+      // Inlining deletes the apply, and can introduce multiple new basic
+      // blocks. After this, CalleeValue and other instructions may be invalid.
+      // nextBB will point to the last inlined block
+      auto firstInlinedInstAndLastBB =
+          Inliner.inlineFunction(CalleeFunction, InnerAI, FullArgs);
+      nextBB = firstInlinedInstAndLastBB.second->getReverseIterator();
       ++NumMandatoryInlines;
+
+      // The IR is now valid, and trivial dead arguments are removed. However,
+      // we may be able to remove dead callee computations (e.g. dead
+      // partial_apply closures).
+      closureCleanup.cleanupDeadClosures(F);
+
+      // Resume inlining within nextBB, which contains only the inlined
+      // instructions and possibly instructions in the original call block that
+      // have not yet been visited.
+      break;
     }
   }
-
   // Keep track of full inlined functions so we don't waste time recursively
   // reprocessing them.
   FullyInlinedSet.insert(F);
@@ -487,42 +659,37 @@ runOnFunctionRecursively(SILFunction *F, FullApplySite AI,
 //===----------------------------------------------------------------------===//
 
 namespace {
+
 class MandatoryInlining : public SILModuleTransform {
   /// The entry point to the transformation.
   void run() override {
     ClassHierarchyAnalysis *CHA = getAnalysis<ClassHierarchyAnalysis>();
     SILModule *M = getModule();
-    SILModule::LinkingMode Mode = getOptions().LinkMode;
     bool ShouldCleanup = !getOptions().DebugSerialization;
     DenseFunctionSet FullyInlinedSet;
     ImmutableFunctionSet::Factory SetFactory;
 
+    SILOptFunctionBuilder FuncBuilder(*this);
     for (auto &F : *M) {
-      
       // Don't inline into thunks, even transparent callees.
       if (F.isThunk())
         continue;
 
-      runOnFunctionRecursively(&F,
-                               FullApplySite(static_cast<ApplyInst*>(nullptr)),
-                               Mode, FullyInlinedSet,
-                               SetFactory, SetFactory.getEmptySet(), CHA);
+      // Skip deserialized functions.
+      if (F.wasDeserializedCanonical())
+        continue;
+
+      runOnFunctionRecursively(FuncBuilder, &F,
+                               FullApplySite(), FullyInlinedSet, SetFactory,
+                               SetFactory.getEmptySet(), CHA);
+      // The inliner splits blocks at call sites. Re-merge trivial branches
+      // to reestablish a canonical CFG.
+      mergeBasicBlocks(&F);
     }
 
-    // Make sure that we de-serialize all transparent functions,
-    // even if we didn't inline them for some reason.
-    // Transparent functions are not available externally, so we
-    // have to generate code for them.
-    for (auto &F : *M) {
-      if (F.isTransparent())
-        M->linkFunction(&F, Mode);
-    }
-    
     if (!ShouldCleanup)
       return;
 
-    bool isWholeModule = M->isWholeModule();
-    
     // Now that we've inlined some functions, clean up.  If there are any
     // transparent functions that are deserialized from another module that are
     // now unused, just remove them from the module.
@@ -531,6 +698,8 @@ class MandatoryInlining : public SILModuleTransform {
     // reference each other have already been flattened.
     for (auto FI = M->begin(), E = M->end(); FI != E; ) {
       SILFunction &F = *FI++;
+
+      invalidateAnalysis(&F, SILAnalysis::InvalidationKind::Everything);
 
       if (F.getRefCount() != 0) continue;
 
@@ -541,21 +710,18 @@ class MandatoryInlining : public SILModuleTransform {
       // We discard functions that don't have external linkage,
       // e.g. deserialized functions, internal functions, and thunks.
       // Being marked transparent controls this.
-      if (isPossiblyUsedExternally(F.getLinkage(), isWholeModule)) continue;
+      if (F.isPossiblyUsedExternally()) continue;
 
       // ObjC functions are called through the runtime and are therefore alive
       // even if not referenced inside SIL.
       if (F.getRepresentation() == SILFunctionTypeRepresentation::ObjCMethod)
         continue;
-      
-      // Okay, just erase the function from the module.
-      M->eraseFunction(&F);
-    }
 
-    invalidateAnalysis(SILAnalysis::InvalidationKind::Everything);
+      // Okay, just erase the function from the module.
+      FuncBuilder.eraseFunction(&F);
+    }
   }
 
-  StringRef getName() override { return "Mandatory Inlining"; }
 };
 } // end anonymous namespace
 

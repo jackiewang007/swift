@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -168,7 +168,16 @@ public:
 
   /// Given an address which is supposedly of type metadata, try to
   /// resolve it to a specific type in the local AST.
-  Result<Type> getTypeForRemoteTypeMetadata(remote::RemoteAddress address);
+  ///
+  /// \param skipArtificial If true, the address may be an artificial type
+  ///   wrapper that should be ignored.  For example, it could be a
+  ///   dynamic subclass created by (e.g.) CoreData or KVO; if so, and this
+  ///   flag is set, this method will implicitly ignore the subclass
+  ///   and instead attempt to resolve a type for the first non-artificial
+  ///   superclass.
+  Result<Type>
+  getTypeForRemoteTypeMetadata(remote::RemoteAddress address,
+                               bool skipArtificial = false);
 
   /// Given an address which is supposedly of type metadata, try to
   /// resolve it to a specific MetadataKind value for its backing type.
@@ -198,6 +207,18 @@ public:
   Result<uint64_t> getOffsetOfMember(Type type,
                                      remote::RemoteAddress optMetadataAddress,
                                      StringRef memberName);
+
+  /// Given a heap object, resolve its heap metadata.
+  Result<remote::RemoteAddress>
+  getHeapMetadataForObject(remote::RemoteAddress address);
+
+  /// Given an existential and its static type, resolve its dynamic
+  /// type and address. A single step of unwrapping is performed, i.e. if the
+  /// value stored inside the existential is itself an existential, the
+  /// caller can decide whether to iterate itself.
+  Result<std::pair<Type, remote::RemoteAddress>>
+  getDynamicTypeAndAddressForExistential(remote::RemoteAddress address,
+                                         Type staticType);
 };
 
 } // end namespace remoteAST

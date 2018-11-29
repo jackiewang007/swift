@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -49,8 +49,6 @@ FUNC_DECL(ForceBridgeFromObjectiveC,
           "_forceBridgeFromObjectiveC")
 FUNC_DECL(ConditionallyBridgeFromObjectiveC,
           "_conditionallyBridgeFromObjectiveC")
-FUNC_DECL(BridgeErrorToNSError,
-          "_bridgeErrorToNSError")
 
 FUNC_DECL(ForceBridgeFromObjectiveCBridgeable,
           "_forceBridgeFromObjectiveC_bridgeable")
@@ -64,9 +62,25 @@ FUNC_DECL(BridgeAnyObjectToAny,
 
 FUNC_DECL(ConvertToAnyHashable, "_convertToAnyHashable")
 
-FUNC_DECL(DidEnterMain, "_stdlib_didEnterMain")
+FUNC_DECL(DiagnoseUnexpectedError, "_unexpectedError")
 FUNC_DECL(DiagnoseUnexpectedNilOptional, "_diagnoseUnexpectedNilOptional")
+FUNC_DECL(DiagnoseUnexpectedEnumCase, "_diagnoseUnexpectedEnumCase")
+FUNC_DECL(DiagnoseUnexpectedEnumCaseValue, "_diagnoseUnexpectedEnumCaseValue")
 
-FUNC_DECL(GetErrorEmbeddedNSError, "_stdlib_getErrorEmbeddedNSError")
+FUNC_DECL(GetErrorEmbeddedNSError, "_getErrorEmbeddedNSError")
+
+FUNC_DECL(UnsafeBitCast, "unsafeBitCast")
+
+FUNC_DECL(GetAtKeyPath, "_getAtKeyPath")
+FUNC_DECL(GetAtAnyKeyPath, "_getAtAnyKeyPath")
+FUNC_DECL(GetAtPartialKeyPath, "_getAtPartialKeyPath")
+FUNC_DECL(SetAtWritableKeyPath, "_setAtWritableKeyPath")
+FUNC_DECL(SetAtReferenceWritableKeyPath, "_setAtReferenceWritableKeyPath")
+// These don't actually have AST nodes associated with them right now.
+FUNC_DECL(ReadAtKeyPath, "_readAtKeyPath")
+FUNC_DECL(ModifyAtWritableKeyPath, "_modifyAtWritableKeyPath")
+FUNC_DECL(ModifyAtReferenceWritableKeyPath, "_modifyAtReferenceWritableKeyPath")
+
+FUNC_DECL(Swap, "swap")
 
 #undef FUNC_DECL

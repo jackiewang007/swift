@@ -78,7 +78,7 @@ class C3 {
 }
 
 struct S2<T, U where T == U> {
-  func foo<V, W where V == W> (_ closure: ()->()) -> ()->() { return closure }
+  func foo<V, W where V == W> (_: V, _: W, _ closure: ()->()) -> ()->() { return closure }
 }
 class C4<T, U where T == U> {}
 enum E1<T, U where T == U> {}
@@ -204,35 +204,57 @@ func convention3(_: @convention(block) ()->()) {}
 func convention4(_: @convention(c) ()->()) {}
 func convention5(_: @convention(method) ()->()) {}
 func convention6(_: @convention(objc_method) ()->()) {}
-func convention7(_: @convention(witness_method) ()->()) {}
+func convention7(_: @convention(witness_method: P1) ()->()) {}
 
-// RUN: rm -rf %t.tmp
-// RUN: mkdir -p %t.tmp
+/// Brief.
+///
+/// - LocalizationKey: ABC
+struct HasLocalizationKey {}
+
+/// - LocalizationKey: ABC
+func hasLocalizationKey2() {}
+
+/// doc
+func funcWithNestedEscaping(a : (@escaping () -> ()) -> ()) {}
+
+/// doc
+typealias typeWithNestedAutoclosure = (@autoclosure () -> ()) -> ()
+
+typealias GenericAlias<T, U> = MyAlias<T, U> where T: P1
+
+enum E7: String {
+    case a = "\u{001B}"
+    case b = "\u{66}"
+}
+
+// REQUIRES: objc_interop
+// RUN: %empty-directory(%t.tmp)
 // RUN: %swiftc_driver -emit-module -o %t.tmp/FooSwiftModule.swiftmodule %S/Inputs/FooSwiftModule.swift
 // RUN: %sourcekitd-test -req=cursor -pos=9:8 %s -- -F %S/../Inputs/libIDE-mock-sdk %mcp_opt %s | %FileCheck -check-prefix=CHECK1 %s
 // CHECK1:      source.lang.swift.ref.var.global (4:5-4:9)
 // CHECK1-NEXT: glob
-// CHECK1-NEXT: s:v11cursor_info4globSi{{$}}
+// CHECK1-NEXT: s:11cursor_info4globSivp{{$}}
 // CHECK1-NEXT: Int
 
-// RUN: %sourcekitd-test -req=cursor -pos=9:11 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck -check-prefix=CHECK2 %s
-// CHECK2:      source.lang.swift.ref.function.operator.infix ()
-// CHECK2-NEXT: +
-// CHECK2-NEXT: s:Fsoi1pFTSiSi_Si
-// CHECK2-NEXT: (Int, Int) -> Int{{$}}
-// CHECK2-NEXT: _TtFTSiSi_Si
-// CHECK2-NEXT: Swift{{$}}
-// CHECK2-NEXT: <Group>Math/Integers</Group>
-// CHECK2-NEXT: SYSTEM
-// CHECK2-NEXT: <Declaration>func +(lhs: <Type usr="s:Si">Int</Type>, rhs: <Type usr="s:Si">Int</Type>) -&gt; <Type usr="s:Si">Int</Type></Declaration>
-// CHECK2-NEXT: <decl.function.operator.infix><syntaxtype.keyword>func</syntaxtype.keyword> <decl.name>+</decl.name>(<decl.var.parameter><decl.var.parameter.name>lhs</decl.var.parameter.name>: <decl.var.parameter.type><ref.struct usr="s:Si">Int</ref.struct></decl.var.parameter.type></decl.var.parameter>, <decl.var.parameter><decl.var.parameter.name>rhs</decl.var.parameter.name>: <decl.var.parameter.type><ref.struct usr="s:Si">Int</ref.struct></decl.var.parameter.type></decl.var.parameter>) -&gt; <decl.function.returntype><ref.struct usr="s:Si">Int</ref.struct></decl.function.returntype></decl.function.operator.infix>
+// FIXME(integers): Disabling the checks. See <rdar://problem/31207310>
+// XUN: %sourcekitd-test -req=cursor -pos=9:13 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck -check-prefix=CHECK2 %s
+// XCHECK2:      source.lang.swift.ref.function.operator.infix ()
+// XCHECK2-NEXT: +
+// XCHECK2-NEXT: s:s1poiyS2i_SitF
+// XCHECK2-NEXT: (Int, Int) -> Int{{$}}
+// XCHECK2-NEXT: $sS2i_SitcD
+// XCHECK2-NEXT: Swift{{$}}
+// XCHECK2-NEXT: <Group>Math/Integers</Group>
+// XCHECK2-NEXT: SYSTEM
+// XCHECK2-NEXT: <Declaration>func +(lhs: <Type usr="s:Si">Int</Type>, rhs: <Type usr="s:Si">Int</Type>) -&gt; <Type usr="s:Si">Int</Type></Declaration>
+// XCHECK2-NEXT: <decl.function.operator.infix><syntaxtype.keyword>func</syntaxtype.keyword> <decl.name>+</decl.name>(<decl.var.parameter><decl.var.parameter.name>lhs</decl.var.parameter.name>: <decl.var.parameter.type><ref.struct usr="s:Si">Int</ref.struct></decl.var.parameter.type></decl.var.parameter>, <decl.var.parameter><decl.var.parameter.name>rhs</decl.var.parameter.name>: <decl.var.parameter.type><ref.struct usr="s:Si">Int</ref.struct></decl.var.parameter.type></decl.var.parameter>) -&gt; <decl.function.returntype><ref.struct usr="s:Si">Int</ref.struct></decl.function.returntype></decl.function.operator.infix>
 
 // RUN: %sourcekitd-test -req=cursor -pos=9:12 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck -check-prefix=CHECK3 %s
 // CHECK3:      source.lang.swift.ref.var.local (8:12-8:13)
 // CHECK3-NEXT: x{{$}}
-// CHECK3-NEXT: s:vF11cursor_info3gooFSiT_L_1xSi{{$}}
+// CHECK3-NEXT: s:11cursor_info3gooyySiF1xL_Sivp{{$}}
 // CHECK3-NEXT: Int{{$}}
-// CHECK3-NEXT: _TtSi
+// CHECK3-NEXT: $sSiD
 // CHECK3-NEXT: <Declaration>let x: <Type usr="s:Si">Int</Type></Declaration>
 // CHECK3-NEXT: <decl.var.parameter><syntaxtype.keyword>let</syntaxtype.keyword> <decl.var.parameter.name>x</decl.var.parameter.name>: <decl.var.parameter.type><ref.struct usr="s:Si">Int</ref.struct></decl.var.parameter.type></decl.var.parameter>
 
@@ -241,46 +263,46 @@ func convention7(_: @convention(witness_method) ()->()) {}
 // CHECK4-NEXT: fooIntVar{{$}}
 // CHECK4-NEXT: c:@fooIntVar{{$}}
 // CHECK4-NEXT: Int32{{$}}
-// CHECK4-NEXT: _TtVs5Int32
+// CHECK4-NEXT: $ss5Int32VD
 // CHECK4-NEXT: Foo{{$}}
-// CHECK4-NEXT: <Declaration>var fooIntVar: <Type usr="s:Vs5Int32">Int32</Type></Declaration>
-// CHECK4-NEXT: <decl.var.global><syntaxtype.keyword>var</syntaxtype.keyword> <decl.name>fooIntVar</decl.name>: <decl.var.type><ref.struct usr="s:Vs5Int32">Int32</ref.struct></decl.var.type></decl.var.global>
+// CHECK4-NEXT: <Declaration>var fooIntVar: <Type usr="s:s5Int32V">Int32</Type></Declaration>
+// CHECK4-NEXT: <decl.var.global><syntaxtype.keyword>var</syntaxtype.keyword> <decl.name>fooIntVar</decl.name>: <decl.var.type><ref.struct usr="s:s5Int32V">Int32</ref.struct></decl.var.type></decl.var.global>
 // CHECK4-NEXT: <Variable file="{{[^"]+}}Foo.h" line="{{[0-9]+}}" column="{{[0-9]+}}"><Name>fooIntVar</Name><USR>c:@fooIntVar</USR><Declaration>var fooIntVar: Int32</Declaration><Abstract><Para> Aaa. fooIntVar. Bbb.</Para></Abstract></Variable>
 
 // RUN: %sourcekitd-test -req=cursor -pos=8:7 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck -check-prefix=CHECK5 %s
 // CHECK5:      source.lang.swift.decl.function.free (8:6-8:19)
 // CHECK5-NEXT: goo(_:){{$}}
-// CHECK5-NEXT: s:F11cursor_info3gooFSiT_{{$}}
+// CHECK5-NEXT: s:11cursor_info3gooyySiF{{$}}
 // CHECK5-NEXT: (Int) -> (){{$}}
 
 // RUN: %sourcekitd-test -req=cursor -pos=9:32 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck -check-prefix=CHECK6 %s
 // CHECK6:      source.lang.swift.ref.function.free ()
 // CHECK6-NEXT: fooSwiftFunc
-// CHECK6-NEXT: s:F14FooSwiftModule12fooSwiftFuncFT_Si
+// CHECK6-NEXT: s:14FooSwiftModule03fooB4FuncSiyF
 // CHECK6-NEXT: () -> Int
-// CHECK6-NEXT: _TtFT_Si
+// CHECK6-NEXT: $sSiycD
 // CHECK6-NEXT: FooSwiftModule
 // CHECK6-NEXT: <Declaration>func fooSwiftFunc() -&gt; <Type usr="s:Si">Int</Type></Declaration>
 // CHECK6-NEXT: <decl.function.free><syntaxtype.keyword>func</syntaxtype.keyword> <decl.name>fooSwiftFunc</decl.name>() -&gt; <decl.function.returntype><ref.struct usr="s:Si">Int</ref.struct></decl.function.returntype></decl.function.free>
-// CHECK6-NEXT: {{^}}<Function><Name>fooSwiftFunc()</Name><USR>s:F14FooSwiftModule12fooSwiftFuncFT_Si</USR><Declaration>func fooSwiftFunc() -&gt; Int</Declaration><Abstract><Para>This is ‘fooSwiftFunc’ from ‘FooSwiftModule’.</Para></Abstract></Function>{{$}}
+// CHECK6-NEXT: {{^}}<Function><Name>fooSwiftFunc()</Name><USR>s:14FooSwiftModule03fooB4FuncSiyF</USR><Declaration>func fooSwiftFunc() -&gt; Int</Declaration><CommentParts><Abstract><Para>This is ‘fooSwiftFunc’ from ‘FooSwiftModule’.</Para></Abstract></CommentParts></Function>{{$}}
 
 // RUN: %sourcekitd-test -req=cursor -pos=14:10 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck -check-prefix=CHECK7 %s
 // CHECK7:      source.lang.swift.ref.struct (13:8-13:10)
 // CHECK7-NEXT: S1
-// CHECK7-NEXT: s:V11cursor_info2S1
+// CHECK7-NEXT: s:11cursor_info2S1V
 // CHECK7-NEXT: S1.Type
-// CHECK7-NEXT: _Tt
+// CHECK7-NEXT: $s
 // CHECK7-NEXT: <Declaration>struct S1</Declaration>
 // CHECK7-NEXT: <decl.struct><syntaxtype.keyword>struct</syntaxtype.keyword> <decl.name>S1</decl.name></decl.struct>
-// CHECK7-NEXT: <Class file="{{[^"]+}}cursor_info.swift" line="13" column="8"><Name>S1</Name><USR>s:V11cursor_info2S1</USR><Declaration>struct S1</Declaration><Abstract><Para>Aaa.  S1.  Bbb.</Para></Abstract></Class>
+// CHECK7-NEXT: <Class file="{{[^"]+}}cursor_info.swift" line="13" column="8"><Name>S1</Name><USR>s:11cursor_info2S1V</USR><Declaration>struct S1</Declaration><CommentParts><Abstract><Para>Aaa.  S1.  Bbb.</Para></Abstract></CommentParts></Class>
 
 // RUN: %sourcekitd-test -req=cursor -pos=19:12 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck -check-prefix=CHECK8 %s
 // CHECK8:      source.lang.swift.ref.function.constructor (18:3-18:15)
 // CHECK8-NEXT: init
-// CHECK8-NEXT: s:FC11cursor_info2CCcFT1xSi_S0_
+// CHECK8-NEXT: s:11cursor_info2CCC1xACSi_tcfc
 // CHECK8-NEXT: (CC.Type) -> (Int) -> CC
-// CHECK8-NEXT: _TtFT1xSi_C11cursor_info2CC
-// CHECK8-NEXT: <Container>_TtC11cursor_info2CC</Container>
+// CHECK8-NEXT: $s1x11cursor_info2CCCSi_tcD
+// CHECK8-NEXT: <Container>$s11cursor_info2CCCD</Container>
 // CHECK8-NEXT: <Declaration>convenience init(x: <Type usr="s:Si">Int</Type>)</Declaration>
 // CHECK8-NEXT: <decl.function.constructor><syntaxtype.keyword>convenience</syntaxtype.keyword> <syntaxtype.keyword>init</syntaxtype.keyword>(<decl.var.parameter><decl.var.parameter.argument_label>x</decl.var.parameter.argument_label>: <decl.var.parameter.type><ref.struct usr="s:Si">Int</ref.struct></decl.var.parameter.type></decl.var.parameter>)</decl.function.constructor>
 
@@ -306,8 +328,8 @@ func convention7(_: @convention(witness_method) ()->()) {}
 
 // RUN: %sourcekitd-test -req=cursor -pos=31:7 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck -check-prefix=CHECK13 %s
 // CHECK13: source.lang.swift.decl.function.free (31:6-31:37)
-// CHECK13: <Declaration>func testDefaultParam(arg1: <Type usr="s:Si">Int</Type> = default)</Declaration>
-// CHECK13: <decl.function.free><syntaxtype.keyword>func</syntaxtype.keyword> <decl.name>testDefaultParam</decl.name>(<decl.var.parameter><decl.var.parameter.argument_label>arg1</decl.var.parameter.argument_label>: <decl.var.parameter.type><ref.struct usr="s:Si">Int</ref.struct></decl.var.parameter.type> = <syntaxtype.keyword>default</syntaxtype.keyword></decl.var.parameter>)</decl.function.free>
+// CHECK13: <Declaration>func testDefaultParam(arg1: <Type usr="s:Si">Int</Type> = 0)</Declaration>
+// CHECK13: <decl.function.free><syntaxtype.keyword>func</syntaxtype.keyword> <decl.name>testDefaultParam</decl.name>(<decl.var.parameter><decl.var.parameter.argument_label>arg1</decl.var.parameter.argument_label>: <decl.var.parameter.type><ref.struct usr="s:Si">Int</ref.struct></decl.var.parameter.type> = 0</decl.var.parameter>)</decl.function.free>
 
 // RUN: %sourcekitd-test -req=cursor -pos=34:4 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck -check-prefix=CHECK14 %s
 // CHECK14: source.lang.swift.ref.function.free ({{.*}}Foo.framework/Frameworks/FooSub.framework/Headers/FooSub.h:4:5-4:16)
@@ -321,7 +343,7 @@ func convention7(_: @convention(witness_method) ()->()) {}
 // CHECK15: <Declaration>func myFunc(arg1: <Type usr="s:SS">String</Type>, options: <Type usr="s:Si">Int</Type>)</Declaration>
 // CHECK15: <decl.function.free><syntaxtype.keyword>func</syntaxtype.keyword> <decl.name>myFunc</decl.name>(<decl.var.parameter><decl.var.parameter.argument_label>arg1</decl.var.parameter.argument_label>: <decl.var.parameter.type><ref.struct usr="s:SS">String</ref.struct></decl.var.parameter.type></decl.var.parameter>, <decl.var.parameter><decl.var.parameter.argument_label>options</decl.var.parameter.argument_label>: <decl.var.parameter.type><ref.struct usr="s:Si">Int</ref.struct></decl.var.parameter.type></decl.var.parameter>)</decl.function.free>
 // CHECK15: RELATED BEGIN
-// CHECK15-NEXT: <RelatedName usr="s:F11cursor_info6myFuncFT4arg1SS_T_">myFunc(arg1:)</RelatedName>
+// CHECK15-NEXT: <RelatedName usr="s:11cursor_info6myFunc4arg1ySS_tF">myFunc(arg1:)</RelatedName>
 // CHECK15-NEXT: RELATED END
 
 // RUN: %sourcekitd-test -req=cursor -pos=41:26 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck -check-prefix=CHECK16 %s
@@ -383,75 +405,75 @@ func convention7(_: @convention(witness_method) ()->()) {}
 // RUN: %sourcekitd-test -req=cursor -pos=74:3 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck %s -check-prefix=CHECK29
 // CHECK29: source.lang.swift.decl.function.destructor (74:3-74:9)
 // CHECK29-NEXT: deinit
-// CHECK29-NEXT: s:FC11cursor_info2C3d
+// CHECK29-NEXT: s:11cursor_info2C3Cfd
 // CHECK29-NEXT: (C3) -> ()
-// CHECK29-NEXT: _TtFT_T_
+// CHECK29-NEXT: $syycD
 // CHECK29-NEXT: <Declaration>deinit</Declaration>
 // CHECK29-NEXT: <decl.function.destructor><syntaxtype.keyword>deinit</syntaxtype.keyword></decl.function.destructor>
 
 // RUN: %sourcekitd-test -req=cursor -pos=75:3 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck %s -check-prefix=CHECK30
 // CHECK30: source.lang.swift.decl.function.constructor (75:3-75:16)
 // CHECK30-NEXT: init(x:)
-// CHECK30-NEXT: s:FC11cursor_info2C3cFT1xSi_GSQS0__
-// CHECK30-NEXT: (C3.Type) -> (Int) -> C3!
-// CHECK30-NEXT: _TtFT1xSi_GSQC11cursor_info2C3_
+// CHECK30-NEXT: s:11cursor_info2C3C1xACSgSi_tcfc
+// CHECK30-NEXT: (C3.Type) -> (Int) -> C3?
+// CHECK30-NEXT: $s1x11cursor_info2C3CSgSi_tcD
 // CHECK30-NEXT: <Declaration>init!(x: <Type usr="s:Si">Int</Type>)</Declaration>
 // CHECK30-NEXT: <decl.function.constructor><syntaxtype.keyword>init</syntaxtype.keyword>!(<decl.var.parameter><decl.var.parameter.argument_label>x</decl.var.parameter.argument_label>: <decl.var.parameter.type><ref.struct usr="s:Si">Int</ref.struct></decl.var.parameter.type></decl.var.parameter>)</decl.function.constructor>
 
 // RUN: %sourcekitd-test -req=cursor -pos=76:3 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck %s -check-prefix=CHECK31
 // CHECK31: source.lang.swift.decl.function.constructor (76:3-76:16)
 // CHECK31-NEXT: init(y:)
-// CHECK31-NEXT: s:FC11cursor_info2C3cFT1ySi_GSqS0__
+// CHECK31-NEXT: s:11cursor_info2C3C1yACSgSi_tcfc
 // CHECK31-NEXT: (C3.Type) -> (Int) -> C3?
-// CHECK31-NEXT: _TtFT1ySi_GSqC11cursor_info2C3_
+// CHECK31-NEXT: $s1y11cursor_info2C3CSgSi_tcD
 // CHECK31-NEXT: <Declaration>init?(y: <Type usr="s:Si">Int</Type>)</Declaration>
 // CHECK31-NEXT: <decl.function.constructor><syntaxtype.keyword>init</syntaxtype.keyword>?(<decl.var.parameter><decl.var.parameter.argument_label>y</decl.var.parameter.argument_label>: <decl.var.parameter.type><ref.struct usr="s:Si">Int</ref.struct></decl.var.parameter.type></decl.var.parameter>)</decl.function.constructor>
 
 // RUN: %sourcekitd-test -req=cursor -pos=77:3 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck %s -check-prefix=CHECK32
 // CHECK32: source.lang.swift.decl.function.constructor (77:3-77:15)
 // CHECK32-NEXT: init(z:)
-// CHECK32-NEXT: s:FC11cursor_info2C3cFzT1zSi_S0_
+// CHECK32-NEXT: s:11cursor_info2C3C1zACSi_tKcfc
 // CHECK32-NEXT: (C3.Type) -> (Int) throws -> C3
-// CHECK32-NEXT: _TtFzT1zSi_C11cursor_info2C3
+// CHECK32-NEXT: $s1z11cursor_info2C3CSi_tKcD
 // CHECK32-NEXT: <Declaration>init(z: <Type usr="s:Si">Int</Type>) throws</Declaration>
 // CHECK32-NEXT: <decl.function.constructor><syntaxtype.keyword>init</syntaxtype.keyword>(<decl.var.parameter><decl.var.parameter.argument_label>z</decl.var.parameter.argument_label>: <decl.var.parameter.type><ref.struct usr="s:Si">Int</ref.struct></decl.var.parameter.type></decl.var.parameter>) <syntaxtype.keyword>throws</syntaxtype.keyword></decl.function.constructor>
 
 // RUN: %sourcekitd-test -req=cursor -pos=80:8 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck %s -check-prefix=CHECK33
 // CHECK33: source.lang.swift.decl.struct (80:8-80:10)
 // CHECK33-NEXT: S2
-// CHECK33-NEXT: s:V11cursor_info2S2
+// CHECK33-NEXT: s:11cursor_info2S2V
 // CHECK33-NEXT: S2<T, U>.Type
 // CHECK33: <Declaration>struct S2&lt;T, U&gt; where T == U</Declaration>
-// CHECK33-NEXT: <decl.struct><syntaxtype.keyword>struct</syntaxtype.keyword> <decl.name>S2</decl.name>&lt;<decl.generic_type_param usr="s:tV11cursor_info2S21TMx"><decl.generic_type_param.name>T</decl.generic_type_param.name></decl.generic_type_param>, <decl.generic_type_param usr="s:tV11cursor_info2S21UMq_"><decl.generic_type_param.name>U</decl.generic_type_param.name></decl.generic_type_param>&gt; <syntaxtype.keyword>where</syntaxtype.keyword> T == U</decl.struct>
+// CHECK33-NEXT: <decl.struct><syntaxtype.keyword>struct</syntaxtype.keyword> <decl.name>S2</decl.name>&lt;<decl.generic_type_param usr="s:11cursor_info2S2V1Txmfp"><decl.generic_type_param.name>T</decl.generic_type_param.name></decl.generic_type_param>, <decl.generic_type_param usr="s:11cursor_info2S2V1Uq_mfp"><decl.generic_type_param.name>U</decl.generic_type_param.name></decl.generic_type_param>&gt; <syntaxtype.keyword>where</syntaxtype.keyword> <decl.generic_type_requirement>T == U</decl.generic_type_requirement></decl.struct>
 
 // RUN: %sourcekitd-test -req=cursor -pos=81:8 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck %s -check-prefix=CHECK34
-// CHECK34: source.lang.swift.decl.function.method.instance (81:8-81:50)
-// CHECK34-NEXT: foo(_:)
-// CHECK34-NEXT: s:FV11cursor_info2S23foou0_Rd__zqd_0_rFFT_T_FT_T_
-// CHECK34-NEXT: <T, U, V, W where T == U, V == W> (S2<T, U>) -> (() -> ()) -> () -> ()
-// CHECK34: <Declaration>func foo&lt;V, W&gt;(_ closure: () -&gt; ()) -&gt; () -&gt; () where V == W</Declaration>
-// CHECK34-NEXT: <decl.function.method.instance><syntaxtype.keyword>func</syntaxtype.keyword> <decl.name>foo</decl.name>&lt;<decl.generic_type_param usr="s:tFV11cursor_info2S23foou0_Rd__zqd_0_rFFT_T_FT_T_L_1VMqd__"><decl.generic_type_param.name>V</decl.generic_type_param.name></decl.generic_type_param>, <decl.generic_type_param usr="s:tFV11cursor_info2S23foou0_Rd__zqd_0_rFFT_T_FT_T_L_1WMqd_0_"><decl.generic_type_param.name>W</decl.generic_type_param.name></decl.generic_type_param>&gt;(<decl.var.parameter><decl.var.parameter.argument_label>_</decl.var.parameter.argument_label> <decl.var.parameter.name>closure</decl.var.parameter.name>: <decl.var.parameter.type>() -&gt; <decl.function.returntype><tuple>()</tuple></decl.function.returntype></decl.var.parameter.type></decl.var.parameter>) -&gt; <decl.function.returntype>() -&gt; <decl.function.returntype><tuple>()</tuple></decl.function.returntype></decl.function.returntype> <syntaxtype.keyword>where</syntaxtype.keyword> V == W</decl.function.method.instance>
+// CHECK34: source.lang.swift.decl.function.method.instance (81:8-81:62)
+// CHECK34-NEXT: foo(_:_:_:)
+// CHECK34-NEXT: s:11cursor_info2S2V3fooyyycqd___qd__yyXEtqd_0_Rsd__r0_lF
+// CHECK34-NEXT: <T, U, V, W where T == U, V == W> (S2<T, U>) -> (V, W, () -> ()) -> () -> ()
+// CHECK34: <Declaration>func foo&lt;V, W&gt;(_: <Type usr="s:11cursor_info2S2V3fooyyycqd___qd__yyXEtqd_0_Rsd__r0_lF1VL_qd__mfp">V</Type>, _: <Type usr="s:11cursor_info2S2V3fooyyycqd___qd__yyXEtqd_0_Rsd__r0_lF1WL_qd_0_mfp">W</Type>, _ closure: () -&gt; ()) -&gt; () -&gt; () where V == W</Declaration>
+// CHECK34: <decl.function.method.instance><syntaxtype.keyword>func</syntaxtype.keyword> <decl.name>foo</decl.name>&lt;<decl.generic_type_param usr="s:11cursor_info2S2V3fooyyycqd___qd__yyXEtqd_0_Rsd__r0_lF1VL_qd__mfp"><decl.generic_type_param.name>V</decl.generic_type_param.name></decl.generic_type_param>, <decl.generic_type_param usr="s:11cursor_info2S2V3fooyyycqd___qd__yyXEtqd_0_Rsd__r0_lF1WL_qd_0_mfp"><decl.generic_type_param.name>W</decl.generic_type_param.name></decl.generic_type_param>&gt;(<decl.var.parameter><decl.var.parameter.argument_label>_</decl.var.parameter.argument_label>: <decl.var.parameter.type><ref.generic_type_param usr="s:11cursor_info2S2V3fooyyycqd___qd__yyXEtqd_0_Rsd__r0_lF1VL_qd__mfp">V</ref.generic_type_param></decl.var.parameter.type></decl.var.parameter>, <decl.var.parameter><decl.var.parameter.argument_label>_</decl.var.parameter.argument_label>: <decl.var.parameter.type><ref.generic_type_param usr="s:11cursor_info2S2V3fooyyycqd___qd__yyXEtqd_0_Rsd__r0_lF1WL_qd_0_mfp">W</ref.generic_type_param></decl.var.parameter.type></decl.var.parameter>, <decl.var.parameter><decl.var.parameter.argument_label>_</decl.var.parameter.argument_label> <decl.var.parameter.name>closure</decl.var.parameter.name>: <decl.var.parameter.type>() -&gt; <decl.function.returntype><tuple>()</tuple></decl.function.returntype></decl.var.parameter.type></decl.var.parameter>) -&gt; <decl.function.returntype>() -&gt; <decl.function.returntype><tuple>()</tuple></decl.function.returntype></decl.function.returntype> <syntaxtype.keyword>where</syntaxtype.keyword> <decl.generic_type_requirement>V == W</decl.generic_type_requirement></decl.function.method.instance>
 
 // RUN: %sourcekitd-test -req=cursor -pos=83:7 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck %s -check-prefix=CHECK35
 // CHECK35: source.lang.swift.decl.class (83:7-83:9)
 // CHECK35-NEXT: C4
-// CHECK35-NEXT: s:C11cursor_info2C4
+// CHECK35-NEXT: s:11cursor_info2C4C
 // CHECK35-NEXT: C4<T, U>.Type
 // CHECK35: <Declaration>class C4&lt;T, U&gt; where T == U</Declaration>
-// CHECK35-NEXT: <decl.class><syntaxtype.keyword>class</syntaxtype.keyword> <decl.name>C4</decl.name>&lt;<decl.generic_type_param usr="s:tC11cursor_info2C41TMx"><decl.generic_type_param.name>T</decl.generic_type_param.name></decl.generic_type_param>, <decl.generic_type_param usr="s:tC11cursor_info2C41UMq_"><decl.generic_type_param.name>U</decl.generic_type_param.name></decl.generic_type_param>&gt; <syntaxtype.keyword>where</syntaxtype.keyword> T == U</decl.class>
+// CHECK35-NEXT: <decl.class><syntaxtype.keyword>class</syntaxtype.keyword> <decl.name>C4</decl.name>&lt;<decl.generic_type_param usr="s:11cursor_info2C4C1Txmfp"><decl.generic_type_param.name>T</decl.generic_type_param.name></decl.generic_type_param>, <decl.generic_type_param usr="s:11cursor_info2C4C1Uq_mfp"><decl.generic_type_param.name>U</decl.generic_type_param.name></decl.generic_type_param>&gt; <syntaxtype.keyword>where</syntaxtype.keyword> <decl.generic_type_requirement>T == U</decl.generic_type_requirement></decl.class>
 
 // RUN: %sourcekitd-test -req=cursor -pos=84:6 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck %s -check-prefix=CHECK36
 // CHECK36: source.lang.swift.decl.enum (84:6-84:8)
 // CHECK36-NEXT: E1
-// CHECK36-NEXT: s:O11cursor_info2E1
+// CHECK36-NEXT: s:11cursor_info2E1O
 // CHECK36-NEXT: E1<T, U>.Type
 // CHECK36: <Declaration>enum E1&lt;T, U&gt; where T == U</Declaration>
-// CHECK36-NEXT: <decl.enum><syntaxtype.keyword>enum</syntaxtype.keyword> <decl.name>E1</decl.name>&lt;<decl.generic_type_param usr="s:tO11cursor_info2E11TMx"><decl.generic_type_param.name>T</decl.generic_type_param.name></decl.generic_type_param>, <decl.generic_type_param usr="s:tO11cursor_info2E11UMq_"><decl.generic_type_param.name>U</decl.generic_type_param.name></decl.generic_type_param>&gt; <syntaxtype.keyword>where</syntaxtype.keyword> T == U</decl.enum>
+// CHECK36-NEXT: <decl.enum><syntaxtype.keyword>enum</syntaxtype.keyword> <decl.name>E1</decl.name>&lt;<decl.generic_type_param usr="s:11cursor_info2E1O1Txmfp"><decl.generic_type_param.name>T</decl.generic_type_param.name></decl.generic_type_param>, <decl.generic_type_param usr="s:11cursor_info2E1O1Uq_mfp"><decl.generic_type_param.name>U</decl.generic_type_param.name></decl.generic_type_param>&gt; <syntaxtype.keyword>where</syntaxtype.keyword> <decl.generic_type_requirement>T == U</decl.generic_type_requirement></decl.enum>
 
 // RUN: %sourcekitd-test -req=cursor -pos=86:6 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck %s -check-prefix=CHECK37
 // CHECK37: source.lang.swift.decl.function.free (86:6-86:111)
 // CHECK37-NEXT: nonDefaultArgNames(external1:_:external3:external4:_:)
-// CHECK37-NEXT: s:F11cursor_info18nonDefaultArgNamesFT9external1SiSi9external3Si9external4SiSi_T_
+// CHECK37-NEXT: s:11cursor_info18nonDefaultArgNames9external1_9external39external4_ySi_S4itF
 // CHECK37-NEXT: (Int, Int, Int, Int, Int) -> ()
 // CHECK37: <Declaration>func nonDefaultArgNames(external1 local1: <Type usr="s:Si">Int</Type>, _ local2: <Type usr="s:Si">Int</Type>, external3 local3: <Type usr="s:Si">Int</Type>, external4 _: <Type usr="s:Si">Int</Type>, _: <Type usr="s:Si">Int</Type>)</Declaration>
 // CHECK37-NEXT: <decl.function.free><syntaxtype.keyword>func</syntaxtype.keyword> <decl.name>nonDefaultArgNames</decl.name>(<decl.var.parameter><decl.var.parameter.argument_label>external1</decl.var.parameter.argument_label> <decl.var.parameter.name>local1</decl.var.parameter.name>: <decl.var.parameter.type><ref.struct usr="s:Si">Int</ref.struct></decl.var.parameter.type></decl.var.parameter>, <decl.var.parameter><decl.var.parameter.argument_label>_</decl.var.parameter.argument_label> <decl.var.parameter.name>local2</decl.var.parameter.name>: <decl.var.parameter.type><ref.struct usr="s:Si">Int</ref.struct></decl.var.parameter.type></decl.var.parameter>, <decl.var.parameter><decl.var.parameter.argument_label>external3</decl.var.parameter.argument_label> <decl.var.parameter.name>local3</decl.var.parameter.name>: <decl.var.parameter.type><ref.struct usr="s:Si">Int</ref.struct></decl.var.parameter.type></decl.var.parameter>, <decl.var.parameter><decl.var.parameter.argument_label>external4</decl.var.parameter.argument_label> <decl.var.parameter.name>_</decl.var.parameter.name>: <decl.var.parameter.type><ref.struct usr="s:Si">Int</ref.struct></decl.var.parameter.type></decl.var.parameter>, <decl.var.parameter><decl.var.parameter.argument_label>_</decl.var.parameter.argument_label>: <decl.var.parameter.type><ref.struct usr="s:Si">Int</ref.struct></decl.var.parameter.type></decl.var.parameter>)</decl.function.free>
@@ -462,7 +484,7 @@ func convention7(_: @convention(witness_method) ()->()) {}
 // RUN: %sourcekitd-test -req=cursor -pos=91:8 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck %s -check-prefix=CHECK39
 // CHECK39: source.lang.swift.decl.enumelement (91:8-91:10)
 // CHECK39-NEXT: C1
-// CHECK39-NEXT: s:FO11cursor_info2E22C1FMS0_S0_
+// CHECK39-NEXT: s:11cursor_info2E2O2C1yA2CmF
 // CHECK39-NEXT: (E2.Type) -> E2
 // CHECK39: <Declaration>case C1</Declaration>
 // CHECK39-NEXT: <decl.enumelement><syntaxtype.keyword>case</syntaxtype.keyword> <decl.name>C1</decl.name></decl.enumelement>
@@ -470,24 +492,23 @@ func convention7(_: @convention(witness_method) ()->()) {}
 // RUN: %sourcekitd-test -req=cursor -pos=92:8 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck %s -check-prefix=CHECK40
 // CHECK40: source.lang.swift.decl.enumelement (92:8-92:10)
 // CHECK40-NEXT: C2
-// CHECK40-NEXT: s:FO11cursor_info2E22C2FMS0_FT1xSi1ySS_S0_
+// CHECK40-NEXT: s:11cursor_info2E2O2C2yACSi_SStcACmF
 // CHECK40-NEXT: (E2.Type) -> (Int, String) -> E2
 // CHECK40: <Declaration>case C2(x: <Type usr="s:Si">Int</Type>, y: <Type usr="s:SS">String</Type>)</Declaration>
-// CHECK40-NEXT: <decl.enumelement><syntaxtype.keyword>case</syntaxtype.keyword> <decl.name>C2</decl.name><tuple>(<tuple.element><tuple.element.argument_label>x</tuple.element.argument_label>: <tuple.element.type><ref.struct usr="s:Si">Int</ref.struct></tuple.element.type></tuple.element>, <tuple.element><tuple.element.argument_label>y</tuple.element.argument_label>: <tuple.element.type><ref.struct usr="s:SS">String</ref.struct></tuple.element.type></tuple.element>)</tuple></decl.enumelement>
+// CHECK40-NEXT: <decl.enumelement><syntaxtype.keyword>case</syntaxtype.keyword> <decl.name>C2</decl.name>(<decl.var.parameter><decl.var.parameter.argument_label>x</decl.var.parameter.argument_label>: <decl.var.parameter.type><ref.struct usr="s:Si">Int</ref.struct></decl.var.parameter.type></decl.var.parameter>, <decl.var.parameter><decl.var.parameter.argument_label>y</decl.var.parameter.argument_label>: <decl.var.parameter.type><ref.struct usr="s:SS">String</ref.struct></decl.var.parameter.type></decl.var.parameter>)</decl.enumelement>
 
 // RUN: %sourcekitd-test -req=cursor -pos=92:31 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck %s -check-prefix=CHECK41
 // CHECK41: source.lang.swift.decl.enumelement (92:31-92:33)
 // CHECK41-NEXT: C3
-// CHECK41-NEXT: s:FO11cursor_info2E22C3FMS0_FSiS0_
+// CHECK41-NEXT: s:11cursor_info2E2O2C3yACSicACmF
 // CHECK41-NEXT: (E2.Type) -> (Int) -> E2
 // CHECK41: <Declaration>case C3(<Type usr="s:Si">Int</Type>)</Declaration>
-// CHECK41-NEXT: <decl.enumelement><syntaxtype.keyword>case</syntaxtype.keyword> <decl.name>C3</decl.name>(<ref.struct usr="s:Si">Int</ref.struct>)</decl.enumelement>
-// FIXME: Wrap parameters in <decl.var.parameter>
+// CHECK41-NEXT: <decl.enumelement><syntaxtype.keyword>case</syntaxtype.keyword> <decl.name>C3</decl.name>(<decl.var.parameter><decl.var.parameter.type><ref.struct usr="s:Si">Int</ref.struct></decl.var.parameter.type></decl.var.parameter>)</decl.enumelement>
 
 // RUN: %sourcekitd-test -req=cursor -pos=96:8 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck %s -check-prefix=CHECK42
 // CHECK42: source.lang.swift.decl.enumelement (96:8-96:9)
 // CHECK42-NEXT: C
-// CHECK42-NEXT: s:FO11cursor_info2E31CFMS0_S0_
+// CHECK42-NEXT: s:11cursor_info2E3O1CyA2CmF
 // CHECK42-NEXT: (E3.Type) -> E3
 // CHECK42: <Declaration>case C = &quot;a&quot;</Declaration>
 // CHECK42-NEXT: <decl.enumelement><syntaxtype.keyword>case</syntaxtype.keyword> <decl.name>C</decl.name> = <syntaxtype.string>&quot;a&quot;</syntaxtype.string></decl.enumelement>
@@ -502,13 +523,13 @@ func convention7(_: @convention(witness_method) ()->()) {}
 // CHECK44: source.lang.swift.ref.enumelement (92:8-92:10)
 // CHECK44-NEXT: C2
 // CHECK44: <Declaration>case C2(x: <Type usr="s:Si">Int</Type>, y: <Type usr="s:SS">String</Type>)</Declaration>
-// CHECK44-NEXT: <decl.enumelement><syntaxtype.keyword>case</syntaxtype.keyword> <decl.name>C2</decl.name><tuple>(<tuple.element><tuple.element.argument_label>x</tuple.element.argument_label>: <tuple.element.type><ref
+// CHECK44-NEXT: <decl.enumelement><syntaxtype.keyword>case</syntaxtype.keyword> <decl.name>C2</decl.name>(<decl.var.parameter><decl.var.parameter.argument_label>x</decl.var.parameter.argument_label>: <decl.var.parameter.type><ref
 
 // RUN: %sourcekitd-test -req=cursor -pos=102:16 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck %s -check-prefix=CHECK45
 // CHECK45: source.lang.swift.ref.enumelement (92:8-92:10)
 // CHECK45-NEXT: C2
 // CHECK45: <Declaration>case C2(x: <Type usr="s:Si">Int</Type>, y: <Type usr="s:SS">String</Type>)</Declaration>
-// CHECK45-NEXT: <decl.enumelement><syntaxtype.keyword>case</syntaxtype.keyword> <decl.name>C2</decl.name><tuple>(<tuple.element><tuple.element.argument_label>x
+// CHECK45-NEXT: <decl.enumelement><syntaxtype.keyword>case</syntaxtype.keyword> <decl.name>C2</decl.name>(<decl.var.parameter><decl.var.parameter.argument_label>x
 
 // RUN: %sourcekitd-test -req=cursor -pos=103:16 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck %s -check-prefix=CHECK46
 // CHECK46: source.lang.swift.ref.enumelement (96:8-96:9)
@@ -519,7 +540,7 @@ func convention7(_: @convention(witness_method) ()->()) {}
 // RUN: %sourcekitd-test -req=cursor -pos=80:11 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck %s -check-prefix=CHECK47
 // CHECK47: source.lang.swift.decl.generic_type_param (80:11-80:12)
 // CHECK47-NEXT: T
-// CHECK47-NEXT: s:tV11cursor_info2S21TMx
+// CHECK47-NEXT: s:11cursor_info2S2V1Txmfp
 // CHECK47-NEXT: T.Type
 // CHECK47: <Declaration>T</Declaration>
 // CHECK47-NEXT: <decl.generic_type_param><decl.generic_type_param.name>T</decl.generic_type_param.name></decl.generic_type_param>
@@ -542,8 +563,8 @@ func convention7(_: @convention(witness_method) ()->()) {}
 
 // RUN: %sourcekitd-test -req=cursor -pos=117:6 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck %s -check-prefix=CHECK52
 // CHECK52: source.lang.swift.decl.function.free (117:6-117:36)
-// CHECK52: <U, V where V : P1, U == V.T> (U, v: V) -> ()
-// CHECK52: <decl.function.free><syntaxtype.keyword>func</syntaxtype.keyword> <decl.name>genReq</decl.name>&lt;<decl.generic_type_param usr="s:tF11cursor_info6genRequ0_R_S_2P1xzw_1TrFTx1vq__T_L_1UMx"><decl.generic_type_param.name>U</decl.generic_type_param.name></decl.generic_type_param>, <decl.generic_type_param usr="s:tF11cursor_info6genRequ0_R_S_2P1xzw_1TrFTx1vq__T_L_1VMq_"><decl.generic_type_param.name>V</decl.generic_type_param.name></decl.generic_type_param>&gt;(<decl.var.parameter><decl.var.parameter.argument_label>_</decl.var.parameter.argument_label> <decl.var.parameter.name>u</decl.var.parameter.name>: <decl.var.parameter.type><ref.generic_type_param usr="s:tF11cursor_info6genRequ0_R_S_2P1xzw_1TrFTx1vq__T_L_1UMx">U</ref.generic_type_param></decl.var.parameter.type></decl.var.parameter>, <decl.var.parameter><decl.var.parameter.argument_label>v</decl.var.parameter.argument_label>: <decl.var.parameter.type><ref.generic_type_param usr="s:tF11cursor_info6genRequ0_R_S_2P1xzw_1TrFTx1vq__T_L_1VMq_">V</ref.generic_type_param></decl.var.parameter.type></decl.var.parameter>) <syntaxtype.keyword>where</syntaxtype.keyword> V : <ref.protocol usr="s:P11cursor_info2P1">P1</ref.protocol>, U == V.T</decl.function.free>
+// CHECK52: <U, V where U == V.T, V : P1> (U, v: V) -> ()
+// CHECK52: <decl.function.free><syntaxtype.keyword>func</syntaxtype.keyword> <decl.name>genReq</decl.name>&lt;<decl.generic_type_param usr="s:11cursor_info6genReq_1vyx_q_t1TQy_RszAA2P1R_r0_lF1UL_xmfp"><decl.generic_type_param.name>U</decl.generic_type_param.name></decl.generic_type_param>, <decl.generic_type_param usr="s:11cursor_info6genReq_1vyx_q_t1TQy_RszAA2P1R_r0_lF1VL_q_mfp"><decl.generic_type_param.name>V</decl.generic_type_param.name></decl.generic_type_param>&gt;(<decl.var.parameter><decl.var.parameter.argument_label>_</decl.var.parameter.argument_label> <decl.var.parameter.name>u</decl.var.parameter.name>: <decl.var.parameter.type><ref.generic_type_param usr="s:11cursor_info6genReq_1vyx_q_t1TQy_RszAA2P1R_r0_lF1UL_xmfp">U</ref.generic_type_param></decl.var.parameter.type></decl.var.parameter>, <decl.var.parameter><decl.var.parameter.argument_label>v</decl.var.parameter.argument_label>: <decl.var.parameter.type><ref.generic_type_param usr="s:11cursor_info6genReq_1vyx_q_t1TQy_RszAA2P1R_r0_lF1VL_q_mfp">V</ref.generic_type_param></decl.var.parameter.type></decl.var.parameter>) <syntaxtype.keyword>where</syntaxtype.keyword> <decl.generic_type_requirement>U == V.T</decl.generic_type_requirement>, <decl.generic_type_requirement>V : <ref.protocol usr="s:11cursor_info2P1P">P1</ref.protocol></decl.generic_type_requirement></decl.function.free>
 
 // RUN: %sourcekitd-test -req=cursor -pos=117:16 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck %s -check-prefix=CHECK53
 // CHECK53: source.lang.swift.decl.generic_type_param (117:16-117:17)
@@ -586,16 +607,16 @@ func convention7(_: @convention(witness_method) ()->()) {}
 // CHECK64: <decl.enumelement><syntaxtype.keyword>case</syntaxtype.keyword> <decl.name>B</decl.name> = <syntaxtype.number>1e10</syntaxtype.number></decl.enumelement>
 
 // RUN: %sourcekitd-test -req=cursor -pos=146:7 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck %s -check-prefix=CHECK65
-// CHECK65: <decl.class><syntaxtype.keyword>class</syntaxtype.keyword> <decl.name>C6</decl.name> : C4, <ref.protocol usr="s:P11cursor_info2P1">P1</ref.protocol></decl.class>
+// CHECK65: <decl.class><syntaxtype.keyword>class</syntaxtype.keyword> <decl.name>C6</decl.name> : C4, <ref.protocol usr="s:11cursor_info2P1P">P1</ref.protocol></decl.class>
 // FIXME: ref.class - rdar://problem/25014968
 
 // RUN: %sourcekitd-test -req=cursor -pos=150:10 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck %s -check-prefix=CHECK66
-// CHECK66: <decl.protocol><syntaxtype.keyword>protocol</syntaxtype.keyword> <decl.name>P2</decl.name> :  <syntaxtype.keyword>class</syntaxtype.keyword>, <ref.protocol usr="s:P11cursor_info2P1">P1</ref.protocol></decl.protocol>
+// CHECK66: <decl.protocol><syntaxtype.keyword>protocol</syntaxtype.keyword> <decl.name>P2</decl.name> : AnyObject, <ref.protocol usr="s:11cursor_info2P1P">P1</ref.protocol></decl.protocol>
 
 // RUN: %sourcekitd-test -req=cursor -pos=114:18 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck %s -check-prefix=CHECK67
 // CHECK67: source.lang.swift.decl.associatedtype (114:18-114:19)
 // CHECK67-NEXT: T
-// CHECK67-NEXT: s:P11cursor_info2P11T
+// CHECK67-NEXT: s:11cursor_info2P1P1T
 // CHECK67-NEXT: T.Type
 // CHECK67: <Declaration>associatedtype T</Declaration>
 // CHECK67-NEXT: <decl.associatedtype><syntaxtype.keyword>associatedtype</syntaxtype.keyword> <decl.name>T</decl.name></decl.associatedtype>
@@ -603,27 +624,27 @@ func convention7(_: @convention(witness_method) ()->()) {}
 // RUN: %sourcekitd-test -req=cursor -pos=152:11 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck %s -check-prefix=CHECK68
 // CHECK68: source.lang.swift.decl.typealias (152:11-152:18)
 // CHECK68-NEXT: MyAlias
-// CHECK68-NEXT: s:11cursor_info7MyAlias
-// CHECK68-NEXT: MyAlias.Type
-// CHECK68: <Declaration>typealias MyAlias&lt;T, U&gt; = (<Type usr="{{.*}}">T</Type>, <Type usr="{{.*}}">U</Type>, <Type usr="{{.*}}">T</Type>, <Type usr="{{.*}}">U</Type>)</Declaration>
+// CHECK68-NEXT: s:11cursor_info7MyAliasa
+// CHECK68-NEXT: (T, U, T, U).Type
+// CHECK68: <Declaration>typealias MyAlias&lt;T, U&gt; = (<Type usr="s:11cursor_info7MyAliasa1Txmfp">T</Type>, <Type usr="s:11cursor_info7MyAliasa1Uq_mfp">U</Type>, <Type usr="s:11cursor_info7MyAliasa1Txmfp">T</Type>, <Type usr="s:11cursor_info7MyAliasa1Uq_mfp">U</Type>)</Declaration>
 // CHECK68-NEXT: <decl.typealias><syntaxtype.keyword>typealias</syntaxtype.keyword> <decl.name>MyAlias</decl.name>&lt;<decl.generic_type_param usr="{{.*}}"><decl.generic_type_param.name>T</decl.generic_type_param.name></decl.generic_type_param>, <decl.generic_type_param usr="{{.*}}"><decl.generic_type_param.name>U</decl.generic_type_param.name></decl.generic_type_param>&gt; = <tuple>(<tuple.element><tuple.element.type><ref.generic_type_param usr="{{.*}}">T</ref.generic_type_param></tuple.element.type></tuple.element>, <tuple.element><tuple.element.type><ref.generic_type_param usr="{{.*}}">U</ref.generic_type_param></tuple.element.type></tuple.element>, <tuple.element><tuple.element.type><ref.generic_type_param usr="{{.*}}">T</ref.generic_type_param></tuple.element.type></tuple.element>, <tuple.element><tuple.element.type><ref.generic_type_param usr="{{.*}}">U</ref.generic_type_param></tuple.element.type></tuple.element>)</tuple></decl.typealias>
 
 // RUN: %sourcekitd-test -req=cursor -pos=153:28 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck %s -check-prefix=CHECK69
 // CHECK69: source.lang.swift.ref.typealias (152:11-152:18)
 // CHECK69-NEXT: MyAlias
-// CHECK69-NEXT: s:11cursor_info7MyAlias
-// CHECK69-NEXT: MyAlias.Type
-// CHECK69: <Declaration>typealias MyAlias&lt;T, U&gt; = (<Type usr="{{.*}}">T</Type>, <Type usr="{{.*}}">U</Type>, <Type usr="{{.*}}">T</Type>, <Type usr="{{.*}}">U</Type>)</Declaration>
+// CHECK69-NEXT: s:11cursor_info7MyAliasa
+// CHECK69-NEXT: (T, U, T, U).Type
+// CHECK69: <Declaration>typealias MyAlias&lt;T, U&gt; = (<Type usr="s:11cursor_info7MyAliasa1Txmfp">T</Type>, <Type usr="s:11cursor_info7MyAliasa1Uq_mfp">U</Type>, <Type usr="s:11cursor_info7MyAliasa1Txmfp">T</Type>, <Type usr="s:11cursor_info7MyAliasa1Uq_mfp">U</Type>)</Declaration>
 // CHECK69-NEXT: <decl.typealias><syntaxtype.keyword>typealias</syntaxtype.keyword> <decl.name>MyAlias</decl.name>&lt;<decl.generic_type_param usr="{{.*}}"><decl.generic_type_param.name>T</decl.generic_type_param.name></decl.generic_type_param>, <decl.generic_type_param usr="{{.*}}"><decl.generic_type_param.name>U</decl.generic_type_param.name></decl.generic_type_param>&gt; = <tuple>(<tuple.element><tuple.element.type><ref.generic_type_param usr="{{.*}}">T</ref.generic_type_param></tuple.element.type></tuple.element>, <tuple.element><tuple.element.type><ref.generic_type_param usr="{{.*}}">U</ref.generic_type_param></tuple.element.type></tuple.element>, <tuple.element><tuple.element.type><ref.generic_type_param usr="{{.*}}">T</ref.generic_type_param></tuple.element.type></tuple.element>, <tuple.element><tuple.element.type><ref.generic_type_param usr="{{.*}}">U</ref.generic_type_param></tuple.element.type></tuple.element>)</tuple></decl.typealias>
 
 // RUN: %sourcekitd-test -req=cursor -pos=155:6 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck %s -check-prefix=CHECK70
 // CHECK70: <decl.function.free><syntaxtype.keyword>func</syntaxtype.keyword> <decl.name>paramAutoclosureNoescape1</decl.name>(<decl.var.parameter><decl.var.parameter.argument_label>_</decl.var.parameter.argument_label> <decl.var.parameter.name>msg</decl.var.parameter.name>: <decl.var.parameter.type>() -&gt; <decl.function.returntype><ref.struct usr="s:SS">String</ref.struct></decl.function.returntype></decl.var.parameter.type></decl.var.parameter>)</decl.function.free>
 
 // RUN: %sourcekitd-test -req=cursor -pos=156:6 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck %s -check-prefix=CHECK71
-// CHECK71: <decl.function.free><syntaxtype.keyword>func</syntaxtype.keyword> <decl.name>paramAutoclosureNoescape2</decl.name>(<decl.var.parameter><decl.var.parameter.argument_label>_</decl.var.parameter.argument_label> <decl.var.parameter.name>msg</decl.var.parameter.name>: @autoclosure <decl.var.parameter.type>() -&gt; <decl.function.returntype><ref.struct usr="s:SS">String</ref.struct></decl.function.returntype></decl.var.parameter.type></decl.var.parameter>)</decl.function.free>
+// CHECK71: <decl.function.free><syntaxtype.keyword>func</syntaxtype.keyword> <decl.name>paramAutoclosureNoescape2</decl.name>(<decl.var.parameter><decl.var.parameter.argument_label>_</decl.var.parameter.argument_label> <decl.var.parameter.name>msg</decl.var.parameter.name>: <decl.var.parameter.type><syntaxtype.attribute.builtin><syntaxtype.attribute.name>@autoclosure</syntaxtype.attribute.name></syntaxtype.attribute.builtin> () -&gt; <decl.function.returntype><ref.struct usr="s:SS">String</ref.struct></decl.function.returntype></decl.var.parameter.type></decl.var.parameter>)</decl.function.free>
 
 // RUN: %sourcekitd-test -req=cursor -pos=157:6 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck %s -check-prefix=CHECK72
-// CHECK72: <decl.function.free><syntaxtype.keyword>func</syntaxtype.keyword> <decl.name>paramAutoclosureNoescape3</decl.name>(<decl.var.parameter><decl.var.parameter.argument_label>_</decl.var.parameter.argument_label> <decl.var.parameter.name>msg</decl.var.parameter.name>: @autoclosure @escaping <decl.var.parameter.type>() -&gt; <decl.function.returntype><ref.struct usr="s:SS">String</ref.struct></decl.function.returntype></decl.var.parameter.type></decl.var.parameter>)</decl.function.free>
+// CHECK72: <decl.function.free><syntaxtype.keyword>func</syntaxtype.keyword> <decl.name>paramAutoclosureNoescape3</decl.name>(<decl.var.parameter><decl.var.parameter.argument_label>_</decl.var.parameter.argument_label> <decl.var.parameter.name>msg</decl.var.parameter.name>: <decl.var.parameter.type><syntaxtype.attribute.builtin><syntaxtype.attribute.name>@autoclosure</syntaxtype.attribute.name></syntaxtype.attribute.builtin> <syntaxtype.attribute.builtin><syntaxtype.attribute.name>@escaping</syntaxtype.attribute.name></syntaxtype.attribute.builtin> () -&gt; <decl.function.returntype><ref.struct usr="s:SS">String</ref.struct></decl.function.returntype></decl.var.parameter.type></decl.var.parameter>)</decl.function.free>
 
 // RUN: %sourcekitd-test -req=cursor -pos=159:6 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck %s -check-prefix=CHECK73
 // CHECK73: <decl.function.free>
@@ -631,34 +652,31 @@ func convention7(_: @convention(witness_method) ()->()) {}
 // CHECK73-SAME: = <syntaxtype.keyword>#file</syntaxtype.keyword>
 // CHECK73-SAME: = <syntaxtype.keyword>#line</syntaxtype.keyword>
 // CHECK73-SAME: = <syntaxtype.keyword>#column</syntaxtype.keyword>
-// FIXME: []
-// CHECK73-SAME: = <syntaxtype.keyword>default</syntaxtype.keyword>
-// FIXME: [:]
-// CHECK73-SAME: = <syntaxtype.keyword>default</syntaxtype.keyword>
-// FIXME: keyword nil
-// CHECK73-SAME: = <syntaxtype.keyword>default</syntaxtype.keyword>
-// CHECK73-SAME: = <syntaxtype.keyword>default</syntaxtype.keyword>
+// CHECK73-SAME: = []
+// CHECK73-SAME: = [:]
+// FIXME: should be <syntaxtype.keyword>nil</syntaxtype.keyword>
+// CHECK73-SAME: = nil
+// CHECK73-SAME: = 1
 
 // RUN: %sourcekitd-test -req=cursor -pos=162:8 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck %s -check-prefix=CHECK74
 // CHECK74: source.lang.swift.decl.function.method.instance (162:8-162:20)
 // CHECK74: <Self where Self : P3> (Self) -> (Self) -> Self
-// CHECK74: <Declaration>func f(_ s: <Type usr="s:tP11cursor_info2P34SelfMx">Self</Type>) -&gt; <Type usr="s:tP11cursor_info2P34SelfMx">Self</Type></Declaration>
-// CHECK74: <decl.var.parameter.type><ref.generic_type_param usr="s:tP11cursor_info2P34SelfMx">Self</ref.generic_type_param></decl.var.parameter.type>
-// CHECK74-SAME: <decl.function.returntype><ref.generic_type_param usr="s:tP11cursor_info2P34SelfMx">Self</ref.generic_type_param></decl.function.returntype>
+// CHECK74: <Declaration>func f(_ s: <Type usr="s:11cursor_info2P3P4Selfxmfp">Self</Type>) -&gt; <Type usr="s:11cursor_info2P3P4Selfxmfp">Self</Type></Declaration>
+// CHECK74: <decl.var.parameter.type><ref.generic_type_param usr="s:11cursor_info2P3P4Selfxmfp">Self</ref.generic_type_param></decl.var.parameter.type>
+// CHECK74-SAME: <decl.function.returntype><ref.generic_type_param usr="s:11cursor_info2P3P4Selfxmfp">Self</ref.generic_type_param></decl.function.returntype>
 
 // RUN: %sourcekitd-test -req=cursor -pos=165:8 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck %s -check-prefix=CHECK75
 // CHECK75: source.lang.swift.decl.function.method.instance (165:8-165:20)
 // CHECK75: <Self where Self : P3> (Self) -> (Self) -> Self
-// CHECK75: <Declaration>func f(_ s: <Type usr="s:tE11cursor_infoPS_2P34SelfMx">Self</Type>) -&gt; <Type usr="s:tP11cursor_info2P34SelfMx">Self</Type></Declaration>
-// CHECK75: <decl.var.parameter.type><ref.generic_type_param usr="s:tE11cursor_infoPS_2P34SelfMx">Self</ref.generic_type_param></decl.var.parameter.type>
-// CHECK75-SAME: <decl.function.returntype><ref.generic_type_param usr="s:tP11cursor_info2P34SelfMx">Self</ref.generic_type_param></decl.function.returntype>
-// FIXME: the return type gets the USR for the original protocol, rather than the extension.
+// CHECK75: <Declaration>func f(_ s: <Type usr="s:11cursor_info2P3PAAE4Selfxmfp">Self</Type>) -&gt; <Type usr="s:11cursor_info2P3PAAE4Selfxmfp">Self</Type></Declaration>
+// CHECK75: <decl.var.parameter.type><ref.generic_type_param usr="s:11cursor_info2P3PAAE4Selfxmfp">Self</ref.generic_type_param></decl.var.parameter.type>
+// CHECK75-SAME: <decl.function.returntype><ref.generic_type_param usr="s:11cursor_info2P3PAAE4Selfxmfp">Self</ref.generic_type_param></decl.function.returntype>
 
 // RUN: %sourcekitd-test -req=cursor -pos=169:8 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck %s -check-prefix=CHECK76
 // CHECK76: source.lang.swift.decl.function.method.instance (169:8-169:11)
 // CHECK76: (C7) -> () -> Self
-// CHECK76: <Declaration>func f() -&gt; <Type usr="s:C11cursor_info2C7">Self</Type></Declaration>
-// CHECK76: <decl.function.returntype><ref.class usr="s:C11cursor_info2C7">Self</ref.class></decl.function.returntype>
+// CHECK76: <Declaration>func f() -&gt; <Type usr="s:11cursor_info2C7C">Self</Type></Declaration>
+// CHECK76: <decl.function.returntype><ref.class usr="s:11cursor_info2C7C">Self</ref.class></decl.function.returntype>
 
 // RUN: %sourcekitd-test -req=cursor -pos=188:7 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck -check-prefix=CHECK77 %s
 // RUN: %sourcekitd-test -req=cursor -pos=189:7 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck -check-prefix=CHECK78 %s
@@ -683,7 +701,7 @@ func convention7(_: @convention(witness_method) ()->()) {}
 // CHECK82: <decl.function.returntype><tuple>(<tuple.element><tuple.element.type><ref.struct usr="s:Si">Int</ref.struct></tuple.element.type></tuple.element>, <tuple.element><tuple.element.type><ref.struct usr="s:Si">Int</ref.struct></tuple.element.type></tuple.element>)</tuple>
 
 // RUN: %sourcekitd-test -req=cursor -pos=196:6 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck -check-prefix=CHECK83 %s
-// CHECK83: <decl.var.parameter.type>() -&gt; <decl.function.returntype><ref.typealias usr="s:s4Void">Void</ref.typealias>
+// CHECK83: <decl.var.parameter.type>() -&gt; <decl.function.returntype><ref.typealias usr="s:s4Voida">Void</ref.typealias>
 
 // RUN: %sourcekitd-test -req=cursor -pos=197:11 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck -check-prefix=CHECK84 %s
 // CHECK84: <decl.typealias><syntaxtype.keyword>typealias</syntaxtype.keyword> <decl.name>MyVoid</decl.name> = <tuple>()</tuple></decl.typealias>
@@ -703,3 +721,45 @@ func convention7(_: @convention(witness_method) ()->()) {}
 // RUN: %sourcekitd-test -req=cursor -pos=206:6 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck -check-prefix=CHECK86 %s
 // RUN: %sourcekitd-test -req=cursor -pos=207:6 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck -check-prefix=CHECK86 %s
 // CHECK86: <syntaxtype.attribute.builtin><syntaxtype.attribute.name>@convention</syntaxtype.attribute.name>({{[a-z_]*}})</syntaxtype.attribute.builtin>
+
+// RUN: %sourcekitd-test -req=cursor -pos=212:8 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck -check-prefix=CHECK87 %s
+// CHECK87:      source.lang.swift.decl.struct (212:8-212:26)
+// CHECK87-NEXT: HasLocalizationKey
+// CHECK87-NEXT: s:11cursor_info18HasLocalizationKeyV
+// CHECK87-NEXT: HasLocalizationKey.Type
+// CHECK87-NEXT: $s
+// CHECK87-NEXT: <Declaration>struct HasLocalizationKey</Declaration>
+// CHECK87-NEXT: <decl.struct><syntaxtype.keyword>struct</syntaxtype.keyword> <decl.name>HasLocalizationKey</decl.name></decl.struct>
+// CHECK87-NEXT: <Class file="{{[^"]+}}cursor_info.swift" line="212" column="8"><Name>HasLocalizationKey</Name><USR>s:11cursor_info18HasLocalizationKeyV</USR><Declaration>struct HasLocalizationKey</Declaration><CommentParts><Abstract><Para>Brief.</Para></Abstract></CommentParts></Class>
+// CHECK87-NEXT: <LocalizationKey>ABC</LocalizationKey>
+
+// RUN: %sourcekitd-test -req=cursor -pos=215:6 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck -check-prefix=CHECK88 %s
+// CHECK88:      source.lang.swift.decl.function.free (215:6-215:27)
+// CHECK88-NEXT: hasLocalizationKey2
+// CHECK88-NEXT: s:11cursor_info19hasLocalizationKey2yyF
+// CHECK88-NEXT: () -> ()
+// CHECK88-NEXT: $s
+// CHECK88-NEXT: <Declaration>func hasLocalizationKey2()</Declaration>
+// CHECK88-NEXT: <decl.function.free><syntaxtype.keyword>func</syntaxtype.keyword> <decl.name>hasLocalizationKey2</decl.name>()</decl.function.free>
+// CHECK88-NEXT: <Function file="{{[^"]+}}cursor_info.swift" line="215" column="6"><Name>hasLocalizationKey2()</Name><USR>s:11cursor_info19hasLocalizationKey2yyF</USR><Declaration>func hasLocalizationKey2()</Declaration><CommentParts></CommentParts></Function
+// CHECK88-NEXT: <LocalizationKey>ABC</LocalizationKey>
+
+// RUN: %sourcekitd-test -req=cursor -pos=218:6 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck -check-prefix=CHECK89 %s
+// CHECK89: <Declaration>func funcWithNestedEscaping(a: (@escaping () -&gt; ()) -&gt; ())</Declaration>
+// CHECK89-NEXT: <decl.var.parameter.type>(<decl.var.parameter><decl.var.parameter.type><syntaxtype.attribute.builtin><syntaxtype.attribute.name>@escaping</syntaxtype.attribute.name></syntaxtype.attribute.builtin> () -&gt; <decl.function.returntype><tuple>()</tuple></decl.function.returntype></decl.var.parameter.type></decl.var.parameter>) -&gt; <decl.function.returntype><tuple>()</tuple></decl.function.returntype></decl.var.parameter.type>
+
+// RUN: %sourcekitd-test -req=cursor -pos=221:11 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck -check-prefix=CHECK90 %s
+// CHECK90: <Declaration>typealias typeWithNestedAutoclosure = (@autoclosure () -&gt; ()) -&gt; ()</Declaration>
+// CHECK90-NEXT: <decl.var.parameter.type><syntaxtype.attribute.builtin><syntaxtype.attribute.name>@autoclosure</syntaxtype.attribute.name></syntaxtype.attribute.builtin> () -&gt; <decl.function.returntype><tuple>()</tuple></decl.function.returntype></decl.var.parameter.type>
+
+// RUN: %sourcekitd-test -req=cursor -pos=223:11 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck -check-prefix=CHECK91 %s
+// CHECK91: <Declaration>typealias GenericAlias&lt;T, U&gt; = <Type usr="s:11cursor_info7MyAliasa">MyAlias</Type>&lt;<Type usr="s:11cursor_info12GenericAliasa1Txmfp">T</Type>, <Type usr="s:11cursor_info12GenericAliasa1Uq_mfp">U</Type>&gt; where T : <Type usr="s:11cursor_info2P1P">P1</Type></Declaration>
+// CHECK91-NEXT: <decl.typealias><syntaxtype.keyword>typealias</syntaxtype.keyword> <decl.name>GenericAlias</decl.name>&lt;<decl.generic_type_param usr="s:11cursor_info12GenericAliasa1Txmfp"><decl.generic_type_param.name>T</decl.generic_type_param.name></decl.generic_type_param>, <decl.generic_type_param usr="s:11cursor_info12GenericAliasa1Uq_mfp"><decl.generic_type_param.name>U</decl.generic_type_param.name></decl.generic_type_param>&gt; = <ref.typealias usr="s:11cursor_info7MyAliasa">MyAlias</ref.typealias>&lt;<ref.generic_type_param usr="s:11cursor_info12GenericAliasa1Txmfp">T</ref.generic_type_param>, <ref.generic_type_param usr="s:11cursor_info12GenericAliasa1Uq_mfp">U</ref.generic_type_param>&gt; <syntaxtype.keyword>where</syntaxtype.keyword> <decl.generic_type_requirement>T : <ref.protocol usr="s:11cursor_info2P1P">P1</ref.protocol></decl.generic_type_requirement></decl.typealias>
+
+// RUN: %sourcekitd-test -req=cursor -pos=226:10 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck -check-prefix=CHECK92 %s
+// CHECK92: <Declaration>case a = &quot;\u{1B}&quot;</Declaration>
+// CHECK92-NEXT: <decl.enumelement><syntaxtype.keyword>case</syntaxtype.keyword> <decl.name>a</decl.name> = <syntaxtype.string>&quot;\u{1B}&quot;</syntaxtype.string></decl.enumelement>
+
+// RUN: %sourcekitd-test -req=cursor -pos=227:10 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck -check-prefix=CHECK93 %s
+// CHECK93: <Declaration>case b = &quot;f&quot;</Declaration>
+// CHECK93-NEXT: <decl.enumelement><syntaxtype.keyword>case</syntaxtype.keyword> <decl.name>b</decl.name> = <syntaxtype.string>&quot;f&quot;</syntaxtype.string></decl.enumelement>

@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -17,8 +17,8 @@ extension Set {
   ///
   /// The provided `NSSet` will be copied to ensure that the copy can
   /// not be mutated by other code.
-  public init(_cocoaSet: _NSSet) {
-    _sanityCheck(_isBridgedVerbatimToObjectiveC(Element.self),
+  fileprivate init(_cocoaSet: __shared AnyObject) {
+    assert(_isBridgedVerbatimToObjectiveC(Element.self),
       "Set can be backed by NSSet _variantStorage only when the member type can be bridged verbatim to Objective-C")
     // FIXME: We would like to call CFSetCreateCopy() to avoid doing an
     // objc_msgSend() for instances of CoreFoundation types.  We can't do that
@@ -29,9 +29,7 @@ extension Set {
     //
     // The bug is fixed in: OS X 10.11.0, iOS 9.0, all versions of tvOS
     // and watchOS.
-    self = Set(
-      _immutableCocoaSet:
-        unsafeBitCast(_cocoaSet.copy(with: nil) as AnyObject, to: _NSSet.self))
+    self = Set(_immutableCocoaSet: _cocoaSet.copy(with: nil) as AnyObject)
   }
 }
 
@@ -69,15 +67,29 @@ extension Set : _ObjectiveCBridgeable {
     }
 
     if _isBridgedVerbatimToObjectiveC(Element.self) {
-      result = Set<Element>(_cocoaSet: unsafeBitCast(s, to: _NSSet.self))
+      result = Set<Element>(_cocoaSet: s)
+      return
+    }
+
+    if Element.self == String.self {
+      // String and NSString have different concepts of equality, so
+      // string-keyed NSSets may generate key collisions when bridged over to
+      // Swift. See rdar://problem/35995647
+      var set = Set(minimumCapacity: s.count)
+      s.enumerateObjects({ (anyMember: Any, _) in
+        let member = Swift._forceBridgeFromObjectiveC(
+          anyMember as AnyObject, Element.self)
+        // FIXME: Log a warning if `member` is already in the set.
+        set.insert(member)
+      })
+      result = set
       return
     }
 
     // `Set<Element>` where `Element` is a value type may not be backed by
     // an NSSet.
     var builder = _SetBuilder<Element>(count: s.count)
-    s.enumerateObjects({
-      (anyMember: Any, stop: UnsafeMutablePointer<ObjCBool>) in
+    s.enumerateObjects({ (anyMember: Any, _) in
       builder.add(member: Swift._forceBridgeFromObjectiveC(
         anyMember as AnyObject, Element.self))
     })
@@ -93,35 +105,19 @@ extension Set : _ObjectiveCBridgeable {
       return result != nil
     }
 
-    result = Swift._setBridgeFromObjectiveCConditional(anySet)
+    result = anySet as? Set
     return result != nil
   }
 
+  @_effects(readonly)
   public static func _unconditionallyBridgeFromObjectiveC(_ s: NSSet?) -> Set {
     // `nil` has historically been used as a stand-in for an empty
     // set; map it to an empty set.
     if _slowPath(s == nil) { return Set() }
 
-    if let native =
-      Set<Element>._bridgeFromObjectiveCAdoptingNativeStorageOf(s! as AnyObject) {
-
-      return native
-    }
-
-    if _isBridgedVerbatimToObjectiveC(Element.self) {
-      return Set<Element>(_cocoaSet: unsafeBitCast(s! as AnyObject,
-                                                   to: _NSSet.self))
-    }
-
-    // `Set<Element>` where `Element` is a value type may not be backed by
-    // an NSSet.
-    var builder = _SetBuilder<Element>(count: s!.count)
-    s!.enumerateObjects({
-      (anyMember: Any, stop: UnsafeMutablePointer<ObjCBool>) in
-      builder.add(member: Swift._forceBridgeFromObjectiveC(
-        anyMember as AnyObject, Element.self))
-    })
-    return builder.take()
+    var result: Set? = nil
+    Set<Element>._forceBridgeFromObjectiveC(s!, result: &result)
+    return result!
   }
 }
 
@@ -167,7 +163,7 @@ extension NSSet {
   ///   `set`. The returned set might be different than the original
   ///   receiver.
   @nonobjc
-  public convenience init(set anSet: NSSet) {
+  public convenience init(set anSet: __shared NSSet) {
     // FIXME(performance)(compiler limitation): we actually want to do just
     // `self = anSet.copy()`, but Swift does not have factory
     // initializers right now.
@@ -179,9 +175,9 @@ extension NSSet {
     assert(alignment == MemoryLayout<AnyObject>.alignment)
 
     let rawBuffer = UnsafeMutableRawPointer.allocate(
-      bytes: bufferSize, alignedTo: alignment)
+      byteCount: bufferSize, alignment: alignment)
     defer {
-      rawBuffer.deallocate(bytes: bufferSize, alignedTo: alignment)
+      rawBuffer.deallocate()
       _fixLifetime(anSet)
     }
     let valueBuffer = rawBuffer.bindMemory(

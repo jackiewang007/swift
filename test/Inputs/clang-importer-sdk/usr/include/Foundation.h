@@ -10,6 +10,7 @@
 
 #define NS_DESIGNATED_INITIALIZER __attribute__((objc_designated_initializer))
 
+#define NS_NOESCAPE CF_NOESCAPE
 
 typedef struct objc_object { void *isa; } *id;
 
@@ -93,13 +94,19 @@ __attribute__((availability(ios,introduced=8.0)))
 
 /// Aaa.  NSArray.  Bbb.
 @interface NSArray<ObjectType> : NSObject
+- (instancetype)initWithObjects:(const ObjectType _Nonnull [_Nullable])objects
+                          count:(NSUInteger)cnt NS_DESIGNATED_INITIALIZER;
 - (nonnull ObjectType)objectAtIndexedSubscript:(NSUInteger)idx;
 - description;
-+ (instancetype)arrayWithObjects:(const ObjectType __nonnull [__nullable])objects count:(NSUInteger)count;
 - (void)makeObjectsPerformSelector:(nonnull SEL)aSelector;
 - (void)makeObjectsPerformSelector:(nonnull SEL)aSelector withObject:(nullable ObjectType)anObject;
 - (void)makeObjectsPerformSelector:(nonnull SEL)aSelector withObject:(nullable ObjectType)anObject withObject:(nullable ObjectType)anotherObject;
 - (nonnull NSMutableArray<ObjectType> *)mutableCopy;
+@end
+
+@interface NSArray<ObjectType>(NSArrayCreation)
++ (instancetype)arrayWithObjects:(const ObjectType _Nonnull [_Nullable])objects
+                           count:(NSUInteger)cnt;
 @end
 
 @interface NSArray (AddingObject)
@@ -115,6 +122,18 @@ __attribute__((availability(ios,introduced=8.0)))
 @property NSArray *arrayProperty;
 @property NSDictionary *dictProperty;
 @property NSSet *setProperty;
+
+- (nonnull NSString*) fetchNonnullString;
+- (nullable NSString*) fetchNullableString;
+- (null_unspecified NSString*) fetchNullproneString;
+
+- (void) takeNonnullString: (nonnull NSString*) string;
+- (void) takeNullableString: (nullable NSString*) string;
+- (void) takeNullproneString: (null_unspecified NSString*) string;
+
+@property(readwrite) _Nonnull NSString *nonnullStringProperty;
+@property(readwrite) _Nullable NSString *nullableStringProperty;
+@property(readwrite) _Null_unspecified NSString *nullproneStringProperty;
 
 @end
 
@@ -136,7 +155,7 @@ __attribute__((availability(ios,introduced=8.0)))
 - (id)copyWithZone:(nullable NSZone *)zone;
 @end
 
-@interface NSDictionary<KeyType : id<NSCopying>, ObjectType> : NSObject /*<NSCopying, NSMutableCopying, NSSecureCoding, NSFastEnumeration>*/
+@interface NSDictionary<KeyType, ObjectType> : NSObject /*<NSCopying, NSMutableCopying, NSSecureCoding, NSFastEnumeration>*/
 @property (readonly) NSUInteger count;
 - (nullable ObjectType)objectForKey:(nonnull KeyType)aKey;
 - (nonnull NSEnumerator *)keyEnumerator;
@@ -179,7 +198,7 @@ __attribute__((availability(ios,introduced=8.0)))
 @end
 
 @interface NSValue (NSRange)
-+ (NSValue *)valueWithRange:(NSRange)range;
+- (NSValue *)valueWithRange:(NSRange)range;
 @property NSRange rangeValue;
 @end
 
@@ -225,7 +244,7 @@ typedef __INT32_TYPE__ int32_t;
 + (nullable instancetype)stringWithPath:(NSString*)path encoding:(int)encoding;
 @end
 
-NSString *NSStringToNSString(NSString *str);
+__attribute__((warn_unused_result)) NSString *NSStringToNSString(NSString *str);
 
 @interface Bee : NSObject
 -(void)buzz;
@@ -255,7 +274,11 @@ NSString *NSStringToNSString(NSString *str);
 @end
 
 @interface NSURL : NSObject
+- (instancetype)URLWithString:(NSString *)URLString;
 + (instancetype)URLWithString:(NSString *)URLString;
+- (BOOL)getResourceValue:(out id _Nullable *)value
+                  forKey:(NSString *)key
+                   error:(out NSError *_Nullable *)error;
 @end
 
 @interface NSAttributedString : NSString
@@ -378,6 +401,15 @@ typedef NS_ENUM(unsigned char, NSAliasesEnum) {
   NSAliasesByEquivalentValue = -127,
   NSAliasesByName = NSAliasesOriginal,
   NSAliasesDifferentValue = 2
+};
+
+typedef NS_ENUM(unsigned char, NSUnavailableAliasesEnum) {
+  NSUnavailableAliasesOriginalAU = 0,
+  NSUnavailableAliasesAliasAU __attribute__((unavailable)) = 0,
+  NSUnavailableAliasesOriginalUA __attribute__((unavailable)) = 1,
+  NSUnavailableAliasesAliasUA = 1,
+  NSUnavailableAliasesOriginalUU __attribute__((unavailable)) = 2,
+  NSUnavailableAliasesAliasUU __attribute__((unavailable)) = 2,
 };
 
 NS_ENUM(NSInteger, NSMalformedEnumMissingTypedef) {
@@ -683,9 +715,8 @@ typedef NS_OPTIONS(NSUInteger, NSExplicitlyUnavailableOnOSXOptions) {
 @end
 
 @interface NSClassWithExplicitlyUnavailableOptionsInMethodSignature (ActuallyUseOptions)
-  - (void)someMethodWithUnavailableOptions:(NSExplicitlyUnavailableOptions)options __attribute__((unavailable));
-
-  - (void)someMethodWithUnavailableOptionsOnOSX:(NSExplicitlyUnavailableOnOSXOptions)options __attribute__((availability(macosx, unavailable, message="Use a different API")));
+- (void)someMethodWithUnavailableOptions:(NSExplicitlyUnavailableOptions)options __attribute__((unavailable));
+- (void)someMethodWithUnavailableOptionsOnOSX:(NSExplicitlyUnavailableOnOSXOptions)options __attribute__((availability(macosx, unavailable, message="Use a different API")));
 @end
 
 @interface NSClassWithPotentiallyUnavailableOptionsInMethodSignature : NSObject
@@ -710,6 +741,7 @@ typedef NS_OPTIONS(NSUInteger, NSExplicitlyUnavailableOnOSXOptions) {
 @end
 
 @interface NSURLRequest : NSObject
+- (instancetype)requestWithString:(NSString *)URLString;
 + (instancetype)requestWithString:(NSString *)URLString;
 + (instancetype)URLRequestWithURL:(NSURL *)URL;
 @end
@@ -779,7 +811,7 @@ extern void CGColorRelease(CGColorRef color) __attribute__((availability(macosx,
 @property (readonly) Class classForPortCoder NS_SWIFT_UNAVAILABLE("Use NSXPCConnection instead");
 @end
 
-typedef NSString *__nonnull NSNotificationName
+typedef NSString *_Nonnull NSNotificationName
     __attribute((swift_newtype(struct)));
 
 NS_SWIFT_UNAVAILABLE("Use NSXPCConnection instead")
@@ -824,7 +856,8 @@ NS_SWIFT_UNAVAILABLE("NSInvocation and related APIs not available")
 @interface NSMethodSignature : NSObject
 @end
 /// Unavailable Global Functions
-extern void NSSetZoneName(NSZone * __nonnull zone, NSString * __nonnull name) NS_SWIFT_UNAVAILABLE("Zone-based memory management is unavailable");
+extern void NSSetZoneName(NSZone *_Nonnull zone, NSString *_Nonnull name)
+    NS_SWIFT_UNAVAILABLE("Zone-based memory management is unavailable");
 extern NSString *NSZoneName(NSZone *zone) NS_SWIFT_UNAVAILABLE("Zone-based memory management is unavailable");
 extern NSZone *NSCreateZone(NSUInteger startSize, NSUInteger granularity, BOOL canFree) NS_SWIFT_UNAVAILABLE("Zone-based memory management is unavailable");
 
@@ -833,39 +866,39 @@ extern NSZone *NSCreateZone(NSUInteger startSize, NSUInteger granularity, BOOL c
 @end
 
 typedef struct NonNilableReferences {
-  NSObject *__nonnull __unsafe_unretained obj;
+  NSObject *_Nonnull __unsafe_unretained obj;
 } NonNilableReferences;
 
 
 @protocol NSProtocolWithOptionalRequirement
 @optional
 -(void)optionalRequirement;
+-(DummyClass *)optionalRequirementMethodWithIUOResult;
 @end
 
 @interface NSClassWithMethodFromNSProtocolWithOptionalRequirement
 -(void)optionalRequirement  __attribute__((availability(macosx, introduced=10.51)));
 @end
 
-__attribute__((availability(macosx,introduced=10.51)))
+__attribute__((availability(macosx, introduced = 10.51)))
 @interface AnnotatedFrameworkClass : NSObject
-
 @end
 
-__attribute__((availability(macosx,introduced=10.52)))
+__attribute__((availability(macosx, introduced = 10.52)))
 @interface AnnotatedLaterFrameworkClass : NSObject
-
 @end
 
 /// Aaa.  UnannotatedFrameworkProtocol.  Bbb.
 @protocol UnannotatedFrameworkProtocol
--(void)doSomethingWithClass:(AnnotatedFrameworkClass * __nullable)k;
--(void)doSomethingWithNonNullableClass:(AnnotatedFrameworkClass * __nonnull)k;
--(void)doSomethingWithIUOClass:(AnnotatedFrameworkClass * __null_unspecified)k;
--(AnnotatedFrameworkClass * __nullable)returnSomething;
+- (void)doSomethingWithClass:(AnnotatedFrameworkClass *_Nullable)k;
+- (void)doSomethingWithNonNullableClass:(AnnotatedFrameworkClass *_Nonnull)k;
+- (void)doSomethingWithIUOClass:(AnnotatedFrameworkClass *_Null_unspecified)k;
+- (AnnotatedFrameworkClass *_Nullable)returnSomething;
 
 -(void)noUnavailableTypesInSignature;
 
--(void)doSomethingWithClass:(AnnotatedFrameworkClass * __nonnull)k andLaterClass:(AnnotatedLaterFrameworkClass * __nonnull)lk;
+- (void)doSomethingWithClass:(AnnotatedFrameworkClass *_Nonnull)k
+               andLaterClass:(AnnotatedLaterFrameworkClass *_Nonnull)lk;
 
 -(void)someMethodWithAvailability __attribute__((availability(macosx,introduced=10.53)));
 
@@ -874,25 +907,26 @@ __attribute__((availability(macosx,introduced=10.52)))
 @end
 
 /// Aaa.  AnnotatedFrameworkProtocol.  Bbb.
-__attribute__((availability(macosx,introduced=10.9)))
+__attribute__((availability(macosx, introduced = 10.9)))
 @protocol AnnotatedFrameworkProtocol
--(AnnotatedFrameworkClass * __nullable)returnSomething;
+- (AnnotatedFrameworkClass * _Nullable) returnSomething;
 @end
 
 /// Aaa.  FrameworkClassConformingToUnannotatedFrameworkProtocol.  Bbb.
-@interface FrameworkClassConformingToUnannotatedFrameworkProtocol : NSObject <UnannotatedFrameworkProtocol>
+@interface FrameworkClassConformingToUnannotatedFrameworkProtocol : NSObject<UnannotatedFrameworkProtocol>
 @end
 
 /// Aaa.  LaterFrameworkClassConformingToUnannotatedFrameworkProtocol.  Bbb.
-__attribute__((availability(macosx,introduced=10.52)))
-@interface LaterFrameworkClassConformingToUnannotatedFrameworkProtocol : NSObject <UnannotatedFrameworkProtocol>
+__attribute__((availability(macosx, introduced = 10.52)))
+@interface LaterFrameworkClassConformingToUnannotatedFrameworkProtocol : NSObject<UnannotatedFrameworkProtocol>
 @end
 
 /// Aaa.  LaterAnnotatedFrameworkProtocol.  Bbb.
-__attribute__((availability(macosx,introduced=10.52)))
+__attribute__((availability(macosx, introduced = 10.52)))
 @protocol LaterAnnotatedFrameworkProtocol
--(AnnotatedFrameworkClass * __nullable)returnSomething;
--(void)doSomethingWithClass:(AnnotatedFrameworkClass * __nonnull)k andLaterClass:(AnnotatedLaterFrameworkClass * __nonnull)lk;
+- (AnnotatedFrameworkClass * _Nullable) returnSomething;
+- (void)doSomethingWithClass:(AnnotatedFrameworkClass *_Nonnull)k
+               andLaterClass:(AnnotatedLaterFrameworkClass *_Nonnull)lk;
 -(void)noUnavailableTypesInSignature;
 -(void)someMethodWithAvailability __attribute__((availability(macosx,introduced=10.53)));
 @property(nonnull) AnnotatedFrameworkClass *someProperty;
@@ -928,7 +962,7 @@ __attribute__((availability(macosx,introduced=10.52)))
 - (nonnull NSString *)stringByAppendingString:(nonnull NSString *)string;
 - (nonnull NSString *)stringWithString:(nonnull NSString *)string;
 - (nullable NSURL *)URLWithAddedString:(nonnull NSString *)string;
-+ (NSString *)stringForCalendarUnits:(NSCalendarUnit)units;
+- (NSString *)stringForCalendarUnits:(NSCalendarUnit)units;
 @end
 
 @interface NSURL (Properties)
@@ -950,14 +984,11 @@ typedef NS_OPTIONS(NSUInteger, NSEnumerationOptions) {
                          usingBlock:(void (^)(id obj, NSUInteger idx,
                                               BOOL *stop))block;
 
-- (void)enumerateObjectsRandomlyWithBlock:(void (^ __nullable)(
-                                                  id obj,
-                                                  NSUInteger idx,
-                                                  BOOL *stop))block;
+- (void)enumerateObjectsRandomlyWithBlock:
+    (void (^_Nullable)(id obj, NSUInteger idx, BOOL *stop))block;
 
-- (void)enumerateObjectsHaphazardly:(void (^ __nullable)(id obj,
-                                                         NSUInteger idx,
-                                                         BOOL *stop))block;
+- (void)enumerateObjectsHaphazardly:(void (^_Nullable)(id obj, NSUInteger idx,
+                                                       BOOL *stop))block;
 
 - (void)optionallyEnumerateObjects:(NSEnumerationOptions)opts
                               body:(void (^)(id obj, NSUInteger idx,
@@ -971,14 +1002,13 @@ typedef NS_OPTIONS(NSUInteger, NSEnumerationOptions) {
 - (void)doSomethingWithCopying:(nonnull id<NSCopying>)copying;
 - (void)doSomethingElseWithCopying:(nonnull NSObject<NSCopying> *)copying;
 
-- (void)enumerateObjectsWithNullableBlock:(void (^ __nullable)(
-                                                  id obj,
-                                                  NSUInteger idx,
-                                                  BOOL *stop))block;
+- (void)enumerateObjectsWithNullableBlock:
+    (void (^_Nullable)(id obj, NSUInteger idx, BOOL *stop))block;
 @end
 
 @interface NSMutableArray (Sorting)
-- (void)sortUsingFunction:(NSInteger (* __nonnull)(__nonnull id, __nonnull id))fimctopn;
+- (void)sortUsingFunction:(NSInteger (*_Nonnull)(_Nonnull id,
+                                                 _Nonnull id))fimctopn;
 @end
 
 @interface NSMutableArray (Removal)
@@ -1051,6 +1081,10 @@ extern NSString *NSHTTPRequestKey;
 
 @end
 
+@protocol NSIdLoving
+- (void)takesIdViaProtocol:(id _Nonnull)x;
+@end
+
 #define NSTimeIntervalSince1970 978307200.0
 #define NS_DO_SOMETHING 17
 
@@ -1072,3 +1106,64 @@ typedef enum __attribute__((ns_error_domain(FictionalServerErrorDomain))) Fictio
   FictionalServerErrorMeltedDown = 1
 } FictionalServerErrorCode;
 
+@protocol Wearable
+- (void)wear;
+@end
+
+@protocol Garment
+@end
+
+@protocol Cotton
+@end
+
+@interface Coat : NSObject<Wearable>
+
+- (void)wear;
+@property (class) Coat <Wearable> *fashionStatement;
+
+@end
+
+@protocol NSLaundry
+- (void)wash:(Coat <Garment> * _Nonnull)garment;
+- (void)bleach:(Coat <Garment, Cotton> * _Nonnull)garment;
+- (Coat <Garment> * _Nonnull)dry;
+@end
+
+@interface NSLaundromat : NSObject
+@end
+
+extern NSString * const NSLaundryErrorDomain;
+
+typedef enum __attribute__((ns_error_domain(NSLaundryErrorDomain))) __attribute__((swift_name("NSLaundromat.Error"))) NSLaundryErrorCode {
+    NSLaundryErrorTooMuchSoap = 1,
+    NSLaundryErrorCatInWasher = 2
+};
+
+typedef void (*event_handler)(_Nonnull id);
+void install_global_event_handler(_Nullable event_handler handler);
+
+@interface NSObject ()
+- (void) addObserver: (id) observer
+         forKeyPath: (NSString*) keyPath
+         options: (NSInteger) options
+         context: (void*) context;
+- (void) removeObserver: (id) observer
+         forKeyPath: (NSString*) keyPath
+         context: (void*) options;
+@end
+
+_Nullable id returnNullableId(void);
+void takeNullableId(_Nullable id);
+
+@interface I
+@end
+
+@protocol OptionalRequirements
+@optional
+- (Coat *)optional;
+@property NSString *name;
+@end
+
+@interface IUOProperty
+@property (readonly) id<OptionalRequirements> iuo;
+@end

@@ -1,11 +1,17 @@
-// RUN: rm -rf %t
-// RUN: mkdir -p %t
+// RUN: %empty-directory(%t)
+
 // RUN: %target-swift-frontend(mock-sdk: %clang-importer-sdk) -enable-source-import -emit-module -emit-module-doc -o %t %s -import-objc-header %S/Inputs/enums.h -disable-objc-attr-requires-foundation-module
-// RUN: %target-swift-frontend(mock-sdk: %clang-importer-sdk) -parse-as-library %t/enums.swiftmodule -parse -emit-objc-header-path %t/enums.h -import-objc-header %S/Inputs/enums.h -disable-objc-attr-requires-foundation-module
+// RUN: %target-swift-frontend(mock-sdk: %clang-importer-sdk) -parse-as-library %t/enums.swiftmodule -typecheck -emit-objc-header-path %t/enums.h -import-objc-header %S/Inputs/enums.h -disable-objc-attr-requires-foundation-module
 // RUN: %FileCheck %s < %t/enums.h
 // RUN: %FileCheck -check-prefix=NEGATIVE %s < %t/enums.h
 // RUN: %check-in-clang %t/enums.h
-// RUN: %check-in-clang -fno-modules -Qunused-arguments %t/enums.h -include Foundation.h -include ctypes.h -include CoreFoundation.h
+// RUN: %check-in-clang -fno-modules -Qunused-arguments %t/enums.h -include ctypes.h -include CoreFoundation.h
+
+// RUN: %target-swift-frontend(mock-sdk: %clang-importer-sdk) -enable-source-import -emit-module -o /dev/null -emit-module-doc-path /dev/null -module-name enums %s -emit-objc-header-path %t/enums.WMO.h -import-objc-header %S/Inputs/enums.h -disable-objc-attr-requires-foundation-module
+// RUN: %FileCheck %s < %t/enums.WMO.h
+// RUN: %FileCheck -check-prefix=NEGATIVE %s < %t/enums.WMO.h
+// RUN: %check-in-clang %t/enums.WMO.h
+// RUN: %check-in-clang -fno-modules -Qunused-arguments %t/enums.WMO.h -include ctypes.h -include CoreFoundation.h
 
 // REQUIRES: objc_interop
 
@@ -18,9 +24,9 @@ import Foundation
 // CHECK-LABEL: enum ObjcEnumNamed : NSInteger;
 
 // CHECK-LABEL: @interface AnEnumMethod
-// CHECK-NEXT: - (enum NegativeValues)takeAndReturnEnum:(enum FooComments)foo;
+// CHECK-NEXT: - (enum NegativeValues)takeAndReturnEnum:(enum FooComments)foo SWIFT_WARN_UNUSED_RESULT;
 // CHECK-NEXT: - (void)acceptPlainEnum:(enum NSMalformedEnumMissingTypedef)_;
-// CHECK-NEXT: - (enum ObjcEnumNamed)takeAndReturnRenamedEnum:(enum ObjcEnumNamed)foo;
+// CHECK-NEXT: - (enum ObjcEnumNamed)takeAndReturnRenamedEnum:(enum ObjcEnumNamed)foo SWIFT_WARN_UNUSED_RESULT;
 // CHECK-NEXT: - (void)acceptTopLevelImportedWithA:(enum TopLevelRaw)a b:(TopLevelEnum)b c:(TopLevelOptions)c d:(TopLevelTypedef)d e:(TopLevelAnon)e;
 // CHECK-NEXT: - (void)acceptMemberImportedWithA:(enum MemberRaw)a b:(enum MemberEnum)b c:(MemberOptions)c d:(enum MemberTypedef)d e:(MemberAnon)e ee:(MemberAnon2)ee;
 // CHECK: @end
@@ -37,7 +43,7 @@ import Foundation
   @objc func acceptMemberImported(a: Wrapper.Raw, b: Wrapper.Enum, c: Wrapper.Options, d: Wrapper.Typedef, e: Wrapper.Anon, ee: Wrapper.Anon2) {}
 }
 
-// CHECK-LABEL: typedef SWIFT_ENUM_NAMED(NSInteger, ObjcEnumNamed, "EnumNamed") {
+// CHECK-LABEL: typedef SWIFT_ENUM_NAMED(NSInteger, ObjcEnumNamed, "EnumNamed", closed) {
 // CHECK-NEXT:   ObjcEnumNamedA = 0,
 // CHECK-NEXT:   ObjcEnumNamedB = 1,
 // CHECK-NEXT:   ObjcEnumNamedC = 2,
@@ -49,7 +55,7 @@ import Foundation
   case A, B, C, d, helloDolly
 }
 
-// CHECK-LABEL: typedef SWIFT_ENUM(NSInteger, EnumWithNamedConstants) {
+// CHECK-LABEL: typedef SWIFT_ENUM(NSInteger, EnumWithNamedConstants, closed) {
 // CHECK-NEXT:   kEnumA SWIFT_COMPILE_NAME("A") = 0,
 // CHECK-NEXT:   kEnumB SWIFT_COMPILE_NAME("B") = 1,
 // CHECK-NEXT:   kEnumC SWIFT_COMPILE_NAME("C") = 2,
@@ -61,7 +67,7 @@ import Foundation
   @objc(kEnumC) case C
 }
 
-// CHECK-LABEL: typedef SWIFT_ENUM(unsigned int, ExplicitValues) {
+// CHECK-LABEL: typedef SWIFT_ENUM(unsigned int, ExplicitValues, closed) {
 // CHECK-NEXT:   ExplicitValuesZim = 0,
 // CHECK-NEXT:   ExplicitValuesZang = 219,
 // CHECK-NEXT:   ExplicitValuesZung = 220,
@@ -74,14 +80,9 @@ import Foundation
   func methodNotExportedToObjC() {}
 }
 
-// CHECK: /**
-// CHECK-NEXT: Foo: A feer, a female feer.
-// CHECK-NEXT: */
-
-// CHECK-NEXT: typedef SWIFT_ENUM(NSInteger, FooComments) {
-// CHECK: /**
-// CHECK-NEXT: Zim: A zeer, a female zeer.
-// CHECK: */
+// CHECK: /// Foo: A feer, a female feer.
+// CHECK-NEXT: typedef SWIFT_ENUM(NSInteger, FooComments, closed) {
+// CHECK: /// Zim: A zeer, a female zeer.
 // CHECK-NEXT:   FooCommentsZim = 0,
 // CHECK-NEXT:   FooCommentsZang = 1,
 // CHECK-NEXT:   FooCommentsZung = 2,
@@ -94,7 +95,7 @@ import Foundation
   case Zang, Zung
 }
 
-// CHECK-LABEL: typedef SWIFT_ENUM(int16_t, NegativeValues) {
+// CHECK-LABEL: typedef SWIFT_ENUM(int16_t, NegativeValues, closed) {
 // CHECK-NEXT:   Zang = -219,
 // CHECK-NEXT:   Zung = -218,
 // CHECK-NEXT: };
@@ -104,7 +105,7 @@ import Foundation
   func methodNotExportedToObjC() {}
 }
 
-// CHECK-LABEL: typedef SWIFT_ENUM(NSInteger, SomeError) {
+// CHECK-LABEL: typedef SWIFT_ENUM(NSInteger, SomeError, closed) {
 // CHECK-NEXT:   SomeErrorBadness = 9001,
 // CHECK-NEXT:   SomeErrorWorseness = 9002,
 // CHECK-NEXT: };
@@ -114,7 +115,7 @@ import Foundation
   case Worseness
 }
 
-// CHECK-LABEL: typedef SWIFT_ENUM(NSInteger, SomeOtherError) {
+// CHECK-LABEL: typedef SWIFT_ENUM(NSInteger, SomeOtherError, closed) {
 // CHECK-NEXT:   SomeOtherErrorDomain = 0,
 // CHECK-NEXT: };
 // NEGATIVE-NOT: NSString * _Nonnull const SomeOtherErrorDomain
@@ -122,7 +123,7 @@ import Foundation
   case Domain // collision!
 }
 
-// CHECK-LABEL: typedef SWIFT_ENUM_NAMED(NSInteger, ObjcErrorType, "SomeRenamedErrorType") {
+// CHECK-LABEL: typedef SWIFT_ENUM_NAMED(NSInteger, ObjcErrorType, "SomeRenamedErrorType", closed) {
 // CHECK-NEXT:   ObjcErrorTypeBadStuff = 0,
 // CHECK-NEXT: };
 // CHECK-NEXT: static NSString * _Nonnull const ObjcErrorTypeDomain = @"enums.SomeRenamedErrorType";
@@ -132,11 +133,10 @@ import Foundation
 
 // CHECK-NOT: enum {{[A-Z]+}}
 // CHECK-LABEL: @interface ZEnumMethod
-// CHECK-NEXT: - (enum NegativeValues)takeAndReturnEnum:(enum FooComments)foo;
+// CHECK-NEXT: - (enum NegativeValues)takeAndReturnEnum:(enum FooComments)foo SWIFT_WARN_UNUSED_RESULT;
 // CHECK: @end
 @objc class ZEnumMethod {
   @objc func takeAndReturnEnum(_ foo: FooComments) -> NegativeValues {
     return .Zung
   }
 }
-

@@ -12,10 +12,10 @@ public struct ObjCBool {
 }
 
 @_silgen_name("swift_BoolToObjCBool")
-func _convertBoolToObjCBool(_ x: Bool) -> ObjCBool
+public func _convertBoolToObjCBool(_ x: Bool) -> ObjCBool
 
 @_silgen_name("swift_ObjCBoolToBool")
-func _convertObjCBoolToBool(_ x: ObjCBool) -> Bool
+public func _convertObjCBoolToBool(_ x: ObjCBool) -> Bool
 
 
 public struct Selector : ExpressibleByStringLiteral {
@@ -33,3 +33,9 @@ public struct Selector : ExpressibleByStringLiteral {
     self = sel_registerName(value)
   }
 }
+
+extension NSObject : Hashable {
+  public var hashValue: Int { return 0 }
+  public static func == (x: NSObject, y: NSObject) -> Bool { return true }
+}
+

@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -72,11 +72,17 @@ public protocol TextOutputStream {
 
   /// Appends the given string to the stream.
   mutating func write(_ string: String)
+
+  mutating func _writeASCII(_ buffer: UnsafeBufferPointer<UInt8>)
 }
 
 extension TextOutputStream {
   public mutating func _lock() {}
   public mutating func _unlock() {}
+
+  public mutating func _writeASCII(_ buffer: UnsafeBufferPointer<UInt8>) {
+    write(String._fromASCII(buffer))
+  }
 }
 
 /// A source of text-streaming operations.
@@ -84,7 +90,7 @@ extension TextOutputStream {
 /// Instances of types that conform to the `TextOutputStreamable` protocol can
 /// write their value to instances of any type that conforms to the
 /// `TextOutputStream` protocol. The Swift standard library's text-related
-/// types, `String`, `Character`, and `UnicodeScalar`, all conform to
+/// types, `String`, `Character`, and `Unicode.Scalar`, all conform to
 /// `TextOutputStreamable`.
 ///
 /// Conforming to the TextOutputStreamable Protocol
@@ -98,9 +104,6 @@ public protocol TextOutputStreamable {
   /// stream.
   func write<Target : TextOutputStream>(to target: inout Target)
 }
-
-@available(*, unavailable, renamed: "TextOutputStreamable")
-typealias Streamable = TextOutputStreamable
 
 /// A type with a customized textual representation.
 ///
@@ -144,14 +147,14 @@ typealias Streamable = TextOutputStreamable
 ///
 ///     print(p)
 ///     // Prints "(21, 30)"
-///
-/// - SeeAlso: `String.init<T>(T)`, `CustomDebugStringConvertible`
 public protocol CustomStringConvertible {
   /// A textual representation of this instance.
   ///
-  /// Instead of accessing this property directly, convert an instance of any
-  /// type to a string by using the `String(describing:)` initializer. For
-  /// example:
+  /// Calling this property directly is discouraged. Instead, convert an
+  /// instance of any type to a string by using the `String(describing:)`
+  /// initializer. This initializer works with any type, and uses the custom
+  /// `description` property for types that conform to
+  /// `CustomStringConvertible`:
   ///
   ///     struct Point: CustomStringConvertible {
   ///         let x: Int, y: Int
@@ -200,6 +203,13 @@ public protocol LosslessStringConvertible : CustomStringConvertible {
 /// `debugDescription` property directly or using
 /// `CustomDebugStringConvertible` as a generic constraint is discouraged.
 ///
+/// - Note: Calling the `dump(_:_:_:_:)` function and printing in the debugger
+///   uses both `String(reflecting:)` and `Mirror(reflecting:)` to collect
+///   information about an instance. If you implement
+///   `CustomDebugStringConvertible` conformance for your custom type, you may
+///   want to consider providing a custom mirror by implementing
+///   `CustomReflectable` conformance, as well.
+///
 /// Conforming to the CustomDebugStringConvertible Protocol
 /// =======================================================
 ///
@@ -232,10 +242,30 @@ public protocol LosslessStringConvertible : CustomStringConvertible {
 ///
 ///     print(String(reflecting: p))
 ///     // Prints "Point(x: 21, y: 30)"
-///
-/// - SeeAlso: `String.init<T>(reflecting: T)`, `CustomStringConvertible`
 public protocol CustomDebugStringConvertible {
   /// A textual representation of this instance, suitable for debugging.
+  ///
+  /// Calling this property directly is discouraged. Instead, convert an
+  /// instance of any type to a string by using the `String(reflecting:)`
+  /// initializer. This initializer works with any type, and uses the custom
+  /// `debugDescription` property for types that conform to
+  /// `CustomDebugStringConvertible`:
+  ///
+  ///     struct Point: CustomDebugStringConvertible {
+  ///         let x: Int, y: Int
+  ///
+  ///         var debugDescription: String {
+  ///             return "(\(x), \(y))"
+  ///         }
+  ///     }
+  ///
+  ///     let p = Point(x: 21, y: 30)
+  ///     let s = String(reflecting: p)
+  ///     print(s)
+  ///     // Prints "(21, 30)"
+  ///
+  /// The conversion of `p` to a string in the assignment to `s` uses the
+  /// `Point` type's `debugDescription` property.
   var debugDescription: String { get }
 }
 
@@ -244,12 +274,13 @@ public protocol CustomDebugStringConvertible {
 //===----------------------------------------------------------------------===//
 
 @_silgen_name("swift_EnumCaseName")
-func _getEnumCaseName<T>(_ value: T) -> UnsafePointer<CChar>?
+internal func _getEnumCaseName<T>(_ value: T) -> UnsafePointer<CChar>?
 
 @_silgen_name("swift_OpaqueSummary")
-func _opaqueSummary(_ metadata: Any.Type) -> UnsafePointer<CChar>?
+internal func _opaqueSummary(_ metadata: Any.Type) -> UnsafePointer<CChar>?
 
 /// Do our best to print a value that cannot be printed directly.
+@_semantics("optimize.sil.specialize.generic.never")
 internal func _adHocPrint_unlocked<T, TargetStream : TextOutputStream>(
     _ value: T, _ mirror: Mirror, _ target: inout TargetStream,
     isDebugPrint: Bool
@@ -318,7 +349,7 @@ internal func _adHocPrint_unlocked<T, TargetStream : TextOutputStream>(
           printTypeName(mirror.subjectType)
         }
         if let (_, value) = mirror.children.first {
-          if (Mirror(reflecting: value).displayStyle == .tuple) {
+          if Mirror(reflecting: value).displayStyle == .tuple {
             _debugPrint_unlocked(value, &target)
           } else {
             target.write("(")
@@ -343,8 +374,8 @@ internal func _adHocPrint_unlocked<T, TargetStream : TextOutputStream>(
   }
 }
 
-@inline(never)
-@_semantics("stdlib_binary_only")
+@usableFromInline
+@_semantics("optimize.sil.specialize.generic.never")
 internal func _print_unlocked<T, TargetStream : TextOutputStream>(
   _ value: T, _ target: inout TargetStream
 ) {
@@ -377,29 +408,11 @@ internal func _print_unlocked<T, TargetStream : TextOutputStream>(
   _adHocPrint_unlocked(value, mirror, &target, isDebugPrint: false)
 }
 
-/// Returns the result of `print`'ing `x` into a `String`.
-///
-/// Exactly the same as `String`, but annotated 'readonly' to allow
-/// the optimizer to remove calls where results are unused.
-///
-/// This function is forbidden from being inlined because when building the
-/// standard library inlining makes us drop the special semantics.
-@inline(never) @effects(readonly)
-func _toStringReadOnlyStreamable<T : TextOutputStreamable>(_ x: T) -> String {
-  var result = ""
-  x.write(to: &result)
-  return result
-}
-
-@inline(never) @effects(readonly)
-func _toStringReadOnlyPrintable<T : CustomStringConvertible>(_ x: T) -> String {
-  return x.description
-}
-
 //===----------------------------------------------------------------------===//
 // `debugPrint`
 //===----------------------------------------------------------------------===//
 
+@_semantics("optimize.sil.specialize.generic.never")
 @inline(never)
 public func _debugPrint_unlocked<T, TargetStream : TextOutputStream>(
     _ value: T, _ target: inout TargetStream
@@ -423,6 +436,7 @@ public func _debugPrint_unlocked<T, TargetStream : TextOutputStream>(
   _adHocPrint_unlocked(value, mirror, &target, isDebugPrint: true)
 }
 
+@_semantics("optimize.sil.specialize.generic.never")
 internal func _dumpPrint_unlocked<T, TargetStream : TextOutputStream>(
     _ value: T, _ mirror: Mirror, _ target: inout TargetStream
 ) {
@@ -494,39 +508,35 @@ internal func _dumpPrint_unlocked<T, TargetStream : TextOutputStream>(
 //===----------------------------------------------------------------------===//
 
 internal struct _Stdout : TextOutputStream {
-  mutating func _lock() {
+  internal init() {}
+
+  internal mutating func _lock() {
     _swift_stdlib_flockfile_stdout()
   }
 
-  mutating func _unlock() {
+  internal mutating func _unlock() {
     _swift_stdlib_funlockfile_stdout()
   }
 
-  mutating func write(_ string: String) {
+  internal mutating func write(_ string: String) {
     if string.isEmpty { return }
 
-    if let asciiBuffer = string._core.asciiBuffer {
-      defer { _fixLifetime(string) }
-
-      _swift_stdlib_fwrite_stdout(
-        UnsafePointer(asciiBuffer.baseAddress!),
-        asciiBuffer.count,
-        1)
-      return
-    }
-
-    for c in string.utf8 {
-      _swift_stdlib_putchar_unlocked(Int32(c))
+    _ = string._withUTF8 { utf8 in
+      _swift_stdlib_fwrite_stdout(utf8.baseAddress!, 1, utf8.count)
     }
   }
 }
 
 extension String : TextOutputStream {
   /// Appends the given string to this string.
-  /// 
+  ///
   /// - Parameter other: A string to append.
   public mutating func write(_ other: String) {
     self += other
+  }
+
+  public mutating func _writeASCII(_ buffer: UnsafeBufferPointer<UInt8>) {
+    self._guts.append(_StringGuts(buffer, isASCII: true))
   }
 }
 
@@ -536,7 +546,7 @@ extension String : TextOutputStream {
 
 extension String : TextOutputStreamable {
   /// Writes the string into the given output stream.
-  /// 
+  ///
   /// - Parameter target: An output stream.
   public func write<Target : TextOutputStream>(to target: inout Target) {
     target.write(self)
@@ -552,7 +562,7 @@ extension Character : TextOutputStreamable {
   }
 }
 
-extension UnicodeScalar : TextOutputStreamable {
+extension Unicode.Scalar : TextOutputStreamable {
   /// Writes the textual representation of the Unicode scalar into the given
   /// output stream.
   ///
@@ -563,29 +573,26 @@ extension UnicodeScalar : TextOutputStreamable {
 }
 
 /// A hook for playgrounds to print through.
-public var _playgroundPrintHook : ((String) -> Void)? = {_ in () }
+public var _playgroundPrintHook : ((String) -> Void)? = nil
 
 internal struct _TeeStream<
   L : TextOutputStream,
   R : TextOutputStream
 > : TextOutputStream {
-  var left: L
-  var right: R
+
+  internal init(left: L, right: R) {
+    self.left = left
+    self.right = right
+  }
+
+  internal var left: L
+  internal var right: R
   
   /// Append the given `string` to this stream.
-  mutating func write(_ string: String)
-  { left.write(string); right.write(string) }
-
-  mutating func _lock() { left._lock(); right._lock() }
-  mutating func _unlock() { right._unlock(); left._unlock() }
-}
-
-@available(*, unavailable, renamed: "TextOutputStream")
-public typealias OutputStreamType = TextOutputStream
-
-extension TextOutputStreamable {
-  @available(*, unavailable, renamed: "write(to:)")
-  public func writeTo<Target : TextOutputStream>(_ target: inout Target) {
-    Builtin.unreachable()
+  internal mutating func write(_ string: String) {
+    left.write(string); right.write(string)
   }
+
+  internal mutating func _lock() { left._lock(); right._lock() }
+  internal mutating func _unlock() { right._unlock(); left._unlock() }
 }

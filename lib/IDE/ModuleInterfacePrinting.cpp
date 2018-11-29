@@ -2,16 +2,17 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
 #include "swift/IDE/ModuleInterfacePrinting.h"
 #include "swift/IDE/Utils.h"
+#include "swift/Sema/IDETypeChecking.h"
 #include "swift/AST/ASTContext.h"
 #include "swift/AST/ASTPrinter.h"
 #include "swift/AST/Decl.h"
@@ -80,15 +81,16 @@ private:
     return OtherPrinter.printModuleRef(Mod, Name);
   }
   void printSynthesizedExtensionPre(const ExtensionDecl *ED,
-                                    const NominalTypeDecl *NTD,
+                                    TypeOrExtensionDecl Target,
                                     Optional<BracketOptions> Bracket) override {
-    return OtherPrinter.printSynthesizedExtensionPre(ED, NTD, Bracket);
+    return OtherPrinter.printSynthesizedExtensionPre(ED, Target, Bracket);
   }
 
-  void printSynthesizedExtensionPost(const ExtensionDecl *ED,
-                                     const NominalTypeDecl *NTD,
-                                     Optional<BracketOptions> Bracket) override {
-    return OtherPrinter.printSynthesizedExtensionPost(ED, NTD, Bracket);
+  void
+  printSynthesizedExtensionPost(const ExtensionDecl *ED,
+                                TypeOrExtensionDecl Target,
+                                Optional<BracketOptions> Bracket) override {
+    return OtherPrinter.printSynthesizedExtensionPost(ED, Target, Bracket);
   }
 
   void printStructurePre(PrintStructureKind Kind, const Decl *D) override {
@@ -185,7 +187,7 @@ printTypeInterface(ModuleDecl *M, StringRef TypeUSR, ASTPrinter &Printer,
                             Printer, TypeName, Error);
 }
 
-void swift::ide::printModuleInterface(Module *M, Optional<StringRef> Group,
+void swift::ide::printModuleInterface(ModuleDecl *M, Optional<StringRef> Group,
                                       ModuleTraversalOptions TraversalOptions,
                                       ASTPrinter &Printer,
                                       const PrintOptions &Options,
@@ -205,12 +207,10 @@ static void adjustPrintOptions(PrintOptions &AdjustedOptions) {
   // Print var declarations separately, one variable per decl.
   AdjustedOptions.ExplodePatternBindingDecls = true;
   AdjustedOptions.VarInitializers = false;
-
-  AdjustedOptions.PrintDefaultParameterPlaceholder = true;
 }
 
 ArrayRef<StringRef>
-swift::ide::collectModuleGroups(Module *M, std::vector<StringRef> &Scratch) {
+swift::ide::collectModuleGroups(ModuleDecl *M, std::vector<StringRef> &Scratch) {
   for (auto File : M->getFiles()) {
     File->collectAllGroups(Scratch);
   }
@@ -223,25 +223,7 @@ swift::ide::collectModuleGroups(Module *M, std::vector<StringRef> &Scratch) {
 /// Determine whether the given extension has a Clang node that
 /// created it (vs. being a Swift extension).
 static bool extensionHasClangNode(ExtensionDecl *ext) {
-  // If it has a Clang node (directly), 
-  if (ext->hasClangNode()) return true;
-
-  // If it has a global imported as a member.
-  auto members = ext->getMembers();
-  if (members.empty()) return false;
-  return members.front()->hasClangNode();
-}
-
-/// Retrieve the Clang node for the given extension, if it has one.
-/// created it (vs. being a Swift extension).
-static ClangNode extensionGetClangNode(ExtensionDecl *ext) {
-  // If it has a Clang node (directly), 
-  if (ext->hasClangNode()) return ext->getClangNode();
-
-  // If it has a global imported as a member.
-  auto members = ext->getMembers();
-  if (members.empty()) return ClangNode();
-  return members.front()->getClangNode();
+  return static_cast<bool>(swift::ide::extensionGetClangNode(ext));
 }
 
 Optional<StringRef>
@@ -255,7 +237,7 @@ swift::ide::findGroupNameForUSR(ModuleDecl *M, StringRef USR) {
 }
 
 void swift::ide::printSubmoduleInterface(
-       Module *M,
+       ModuleDecl *M,
        ArrayRef<StringRef> FullModuleName,
        ArrayRef<StringRef> GroupNames,
        ModuleTraversalOptions TraversalOptions,
@@ -341,9 +323,8 @@ void swift::ide::printSubmoduleInterface(
 
     // Skip declarations that are not accessible.
     if (auto *VD = dyn_cast<ValueDecl>(D)) {
-      if (Options.AccessibilityFilter > Accessibility::Private &&
-          VD->hasAccessibility() &&
-          VD->getFormalAccess() < Options.AccessibilityFilter)
+      if (Options.AccessFilter > AccessLevel::Private &&
+          VD->getFormalAccess() < Options.AccessFilter)
         continue;
     }
 
@@ -393,8 +374,8 @@ void swift::ide::printSubmoduleInterface(
       }
     };
 
-    if (D->hasClangNode()) {
-      addToClangDecls(D, D->getClangNode());
+    if (auto clangNode = getEffectiveClangNode(D)) {
+      addToClangDecls(D, clangNode);
       continue;
     }
 
@@ -450,12 +431,12 @@ void swift::ide::printSubmoduleInterface(
 
   // Sort imported declarations in source order *within a submodule*.
   for (auto &P : ClangDecls) {
-    std::sort(P.second.begin(), P.second.end(),
-              [&](std::pair<Decl *, clang::SourceLocation> LHS,
-                  std::pair<Decl *, clang::SourceLocation> RHS) -> bool {
-                return ClangSourceManager.isBeforeInTranslationUnit(LHS.second,
-                                                                    RHS.second);
-              });
+    std::stable_sort(P.second.begin(), P.second.end(),
+                     [&](std::pair<Decl *, clang::SourceLocation> LHS,
+                         std::pair<Decl *, clang::SourceLocation> RHS) -> bool {
+      return ClangSourceManager.isBeforeInTranslationUnit(LHS.second,
+                                                          RHS.second);
+    });
   }
 
   // Sort Swift declarations so that we print them in a consistent order.
@@ -472,16 +453,16 @@ void swift::ide::printSubmoduleInterface(
   });
 
   // If the group name is specified, we sort them according to their source order,
-  // which is the order preserved by getTopLeveDecls.
+  // which is the order preserved by getTopLevelDecls.
   if (GroupNames.empty()) {
-    std::sort(SwiftDecls.begin(), SwiftDecls.end(),
+    std::stable_sort(SwiftDecls.begin(), SwiftDecls.end(),
       [&](Decl *LHS, Decl *RHS) -> bool {
         auto *LHSValue = dyn_cast<ValueDecl>(LHS);
         auto *RHSValue = dyn_cast<ValueDecl>(RHS);
 
         if (LHSValue && RHSValue) {
-          StringRef LHSName = LHSValue->getName().str();
-          StringRef RHSName = RHSValue->getName().str();
+          auto LHSName = LHSValue->getBaseName();
+          auto RHSName = RHSValue->getBaseName();
           if (int Ret = LHSName.compare(RHSName))
             return Ret < 0;
           // FIXME: this is not sufficient to establish a total order for overloaded
@@ -501,7 +482,7 @@ void swift::ide::printSubmoduleInterface(
 
   auto PrintDecl = [&](Decl *D) -> bool {
     ASTPrinter &Printer = *PrinterToUse;
-    if (!shouldPrint(D, AdjustedOptions)) {
+    if (!AdjustedOptions.shouldPrint(D)) {
       Printer.callAvoidPrintDeclPost(D);
       return false;
     }
@@ -510,7 +491,7 @@ void swift::ide::printSubmoduleInterface(
       // Swift extensions are printed with their associated type unless it's
       // a cross-module extension.
       if (!extensionHasClangNode(Ext)) {
-        auto ExtendedNominal = Ext->getExtendedType()->getAnyNominal();
+        auto ExtendedNominal = Ext->getExtendedNominal();
         if (Ext->getModuleContext() == ExtendedNominal->getModuleContext())
           return false;
       }
@@ -543,7 +524,7 @@ void swift::ide::printSubmoduleInterface(
           // Print Ext and add sub-types of Ext.
           for (auto Ext : NTD->getExtensions()) {
             if (!PrintSynthesizedExtensions) {
-              if (!shouldPrint(Ext, AdjustedOptions)) {
+              if (!AdjustedOptions.shouldPrint(Ext)) {
                 Printer.callAvoidPrintDeclPost(Ext);
                 continue;
               }
@@ -567,22 +548,22 @@ void swift::ide::printSubmoduleInterface(
           if (IsTopLevelDecl) {
           // Print the part that should be merged with the type decl.
           pAnalyzer->forEachExtensionMergeGroup(
-            SynthesizedExtensionAnalyzer::MergeGroupKind::MergeableWithTypeDef,
-            [&](ArrayRef<ExtensionAndIsSynthesized> Decls){
-              for (auto ET : Decls) {
-                AdjustedOptions.BracketOptions = {ET.first, false,
-                                        Decls.back().first == ET.first, true};
-                if (ET.second)
-                  AdjustedOptions.
-                    initArchetypeTransformerForSynthesizedExtensions(NTD);
-                ET.first->print(Printer, AdjustedOptions);
-                if (ET.second)
-                  AdjustedOptions.
-                    clearArchetypeTransformerForSynthesizedExtensions();
-                if (AdjustedOptions.BracketOptions.shouldCloseExtension(ET.first))
-                  Printer << "\n";
-              }
-          });
+              SynthesizedExtensionAnalyzer::MergeGroupKind::
+                  MergeableWithTypeDef,
+              [&](ArrayRef<ExtensionInfo> Decls) {
+                for (auto ET : Decls) {
+                  AdjustedOptions.BracketOptions = {
+                      ET.Ext, false, Decls.back().Ext == ET.Ext, true};
+                  if (ET.IsSynthesized)
+                    AdjustedOptions.initForSynthesizedExtension(NTD);
+                  ET.Ext->print(Printer, AdjustedOptions);
+                  if (ET.IsSynthesized)
+                    AdjustedOptions.clearSynthesizedExtension();
+                  if (AdjustedOptions.BracketOptions.shouldCloseExtension(
+                          ET.Ext))
+                    Printer << "\n";
+                }
+              });
           }
 
           // If the printed Decl is not the top-level one, reset analyzer.
@@ -591,30 +572,38 @@ void swift::ide::printSubmoduleInterface(
 
           // Print the rest as synthesized extensions.
           pAnalyzer->forEachExtensionMergeGroup(
-            // For top-level decls, only constraint extensions are to print;
-            // Since the rest are merged into the main body.
-            IsTopLevelDecl ?
-              SynthesizedExtensionAnalyzer::MergeGroupKind::UnmergeableWithTypeDef :
-            // For sub-decls, all extensions should be printed.
-              SynthesizedExtensionAnalyzer::MergeGroupKind::All,
-            [&](ArrayRef<ExtensionAndIsSynthesized> Decls){
-              for (auto ET : Decls) {
-                AdjustedOptions.BracketOptions = {ET.first,
-                  Decls.front().first == ET.first,
-                  Decls.back().first == ET.first, true};
-                if (AdjustedOptions.BracketOptions.shouldOpenExtension(ET.first))
-                  Printer << "\n";
-                if (ET.second)
-                  AdjustedOptions.
-                    initArchetypeTransformerForSynthesizedExtensions(NTD);
-                ET.first->print(Printer, AdjustedOptions);
-                if (ET.second)
-                  AdjustedOptions.
-                    clearArchetypeTransformerForSynthesizedExtensions();
-                if (AdjustedOptions.BracketOptions.shouldCloseExtension(ET.first))
-                  Printer << "\n";
-            }
-          });
+              // For top-level decls, only constraint extensions need to be
+              // printed, since the rest are merged into the main body.
+              IsTopLevelDecl ? SynthesizedExtensionAnalyzer::MergeGroupKind::
+                                   UnmergeableWithTypeDef
+                             :
+                             // For sub-decls, all extensions should be printed.
+                  SynthesizedExtensionAnalyzer::MergeGroupKind::All,
+              [&](ArrayRef<ExtensionInfo> Decls) {
+                // Whether we've started the extension merge group in printing.
+                bool Opened = false;
+                for (auto ET : Decls) {
+                  AdjustedOptions.BracketOptions = { ET.Ext, !Opened,
+                    Decls.back().Ext == ET.Ext, true};
+                  if (AdjustedOptions.BracketOptions.shouldOpenExtension(
+                          ET.Ext))
+                    Printer << "\n";
+                  if (ET.IsSynthesized) {
+                    if (ET.EnablingExt)
+                      AdjustedOptions.initForSynthesizedExtension(
+                          ET.EnablingExt);
+                    else
+                      AdjustedOptions.initForSynthesizedExtension(NTD);
+                  }
+                  // Set opened if we actually printed this extension.
+                  Opened |= ET.Ext->print(Printer, AdjustedOptions);
+                  if (ET.IsSynthesized)
+                    AdjustedOptions.clearSynthesizedExtension();
+                  if (AdjustedOptions.BracketOptions.shouldCloseExtension(
+                          ET.Ext))
+                    Printer << "\n";
+                }
+              });
           AdjustedOptions.BracketOptions = BracketOptions();
         }
       }
@@ -743,8 +732,8 @@ void swift::ide::printHeaderInterface(
   std::sort(ClangDecls.begin(), ClangDecls.end(),
             [&](Decl *LHS, Decl *RHS) -> bool {
               return ClangSM.isBeforeInTranslationUnit(
-                                            LHS->getClangNode().getLocation(),
-                                            RHS->getClangNode().getLocation());
+                                            getEffectiveClangNode(LHS).getLocation(),
+                                            getEffectiveClangNode(RHS).getLocation());
             });
 
   ASTPrinter *PrinterToUse = &Printer;
@@ -755,7 +744,7 @@ void swift::ide::printHeaderInterface(
 
   for (auto *D : ClangDecls) {
     ASTPrinter &Printer = *PrinterToUse;
-    if (!shouldPrint(D, AdjustedOptions)) {
+    if (!AdjustedOptions.shouldPrint(D)) {
       Printer.callAvoidPrintDeclPost(D);
       continue;
     }
@@ -793,7 +782,7 @@ void ClangCommentPrinter::printDeclPre(const Decl *D,
   // single line.
   // FIXME: we should fix that, since it also affects struct members, etc.
   if (!isa<ParamDecl>(D)) {
-    if (auto ClangN = D->getClangNode()) {
+    if (auto ClangN = swift::ide::getEffectiveClangNode(D)) {
       printCommentsUntil(ClangN);
       if (shouldPrintNewLineBefore(ClangN)) {
         *this << "\n";
@@ -817,7 +806,7 @@ void ClangCommentPrinter::printDeclPost(const Decl *D,
     *this << " " << ASTPrinter::sanitizeUtf8(CommentText);
   }
   PendingComments.clear();
-  if (auto ClangN = D->getClangNode())
+  if (auto ClangN = swift::ide::getEffectiveClangNode(D))
     updateLastEntityLine(ClangN.getSourceRange().getEnd());
 }
 

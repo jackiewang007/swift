@@ -2,14 +2,14 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
-// RUN: %target-run-simple-swift
+// RUN: %target-run-simple-swift -swift-version=3
 // REQUIRES: executable_test
 //
 
@@ -159,36 +159,24 @@ StrideTestSuite.test("OperatorOverloads") {
   var stride: Int = 5
 
   do {
-    var result = r1 + stride
+    var result = r1.advanced(by: stride)
     expectType(R.self, &result)
     expectEqual(55, result.x)
   }
   do {
-    var result = stride + r1
+    var result = r1.advanced(by: stride)
     expectType(R.self, &result)
     expectEqual(55, result.x)
   }
   do {
-    var result = r1 - stride
+    var result = r1.advanced(by: -stride)
     expectType(R.self, &result)
     expectEqual(45, result.x)
   }
   do {
-    var result = r1 - r2
+    var result = r2.distance(to: r1)
     expectType(Int.self, &result)
     expectEqual(-20, result)
-  }
-  do {
-    var result = r1
-    result += stride
-    expectType(R.self, &result)
-    expectEqual(55, result.x)
-  }
-  do {
-    var result = r1
-    result -= stride
-    expectType(R.self, &result)
-    expectEqual(45, result.x)
   }
 }
 
@@ -200,12 +188,20 @@ StrideTestSuite.test("FloatingPointStride") {
   expectEqual([ 1.4, 2.4, 3.4 ], result)
 }
 
-StrideTestSuite.test("ErrorAccumulation") {
-  let a = Array(stride(from: Float(1.0), through: Float(2.0), by: Float(0.1)))
+StrideTestSuite.test("FloatingPointStride/rounding error") {
+  // Ensure that there is no error accumulation
+  let a = Array(stride(from: 1 as Float, through: 2, by: 0.1))
   expectEqual(11, a.count)
-  expectEqual(Float(2.0), a.last)
-  let b = Array(stride(from: Float(1.0), to: Float(10.0), by: Float(0.9)))
+  expectEqual(2 as Float, a.last)
+  let b = Array(stride(from: 1 as Float, to: 10, by: 0.9))
   expectEqual(10, b.count)
+
+  // Ensure that there is no intermediate rounding error on supported platforms
+  if (-0.2).addingProduct(0.2, 6) == 1 {
+    let c = Array(stride(from: -0.2, through: 1, by: 0.2))
+    expectEqual(7, c.count)
+    expectEqual(1 as Double, c.last)
+  }
 }
 
 func strideIteratorTest<

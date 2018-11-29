@@ -2,17 +2,17 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
 @_exported import Foundation // Clang module
 
-#if os(OSX)
+#if os(macOS)
 
 private let ε: CGFloat = 2.22045e-16
 
@@ -33,7 +33,7 @@ public struct AffineTransform : ReferenceConvertible, Hashable, CustomStringConv
         self.tY = tY
     }
     
-    fileprivate init(reference: NSAffineTransform) {
+    fileprivate init(reference: __shared NSAffineTransform) {
         m11 = reference.transformStruct.m11
         m12 = reference.transformStruct.m12
         m21 = reference.transformStruct.m21
@@ -124,8 +124,8 @@ public struct AffineTransform : ReferenceConvertible, Hashable, CustomStringConv
          [    0       0    1 ]
      */
     public init(rotationByDegrees angle: CGFloat) {
-        let α = Double(angle) * M_PI / 180.0
-        self.init(rotationByRadians: CGFloat(α))
+        let α = angle * .pi / 180.0
+        self.init(rotationByRadians: α)
     }
     
     /**
@@ -153,8 +153,8 @@ public struct AffineTransform : ReferenceConvertible, Hashable, CustomStringConv
          [    0       0    1 ]
      */
     public mutating func rotate(byDegrees angle: CGFloat) {
-        let α = Double(angle) * M_PI / 180.0
-        return rotate(byRadians: CGFloat(α))
+        let α = angle * .pi / 180.0
+        return rotate(byRadians: α)
     }
     
     /**
@@ -166,15 +166,19 @@ public struct AffineTransform : ReferenceConvertible, Hashable, CustomStringConv
          [    0       0    1 ]
      */
     public mutating func rotate(byRadians angle: CGFloat) {
-        let α = Double(angle)
-        
-        let sine = CGFloat(sin(α))
-        let cosine = CGFloat(cos(α))
+        let t2 = self
+        let t1 = AffineTransform(rotationByRadians: angle)
 
-        m11 = cosine
-        m12 = sine
-        m21 = -sine
-        m22 = cosine
+        var t = AffineTransform.identity
+
+        t.m11 = t1.m11 * t2.m11 + t1.m12 * t2.m21
+        t.m12 = t1.m11 * t2.m12 + t1.m12 * t2.m22
+        t.m21 = t1.m21 * t2.m11 + t1.m22 * t2.m21
+        t.m22 = t1.m21 * t2.m12 + t1.m22 * t2.m22
+        t.tX = t1.tX * t2.m11 + t1.tY * t2.m21 + t2.tX
+        t.tY = t1.tX * t2.m12 + t1.tY * t2.m22 + t2.tY
+
+        self = t
     }
     
     /**
@@ -235,7 +239,7 @@ public struct AffineTransform : ReferenceConvertible, Hashable, CustomStringConv
     
     public func inverted() -> AffineTransform? {
         let determinant = (m11 * m22) - (m12 * m21)
-        if fabs(determinant) <= ε {
+        if abs(determinant) <= ε {
             return nil
         }
         var inverse = AffineTransform()
@@ -313,10 +317,10 @@ extension AffineTransform : _ObjectiveCBridgeable {
         return true // Can't fail
     }
 
+    @_effects(readonly)
     public static func _unconditionallyBridgeFromObjectiveC(_ x: NSAffineTransform?) -> AffineTransform {
-        var result: AffineTransform?
-        _forceBridgeFromObjectiveC(x!, result: &result)
-        return result!
+        guard let src = x else { return AffineTransform.identity }
+        return AffineTransform(reference: src)
     }
 }
 
@@ -325,6 +329,28 @@ extension NSAffineTransform : _HasCustomAnyHashableRepresentation {
     @nonobjc
     public func _toCustomAnyHashable() -> AnyHashable? {
         return AnyHashable(self as AffineTransform)
+    }
+}
+
+extension AffineTransform : Codable {
+    public init(from decoder: Decoder) throws {
+        var container = try decoder.unkeyedContainer()
+        m11 = try container.decode(CGFloat.self)
+        m12 = try container.decode(CGFloat.self)
+        m21 = try container.decode(CGFloat.self)
+        m22 = try container.decode(CGFloat.self)
+        tX  = try container.decode(CGFloat.self)
+        tY  = try container.decode(CGFloat.self)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.unkeyedContainer()
+        try container.encode(self.m11)
+        try container.encode(self.m12)
+        try container.encode(self.m21)
+        try container.encode(self.m22)
+        try container.encode(self.tX)
+        try container.encode(self.tY)
     }
 }
 

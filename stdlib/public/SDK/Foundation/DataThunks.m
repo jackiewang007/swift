@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -14,25 +14,6 @@
 #import <sys/fcntl.h>
 
 #include "swift/Runtime/Config.h"
-
-typedef void (^NSDataDeallocator)(void *, NSUInteger);
-extern const NSDataDeallocator NSDataDeallocatorVM;
-extern const NSDataDeallocator NSDataDeallocatorUnmap;
-extern const NSDataDeallocator NSDataDeallocatorFree;
-extern const NSDataDeallocator NSDataDeallocatorNone;
-
-void __NSDataInvokeDeallocatorVM(void *mem, NSUInteger length) {
-  NSDataDeallocatorVM(mem, length);
-}
-
-void __NSDataInvokeDeallocatorUnmap(void *mem, NSUInteger length) {
-  NSDataDeallocatorUnmap(mem, length);
-}
-
-void __NSDataInvokeDeallocatorFree(void *mem, NSUInteger length) {
-  NSDataDeallocatorFree(mem, length);
-}
-
 
 #if TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR
 static int __NSFileProtectionClassForOptions(NSUInteger options) {
@@ -91,11 +72,47 @@ static NSInteger _NSWriteToFileDescriptor(int32_t fd, const void *buffer, NSUInt
     return length - numBytesRemaining;
 }
 
-extern NSError *_NSErrorWithFilePath(NSInteger code, id pathOrURL);
-extern NSError *_NSErrorWithFilePathAndErrno(NSInteger posixErrno, id pathOrURL, BOOL reading);
+static NSError *_NSErrorWithFilePath(NSInteger code, id pathOrURL) {
+    NSString *key = [pathOrURL isKindOfClass:[NSURL self]] ? NSURLErrorKey : NSFilePathErrorKey;
+    return [NSError errorWithDomain:NSCocoaErrorDomain code:code userInfo:[NSDictionary dictionaryWithObjectsAndKeys:pathOrURL, key, nil]];
+}
 
-SWIFT_CC(swift)
-BOOL _NSWriteDataToFile_Swift(NSURL * NS_RELEASES_ARGUMENT url, NSData * NS_RELEASES_ARGUMENT data, NSDataWritingOptions writingOptions, NSError **errorPtr) {
+static NSError *_NSErrorWithFilePathAndErrno(NSInteger posixErrno, id pathOrURL, BOOL reading) {
+    NSInteger code;
+    if (reading) {
+        switch (posixErrno) {
+            case EFBIG:          code = NSFileReadTooLargeError; break;
+            case ENOENT:         code = NSFileReadNoSuchFileError; break;
+            case EPERM:          // fallthrough
+            case EACCES:         code = NSFileReadNoPermissionError; break;
+            case ENAMETOOLONG:   code = NSFileReadInvalidFileNameError; break;
+            default:             code = NSFileReadUnknownError; break;
+        }
+    } else {
+        switch (posixErrno) {
+            case ENOENT:         code = NSFileNoSuchFileError; break;
+            case EPERM:          // fallthrough
+            case EACCES:         code = NSFileWriteNoPermissionError; break;
+            case ENAMETOOLONG:   code = NSFileWriteInvalidFileNameError; break;
+#if DEPLOYMENT_TARGET_MACOSX || DEPLOYMENT_TARGET_EMBEDDED
+            case EDQUOT:
+#endif
+            case ENOSPC:         code = NSFileWriteOutOfSpaceError; break;
+            case EROFS:          code = NSFileWriteVolumeReadOnlyError; break;
+            case EEXIST:         code = NSFileWriteFileExistsError; break;
+            default:             code = NSFileWriteUnknownError; break;
+        }
+    }
+    
+    NSString *key = [pathOrURL isKindOfClass:[NSURL self]] ? NSURLErrorKey : NSFilePathErrorKey;
+    NSDictionary *userInfo = [[NSDictionary alloc] initWithObjectsAndKeys:pathOrURL, key, [NSError errorWithDomain:NSPOSIXErrorDomain code:posixErrno userInfo:nil], NSUnderlyingErrorKey, nil];
+    NSError *error = [NSError errorWithDomain:NSCocoaErrorDomain code:code userInfo:userInfo];
+    [userInfo release];
+    return error;
+}
+
+SWIFT_RUNTIME_STDLIB_INTERNAL
+BOOL __NSDataWriteToURL(NSData * _Nonnull data NS_RELEASES_ARGUMENT, NSURL * _Nonnull url NS_RELEASES_ARGUMENT, NSDataWritingOptions writingOptions, NSError **errorPtr) {
     assert((writingOptions & NSDataWritingAtomic) == 0);
 
     NSString *path = url.path;
@@ -118,8 +135,6 @@ BOOL _NSWriteDataToFile_Swift(NSURL * NS_RELEASES_ARGUMENT url, NSData * NS_RELE
     int32_t fd = _NSOpenFileDescriptor(cpath, flags, protectionClass, 0666);
     if (fd < 0) {
         if (errorPtr) *errorPtr = _NSErrorWithFilePathAndErrno(errno, path, NO);
-        [url release];
-        [data release];
         return NO;
     }
 
@@ -153,12 +168,8 @@ BOOL _NSWriteDataToFile_Swift(NSURL * NS_RELEASES_ARGUMENT url, NSData * NS_RELE
         if (errorPtr) {
             *errorPtr = _NSErrorWithFilePathAndErrno(errno, path, NO);
         }
-        [url release];
-        [data release];
         return NO;
     }
     close(fd);
-    [url release];
-    [data release];
     return YES;
 }

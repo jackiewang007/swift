@@ -2,11 +2,11 @@
 #
 # This source file is part of the Swift.org open source project
 #
-# Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+# Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 # Licensed under Apache License v2.0 with Runtime Library Exception
 #
-# See http://swift.org/LICENSE.txt for license information
-# See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+# See https://swift.org/LICENSE.txt for license information
+# See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 
 TRAVERSALS = ['Forward', 'Bidirectional', 'RandomAccess']
 
@@ -22,8 +22,8 @@ def collectionForTraversal(traversal):  # noqa (N802 function name should be low
         raise ValueError("Unknown traversal %r" % traversal)
 
 
-def sliceTypeName(traversal, mutable, rangeReplaceable):  # noqa (N802)
-    name = collectionForTraversal(traversal).replace('Collection', 'Slice')
+def collectionTypeName(traversal, mutable, rangeReplaceable):  # noqa (N802)
+    name = collectionForTraversal(traversal)
     if rangeReplaceable:
         name = 'RangeReplaceable' + name
     if mutable:
@@ -38,18 +38,6 @@ def protocolsForCollectionFeatures(traversal, mutable, rangeReplaceable):  # noq
     if rangeReplaceable:
         protocols.append('RangeReplaceableCollection')
     return protocols
-
-
-def defaultIndicesForTraversal(traversal):  # noqa (N802)
-    if traversal == 'Forward':
-        return 'DefaultIndices'
-    elif traversal == 'Bidirectional':
-        return 'DefaultBidirectionalIndices'
-    elif traversal == 'RandomAccess':
-        return 'DefaultRandomAccessIndices'
-    else:
-        raise ValueError("Unknown traversal %r" % traversal)
-
 
 def documentationNameForTraversal(traversal):  # noqa (N802)
     if traversal == 'Forward':

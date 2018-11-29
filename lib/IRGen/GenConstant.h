@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -39,6 +39,11 @@ llvm::Constant *emitConstantStruct(IRGenModule &IGM, StructInst *SI);
 
 /// Construct a struct literal from a TupleInst containing constant values.
 llvm::Constant *emitConstantTuple(IRGenModule &IGM, TupleInst *TI);
+
+/// Construct an object (with a HeapObject header) from an ObjectInst
+/// containing constant values.
+llvm::Constant *emitConstantObject(IRGenModule &IGM, ObjectInst *OI,
+                                   StructLayout *ClassLayout);
 }
 }
 

@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -18,6 +18,10 @@
 #ifndef SWIFT_AST_SILOPTIONS_H
 #define SWIFT_AST_SILOPTIONS_H
 
+#include "swift/Basic/Sanitizers.h"
+#include "swift/Basic/OptionSet.h"
+#include "swift/Basic/OptimizationMode.h"
+#include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/StringRef.h"
 #include <string>
 #include <climits>
@@ -29,34 +33,25 @@ public:
   /// Controls the aggressiveness of the performance inliner.
   int InlineThreshold = -1;
 
+  /// Controls the aggressiveness of the performance inliner for Osize.
+  int CallerBaseBenefitReductionFactor = 2;
+
+  /// Controls the aggressiveness of the loop unroller.
+  int UnrollThreshold = 250;
+
   /// The number of threads for multi-threaded code generation.
   int NumThreads = 0;
   
-  enum LinkingMode {
-    /// Skip SIL linking.
-    LinkNone,
-
-    /// Perform normal SIL linking.
-    LinkNormal,
-
-    /// Link all functions during SIL linking.
-    LinkAll
-  };
-
-  /// Representation of optimization modes.
-  enum class SILOptMode: unsigned {
-    NotSet,
-    None,
-    Debug,
-    Optimize,
-    OptimizeUnchecked
-  };
-
-  /// Controls how to perform SIL linking.
-  LinkingMode LinkMode = LinkNormal;
+  /// Controls whether to pull in SIL from partial modules during the
+  /// merge modules step. Could perhaps be merged with the link mode
+  /// above but the interactions between all the flags are tricky.
+  bool MergePartialModules = false;
 
   /// Remove all runtime assertions during optimizations.
   bool RemoveRuntimeAsserts = false;
+
+  /// Enable existential specializer optimization.
+  bool ExistentialSpecializer = false;
 
   /// Controls whether the SIL ARC optimizations are run.
   bool EnableARCOptimizations = true;
@@ -76,7 +71,7 @@ public:
   bool EmitVerboseSIL = false;
 
   /// Optimization mode being used.
-  SILOptMode Optimization = SILOptMode::NotSet;
+  OptimizationMode OptMode = OptimizationMode::NotSet;
 
   enum AssertConfiguration: unsigned {
     // Used by standard library code to distinguish between a debug and release
@@ -98,15 +93,14 @@ public:
   /// Instrument code to generate profiling information.
   bool GenerateProfile = false;
 
+  /// Path to the profdata file to be used for PGO, or the empty string.
+  std::string UseProfile = "";
+
   /// Emit a mapping of profile counters for use in coverage.
   bool EmitProfileCoverageMapping = false;
 
   /// Should we use a pass pipeline passed in via a json file? Null by default.
   llvm::StringRef ExternalPassPipelineFilename;
-  
-  /// Emit captures and function contexts using +0 caller-guaranteed ARC
-  /// conventions.
-  bool EnableGuaranteedClosureContexts = false;
 
   /// Don't generate code using partial_apply in SIL generation.
   bool DisableSILPartialApply = false;
@@ -119,6 +113,47 @@ public:
 
   /// When parsing SIL, assume unqualified ownership.
   bool AssumeUnqualifiedOwnershipWhenParsing = false;
+
+  /// Assume that code will be executed in a single-threaded environment.
+  bool AssumeSingleThreaded = false;
+
+  /// Indicates which sanitizer is turned on.
+  OptionSet<SanitizerKind> Sanitizers;
+
+  /// Emit compile-time diagnostics when the law of exclusivity is violated.
+  bool EnforceExclusivityStatic = true;
+
+  /// Emit checks to trap at run time when the law of exclusivity is violated.
+  bool EnforceExclusivityDynamic = true;
+
+  /// Emit extra exclusvity markers for memory access and verify coverage.
+  bool VerifyExclusivity = false;
+
+  /// Enable the mandatory semantic arc optimizer.
+  bool EnableMandatorySemanticARCOpts = false;
+
+  /// \brief Enable large loadable types IRGen pass.
+  bool EnableLargeLoadableTypes = true;
+
+  /// The name of the file to which the backend should save YAML optimization
+  /// records.
+  std::string OptRecordFile;
+
+  SILOptions() {}
+
+  /// Return a hash code of any components from these options that should
+  /// contribute to a Swift Bridging PCH hash.
+  llvm::hash_code getPCHHashComponents() const {
+    return llvm::hash_value(0);
+  }
+
+  bool shouldOptimize() const {
+    return OptMode > OptimizationMode::NoOptimization;
+  }
+
+  bool hasMultipleIRGenThreads() const { return NumThreads > 1; }
+  bool shouldPerformIRGenerationInParallel() const { return NumThreads != 0; }
+  bool hasMultipleIGMs() const { return hasMultipleIRGenThreads(); }
 };
 
 } // end namespace swift

@@ -1,4 +1,4 @@
-// RUN: %target-parse-verify-swift -parse-stdlib
+// RUN: %target-typecheck-verify-swift -parse-stdlib
 
 import Swift
 
@@ -25,6 +25,9 @@ func testslice(_ s: Array<Int>) {
   for i in s { print(i+1) }
   _ = s[0..<2]
   _ = s[0...1]
+  _ = s[...1]
+  _ = s[1...]
+  _ = s[..<2]
 }
 
 @_silgen_name("malloc") func c_malloc(_ size: Int) -> UnsafeMutableRawPointer
@@ -79,9 +82,7 @@ class Vector<T> {
   }
 
   deinit {
-    for i in 0..<length {
-      (base + i).deinitialize()
-    }
+    base.deinitialize(count: length)
     c_free(base)
   }
 }

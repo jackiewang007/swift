@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -65,27 +65,6 @@ public:
   static ParameterList *createWithoutLoc(ParamDecl *decl) {
     return create(decl->getASTContext(), decl);
   }
-  
-  /// Create an implicit 'self' decl for a method in the specified decl context.
-  /// If 'static' is true, then this is self for a static method in the type.
-  ///
-  /// Note that this decl is created, but it is returned with an incorrect
-  /// DeclContext that needs to be set correctly.  This is automatically handled
-  /// when a function is created with this as part of its argument list.
-  ///
-  static ParameterList *createUnboundSelf(SourceLoc loc, DeclContext *DC,
-                                          bool isStaticMethod = false,
-                                          bool isInOut = false);
-
-  /// Create an implicit 'self' decl for a method in the specified decl context.
-  /// If 'static' is true, then this is self for a static method in the type.
-  ///
-  /// Note that this decl is created, but it is returned with an incorrect
-  /// DeclContext that needs to be set correctly.  This is automatically handled
-  /// when a function is created with this as part of its argument list.
-  static ParameterList *createSelf(SourceLoc loc, DeclContext *DC,
-                                   bool isStatic = false,
-                                   bool isInOut = false);
 
   SourceLoc getLParenLoc() const { return LParenLoc; }
   SourceLoc getRParenLoc() const { return RParenLoc; }
@@ -130,28 +109,30 @@ public:
     Implicit = 0x01,
     /// The cloned pattern is for an inherited constructor; mark default
     /// arguments as inherited, and mark unnamed arguments as named.
-    Inherited = 0x02
+    Inherited = 0x02,
+    /// The cloned pattern will strip type information.
+    WithoutTypes = 0x04,
   };
-  
+
+  friend OptionSet<CloneFlags> operator|(CloneFlags flag1, CloneFlags flag2) {
+    return OptionSet<CloneFlags>(flag1) | flag2;
+  }
+
   /// Make a duplicate copy of this parameter list.  This allocates copies of
   /// the ParamDecls, so they can be reparented into a new DeclContext.
   ParameterList *clone(const ASTContext &C,
                        OptionSet<CloneFlags> options = None) const;
-  
-  /// Return a TupleType or ParenType for this parameter list.  This returns a
-  /// null type if one of the ParamDecls does not have a type set for it yet.
-  Type getType(const ASTContext &C) const;
-  
-  /// Return a TupleType or ParenType for this parameter list written in terms
-  /// of interface types.
-  Type getInterfaceType(DeclContext *DC) const;
 
-  /// Return the full function type for a set of curried parameter lists that
-  /// returns the specified result type written in terms of interface types.
-  static Type getFullInterfaceType(Type resultType, ArrayRef<ParameterList*> PL,
-                                   DeclContext *DC);
-  
-  
+  /// Return a list of function parameters for this parameter list,
+  /// based on the interface types of the parameters in this list.
+  void getParams(SmallVectorImpl<AnyFunctionType::Param> &params) const;
+
+  /// Return a list of function parameters for this parameter list,
+  /// based on types provided by a callback.
+  void getParams(SmallVectorImpl<AnyFunctionType::Param> &params,
+                 llvm::function_ref<Type(ParamDecl *)> getType) const;
+
+
   /// Return the full source range of this parameter.
   SourceRange getSourceRange() const;
   SourceLoc getStartLoc() const { return getSourceRange().Start; }
@@ -163,6 +144,6 @@ public:
   //  void print(raw_ostream &OS) const;
 };
 
-} // end namespace swift.
+} // end namespace swift
 
 #endif

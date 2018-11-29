@@ -2,9 +2,9 @@
 @import SwiftName;
 
 @interface PointerWrapper
-@property void * __null_unspecified voidPtr;
-@property int * __null_unspecified intPtr;
-@property __null_unspecified id __autoreleasing * __null_unspecified idPtr;
+@property void *_Null_unspecified voidPtr;
+@property int *_Null_unspecified intPtr;
+@property _Null_unspecified id __autoreleasing *_Null_unspecified idPtr;
 @end
 
 #pragma clang assume_nonnull begin
@@ -14,11 +14,13 @@
 + (instancetype)a SWIFT_NAME(init());
 + (instancetype)b SWIFT_NAME(init(dummyParam:));
 + (instancetype)c:(nullable id)x SWIFT_NAME(init(cc:));
++ (instancetype):(int)x SWIFT_NAME(init(empty:));
 
 // Would-be initializers.
 + (instancetype)testZ SWIFT_NAME(zz());
 + (instancetype)testY:(nullable id)x SWIFT_NAME(yy(aa:));
 + (instancetype)testX:(nullable id)x xx:(nullable id)xx SWIFT_NAME(xx(_:bb:));
++ (instancetype):(int)x :(int)y SWIFT_NAME(empty(_:_:));
 
 // Things that Clang won't catch as problematic, but we should.
 + (instancetype)f:(id)x SWIFT_NAME(init(f:ff:));
@@ -28,6 +30,7 @@
 + (instancetype)test:(id)x more:(id)y SWIFT_NAME(test());
 
 - (void)methodInt:(NSInteger)value SWIFT_NAME(theMethod(number:));
+- (void):(NSInteger)a b:(NSInteger)b SWIFT_NAME(empty(a:b:));
 
 @property (readonly) int someProp SWIFT_NAME(renamedSomeProp);
 @property (readonly, class) int classProp SWIFT_NAME(renamedClassProp);
@@ -57,6 +60,16 @@
 @interface SwiftNameTestErrorSub : SwiftNameTestError
 @end
 
+@interface SwiftGenericNameTest<T> : NSObject
+@end
+
+@interface SwiftConstrGenericNameTest<T:NSNumber *> : NSNumber
+@end
+
 int global_int SWIFT_NAME(GlobalInt);
+
+@compatibility_alias SwiftNameAlias SwiftNameTest;
+@compatibility_alias SwiftGenericNameAlias SwiftGenericNameTest;
+@compatibility_alias SwiftConstrGenericNameAlias SwiftConstrGenericNameTest;
 
 #pragma clang assume_nonnull end

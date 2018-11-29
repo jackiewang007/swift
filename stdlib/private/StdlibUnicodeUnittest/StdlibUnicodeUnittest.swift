@@ -2,15 +2,117 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
 import StdlibUnittest
+
+extension String {
+  func parseUTF8CodeUnits() -> [UInt8] {
+    var utf8 = [UInt8]()
+    let units = self.split(separator: " ")
+    let scalars = units.compactMap { string -> Unicode.Scalar? in
+      let i = Int(string, radix: 16)!
+      return Unicode.Scalar(i)
+
+    }
+
+    for scalar in scalars {
+      utf8 += String(scalar).utf8
+    }
+    return utf8
+  }
+  
+  func parseUTF16CodeUnits() -> [UInt16] {
+    var utf16 = [UInt16]()
+    let units = self.split(separator: " ")
+    let scalars = units.compactMap { string -> Unicode.Scalar? in
+      let i = Int(string, radix: 16)!
+      return Unicode.Scalar(i)
+    }
+    
+    for scalar in scalars {
+      utf16 += scalar.utf16
+    }
+    return utf16
+  }
+}
+
+public struct NormalizationTest {
+  public let loc: SourceLoc
+  public let sourceUTF16: [UInt16]
+  public let source: [UInt8]
+  public let NFC: [UInt8]
+  public let NFD: [UInt8]
+  public let NFKC: [UInt8]
+  public let NFKD: [UInt8]
+
+  init(
+    loc: SourceLoc,
+    source: String,
+    NFC: String,
+    NFD: String,
+    NFKC: String,
+    NFKD: String
+  ) {
+    self.loc = loc
+    self.sourceUTF16 = source.parseUTF16CodeUnits()
+    self.source = source.parseUTF8CodeUnits()
+    self.NFC = NFC.parseUTF8CodeUnits()
+    self.NFD = NFD.parseUTF8CodeUnits()
+    self.NFKC = NFKC.parseUTF8CodeUnits()
+    self.NFKD = NFKD.parseUTF8CodeUnits()
+  }
+}
+
+// Normalization tests are currently only avaible on Darwin, awaiting a sensible
+// file API...
+#if _runtime(_ObjC)
+import Foundation
+public let normalizationTests: [NormalizationTest] = {
+  var tests = [NormalizationTest]()
+
+  let file = CommandLine.arguments[2]
+  let fileURL = URL(fileURLWithPath: file)
+
+  let fileContents = try! String(contentsOf: fileURL) + "" // go faster
+
+  var lineNumber: UInt = 0
+  for line in fileContents.split(separator: "\n") {
+    lineNumber += 1
+    guard line.hasPrefix("#") == false else {
+      continue
+    }
+
+    let content = line.split(separator: "#").first!
+  
+    guard !content.isEmpty else {
+      continue
+    }
+    guard !content.hasPrefix("@") else {
+      continue
+    }
+
+    let columns = content.split(separator: ";").filter { $0 != " " }.map(String.init)
+    let test = NormalizationTest(
+      loc: SourceLoc(file, lineNumber),
+      source: columns[0],
+      NFC: columns[1],
+      NFD: columns[2],
+      NFKC: columns[3],
+      NFKD: columns[4])
+
+    tests.append(test)
+  }
+  
+  return tests
+}()
+#endif
 
 public struct UTFTest {
   public struct Flags : OptionSet {
@@ -27,8 +129,8 @@ public struct UTFTest {
   public let string: String
   public let utf8: [UInt8]
   public let utf16: [UInt16]
-  public let unicodeScalars: [UnicodeScalar]
-  public let unicodeScalarsRepairedTail: [UnicodeScalar]
+  public let unicodeScalars: [Unicode.Scalar]
+  public let unicodeScalarsRepairedTail: [Unicode.Scalar]
   public let flags: Flags
   public let loc: SourceLoc
 
@@ -52,9 +154,9 @@ public struct UTFTest {
     self.string = string
     self.utf8 = utf8
     self.utf16 = utf16
-    self.unicodeScalars = scalars.map { UnicodeScalar($0)! }
+    self.unicodeScalars = scalars.map { Unicode.Scalar($0)! }
     self.unicodeScalarsRepairedTail =
-      scalarsRepairedTail.map { UnicodeScalar($0)! }
+      scalarsRepairedTail.map { Unicode.Scalar($0)! }
     self.flags = flags
     self.loc = SourceLoc(file, line, comment: "test data")
   }

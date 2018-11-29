@@ -2,28 +2,28 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 // Pre-specialization of some popular generic classes and functions.
 //===----------------------------------------------------------------------===//
 import Swift
 
-struct _Prespecialize {
+internal enum _Prespecialize {
   // Create specializations for the arrays of most
   // popular builtin integer and floating point types.
-  static internal func _specializeArrays() {
+  internal static func _specializeArrays() {
     func _createArrayUser<Element : Comparable>(_ sampleValue: Element) {
       // Initializers.
       let _: [Element] = [sampleValue]
       var a = [Element](repeating: sampleValue, count: 1)
 
       // Read array element
-      let _ =  a[0]
+      _ = a[0]
 
       // Set array elements
       for j in 1..<a.count {
@@ -40,10 +40,16 @@ struct _Prespecialize {
       a[0] = sampleValue
 
       // Get count and capacity
-      let _ = a.count + a.capacity
+      _ = a.count + a.capacity
 
       // Iterate over array
       for e in a {
+        print(e)
+        print("Value: \(e)")
+      }
+
+      // Iterate in reverse
+      for e in a.reversed() {
         print(e)
         print("Value: \(e)")
       }
@@ -55,7 +61,7 @@ struct _Prespecialize {
       a.reserveCapacity(100)
 
       // Sort array
-      let _ = a.sorted { (a: Element, b: Element) in a < b }
+      _ = a.sorted { (a: Element, b: Element) in a < b }
       a.sort { (a: Element, b: Element) in a < b }
 
       // force specialization of append.
@@ -72,7 +78,7 @@ struct _Prespecialize {
       var a = [Element](repeating: sampleValue, count: 1)
 
       // Read array element
-      let _ =  a[0]
+      _ = a[0]
 
       // Set array elements
       for j in 0..<a.count {
@@ -88,10 +94,16 @@ struct _Prespecialize {
       a[0] = sampleValue
 
       // Get length and capacity
-      let _ = a.count + a.capacity
+      _ = a.count + a.capacity
 
       // Iterate over array
       for e in a {
+        print(e)
+        print("Value: \(e)")
+      }
+
+      // Iterate in reverse
+      for e in a.reversed() {
         print(e)
         print("Value: \(e)")
       }
@@ -135,16 +147,16 @@ struct _Prespecialize {
     // Force pre-specialization of arrays with elements of different
     // character and unicode scalar types.
     _createArrayUser("a" as Character)
-    _createArrayUser("a" as UnicodeScalar)
+    _createArrayUser("a" as Unicode.Scalar)
     _createArrayUserWithoutSorting("a".utf8)
     _createArrayUserWithoutSorting("a".utf16)
     _createArrayUserWithoutSorting("a".unicodeScalars)
-    _createArrayUserWithoutSorting("a".characters)
+    _createArrayUserWithoutSorting("a")
   }
 
   // Force pre-specialization of Range<Int>
   @discardableResult
-  static internal func _specializeRanges() -> Int {
+  internal static func _specializeRanges() -> Int {
     let a = [Int](repeating: 1, count: 10)
     var count = 0
     // Specialize Range for integers
@@ -159,9 +171,9 @@ struct _Prespecialize {
   }
 }
 
-// Mark with optimize.sil.never to make sure its not get
+// Mark with optimize(none) to make sure its not get
 // rid of by dead function elimination. 
-@_semantics("optimize.sil.never")
+@_optimize(none)
 internal func _swift_forcePrespecializations() {
   _Prespecialize._specializeArrays()
   _Prespecialize._specializeRanges()

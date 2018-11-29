@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -16,7 +16,7 @@ import simd
 
 
 @available(iOS, introduced: 9.0)
-@available(OSX, introduced: 10.11)
+@available(macOS, introduced: 10.11)
 @available(tvOS, introduced: 9.0)
 extension GKPath {
   /// Creates a path from an array of points
@@ -31,7 +31,7 @@ extension GKPath {
 
 
 @available(iOS, introduced: 10.0)
-@available(OSX, introduced: 10.12)
+@available(macOS, introduced: 10.12)
 @available(tvOS, introduced: 10.0)
 extension GKPath {
   /// Creates a path from an array of points
@@ -45,7 +45,7 @@ extension GKPath {
 }
 
 @available(iOS, introduced: 9.0)
-@available(OSX, introduced: 10.11)
+@available(macOS, introduced: 10.11)
 @available(tvOS, introduced: 9.0)
 extension GKPolygonObstacle {
   /// Creates a polygon obstacle with an array of points.
@@ -57,7 +57,7 @@ extension GKPolygonObstacle {
 }
 
 @available(iOS, introduced: 9.0)
-@available(OSX, introduced: 10.11)
+@available(macOS, introduced: 10.11)
 @available(tvOS, introduced: 9.0)
 extension GKEntity {
   /// Gets the component of the indicated class.  Returns nil if entity does not have this component
@@ -79,7 +79,7 @@ internal protocol _SwiftGKStateMachineLike {
 }
 
 @available(iOS, introduced: 9.0)
-@available(OSX, introduced: 10.11)
+@available(macOS, introduced: 10.11)
 @available(tvOS, introduced: 9.0)
 extension GKStateMachine {
   /// Gets the state of the indicated class.  Returns nil if the state machine does not have this state.

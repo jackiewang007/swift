@@ -2,11 +2,11 @@
 #
 # This source file is part of the Swift.org open source project
 #
-# Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+# Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 # Licensed under Apache License v2.0 with Runtime Library Exception
 #
-# See http://swift.org/LICENSE.txt for license information
-# See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+# See https://swift.org/LICENSE.txt for license information
+# See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 #
 # ----------------------------------------------------------------------------
 #
@@ -92,8 +92,13 @@ class CMake(object):
             sanitizers.append('Undefined')
         if args.enable_tsan:
             sanitizers.append('Thread')
+        if args.enable_lsan:
+            sanitizers.append('Leaks')
         if sanitizers:
             define("LLVM_USE_SANITIZER", ";".join(sanitizers))
+
+        if args.enable_sanitize_coverage:
+            define("LLVM_USE_SANITIZE_COVERAGE", "ON")
 
         if args.export_compile_commands:
             define("CMAKE_EXPORT_COMPILE_COMMANDS", "ON")
@@ -106,18 +111,25 @@ class CMake(object):
         else:
             define("CMAKE_C_COMPILER:PATH", toolchain.cc)
             define("CMAKE_CXX_COMPILER:PATH", toolchain.cxx)
+            define("CMAKE_LIBTOOL:PATH", toolchain.libtool)
 
         if args.cmake_generator == 'Xcode':
             define("CMAKE_CONFIGURATION_TYPES",
                    "Debug;Release;MinSizeRel;RelWithDebInfo")
 
-        if args.clang_compiler_version:
-            major, minor, patch, _ = args.clang_compiler_version.components
+        if args.clang_user_visible_version:
+            major, minor, patch = \
+                args.clang_user_visible_version.components[0:3]
             define("LLVM_VERSION_MAJOR:STRING", major)
             define("LLVM_VERSION_MINOR:STRING", minor)
             define("LLVM_VERSION_PATCH:STRING", patch)
+            define("CLANG_VERSION_MAJOR:STRING", major)
+            define("CLANG_VERSION_MINOR:STRING", minor)
+            define("CLANG_VERSION_PATCH:STRING", patch)
 
         if args.build_ninja and args.cmake_generator == 'Ninja':
+            define('CMAKE_MAKE_PROGRAM', toolchain.ninja)
+        elif args.cmake_generator == 'Ninja' and toolchain.ninja is not None:
             define('CMAKE_MAKE_PROGRAM', toolchain.ninja)
 
         return options

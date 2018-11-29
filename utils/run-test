@@ -3,11 +3,11 @@
 #
 # This source file is part of the Swift.org open source project
 #
-# Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+# Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 # Licensed under Apache License v2.0 with Runtime Library Exception
 #
-# See http://swift.org/LICENSE.txt for license information
-# See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+# See https://swift.org/LICENSE.txt for license information
+# See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 
 from __future__ import print_function
 
@@ -17,13 +17,16 @@ import os
 import shutil
 import sys
 
-sys.path.append(os.path.dirname(__file__))
-sys.path.append(os.path.join(os.path.dirname(__file__), 'swift_build_support'))
+from swift_build_support.swift_build_support import (
+    arguments,
+    shell
+)
 
-from SwiftBuildSupport import SWIFT_SOURCE_ROOT  # noqa (E402)
-from swift_build_support import arguments  # noqa (E402)
-from swift_build_support import shell  # noqa (E402)
-from swift_build_support.targets import StdlibDeploymentTarget  # noqa (E402)
+from swift_build_support.swift_build_support.SwiftBuildSupport import \
+    SWIFT_SOURCE_ROOT
+
+from swift_build_support.swift_build_support.targets import \
+    StdlibDeploymentTarget
 
 
 TEST_MODES = [
@@ -39,6 +42,7 @@ TEST_SUBSETS = [
     'all',
     'only_validation',
     'only_long',
+    'only_stress',
 ]
 
 SWIFT_SOURCE_DIR = os.path.join(SWIFT_SOURCE_ROOT, 'swift')
@@ -171,6 +175,7 @@ def main():
         # build_dir.
         paths = args.paths
         if not paths:
+            parser.print_usage()
             error_exit("error: too few arguments")
 
         if args.build != 'skip':
@@ -243,6 +248,7 @@ def main():
 
     # Do execute test
     shell.call(test_cmd)
+
 
 if __name__ == "__main__":
     main()

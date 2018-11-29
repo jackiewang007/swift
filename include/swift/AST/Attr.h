@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -17,30 +17,39 @@
 #ifndef SWIFT_ATTR_H
 #define SWIFT_ATTR_H
 
+#include "swift/Basic/InlineBitfield.h"
 #include "swift/Basic/SourceLoc.h"
 #include "swift/Basic/UUID.h"
 #include "swift/Basic/STLExtras.h"
 #include "swift/Basic/Range.h"
+#include "swift/Basic/OptimizationMode.h"
 #include "swift/Basic/Version.h"
 #include "swift/AST/Identifier.h"
 #include "swift/AST/AttrKind.h"
 #include "swift/AST/ConcreteDeclRef.h"
+#include "swift/AST/DeclNameLoc.h"
 #include "swift/AST/KnownProtocols.h"
 #include "swift/AST/Ownership.h"
 #include "swift/AST/PlatformKind.h"
+#include "swift/AST/Requirement.h"
+#include "swift/AST/TypeLoc.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/TrailingObjects.h"
-#include "clang/Basic/VersionTuple.h"
+#include "llvm/Support/VersionTuple.h"
 
 namespace swift {
 class ASTPrinter;
 class ASTContext;
 struct PrintOptions;
 class Decl;
+class AbstractFunctionDecl;
+class FuncDecl;
 class ClassDecl;
-struct TypeLoc;
+class GenericFunctionType;
+class LazyConformanceLoader;
+class TrailingWhereClause;
 
 /// TypeAttributes - These are attributes that may be applied to types.
 class TypeAttributes {
@@ -52,6 +61,7 @@ public:
   /// If this is an empty attribute specifier, then this will be an invalid loc.
   SourceLoc AtLoc;
   Optional<StringRef> convention = None;
+  Optional<StringRef> conventionWitnessMethodProtocol = None;
 
   // For an opened existential type, the known ID.
   Optional<UUID> OpenedID;
@@ -98,19 +108,21 @@ public:
   
   bool hasConvention() const { return convention.hasValue(); }
   StringRef getConvention() const { return *convention; }
-  
-  bool hasOwnership() const { return getOwnership() != Ownership::Strong; }
-  Ownership getOwnership() const {
-    if (has(TAK_sil_weak)) return Ownership::Weak;
-    if (has(TAK_sil_unowned)) return Ownership::Unowned;
-    if (has(TAK_sil_unmanaged)) return Ownership::Unmanaged;
-    return Ownership::Strong;
+
+  bool hasOwnership() const {
+    return getOwnership() != ReferenceOwnership::Strong;
+  }
+  ReferenceOwnership getOwnership() const {
+#define REF_STORAGE(Name, name, ...) \
+    if (has(TAK_sil_##name)) return ReferenceOwnership::Name;
+#include "swift/AST/ReferenceStorage.def"
+    return ReferenceOwnership::Strong;
   }
   
   void clearOwnership() {
-    clearAttribute(TAK_sil_weak);
-    clearAttribute(TAK_sil_unowned);
-    clearAttribute(TAK_sil_unmanaged);
+#define REF_STORAGE(Name, name, ...) \
+    clearAttribute(TAK_sil_##name);
+#include "swift/AST/ReferenceStorage.def"
   }
 
   bool hasOpenedID() const { return OpenedID.hasValue(); }
@@ -169,167 +181,198 @@ enum class DeclKind : uint8_t;
   /// Represents one declaration attribute.
 class DeclAttribute : public AttributeBase {
   friend class DeclAttributes;
+
 protected:
-  class DeclAttrBitFields {
-    friend class DeclAttribute;
-
-    // The kind.
-    unsigned Kind : 8;
-
-    // Whether this attribute was implicitly added.
-    unsigned Implicit : 1;
-
-    unsigned Invalid : 1;
-  };
-  enum { NumDeclAttrBits = 10 };
-  static_assert(NumDeclAttrBits <= 32, "fits in an unsigned");
-
-  class ObjCAttrBitFields {
-    friend class ObjCAttr;
-    unsigned : NumDeclAttrBits;
-
-    /// Whether this attribute has location information that trails the main
-    /// record, which contains the locations of the parentheses and any names.
-    unsigned HasTrailingLocationInfo : 1;
-
-    /// Whether the name is implicit, produced as the result of caching.
-    unsigned ImplicitName : 1;
-  };
-  enum { NumObjCAttrBits = NumDeclAttrBits + 2 };
-  static_assert(NumObjCAttrBits <= 32, "fits in an unsigned");
-
-  class AccessibilityAttrBitFields {
-    friend class AbstractAccessibilityAttr;
-    unsigned : NumDeclAttrBits;
-
-    unsigned AccessLevel : 3;
-  };
-  enum { NumAccessibilityAttrBits = NumDeclAttrBits + 3 };
-  static_assert(NumAccessibilityAttrBits <= 32, "fits in an unsigned");
-
-  class AutoClosureAttrBitFields {
-    friend class AutoClosureAttr;
-    unsigned : NumDeclAttrBits;
-
-    unsigned Escaping : 1;
-  };
-  enum { NumAutoClosureAttrBits = NumDeclAttrBits + 1 };
-  static_assert(NumAutoClosureAttrBits <= 32, "fits in an unsigned");
-
   union {
-    DeclAttrBitFields DeclAttrBits;
-    ObjCAttrBitFields ObjCAttrBits;
-    AccessibilityAttrBitFields AccessibilityAttrBits;
-    AutoClosureAttrBitFields AutoClosureAttrBits;
-  };
+    uint64_t OpaqueBits;
+
+    SWIFT_INLINE_BITFIELD_BASE(DeclAttribute, bitmax(NumDeclAttrKindBits,8)+1+1,
+      Kind : bitmax(NumDeclAttrKindBits,8),
+      // Whether this attribute was implicitly added.
+      Implicit : 1,
+
+      Invalid : 1
+    );
+
+    SWIFT_INLINE_BITFIELD(ObjCAttr, DeclAttribute, 1+1+1,
+      /// Whether this attribute has location information that trails the main
+      /// record, which contains the locations of the parentheses and any names.
+      HasTrailingLocationInfo : 1,
+
+      /// Whether the name is implicit, produced as the result of caching.
+      ImplicitName : 1,
+
+      /// Whether the @objc was inferred using Swift 3's deprecated inference
+      /// rules.
+      Swift3Inferred : 1
+    );
+
+    SWIFT_INLINE_BITFIELD(DynamicReplacementAttr, DeclAttribute, 1,
+      /// Whether this attribute has location information that trails the main
+      /// record, which contains the locations of the parentheses and any names.
+      HasTrailingLocationInfo : 1
+    );
+
+    SWIFT_INLINE_BITFIELD(AbstractAccessControlAttr, DeclAttribute, 3,
+      AccessLevel : 3
+    );
+
+    SWIFT_INLINE_BITFIELD_FULL(AlignmentAttr, DeclAttribute, 32,
+      : NumPadBits,
+      // The alignment value.
+      Value : 32
+    );
+
+    SWIFT_INLINE_BITFIELD(ClangImporterSynthesizedTypeAttr, DeclAttribute, 1,
+      kind : 1
+    );
+
+    SWIFT_INLINE_BITFIELD(EffectsAttr, DeclAttribute, NumEffectsKindBits,
+      kind : NumEffectsKindBits
+    );
+
+    SWIFT_INLINE_BITFIELD(InlineAttr, DeclAttribute, NumInlineKindBits,
+      kind : NumInlineKindBits
+    );
+
+    SWIFT_INLINE_BITFIELD(OptimizeAttr, DeclAttribute, NumOptimizationModeBits,
+      mode : NumOptimizationModeBits
+    );
+
+    SWIFT_INLINE_BITFIELD(ReferenceOwnershipAttr, DeclAttribute,
+                          NumReferenceOwnershipBits,
+      ownership : NumReferenceOwnershipBits
+    );
+
+    SWIFT_INLINE_BITFIELD_FULL(SpecializeAttr, DeclAttribute, 1+1+32,
+      exported : 1,
+      kind : 1,
+      : NumPadBits,
+      numRequirements : 32
+    );
+
+    SWIFT_INLINE_BITFIELD(SynthesizedProtocolAttr, DeclAttribute,
+                          NumKnownProtocolKindBits,
+      kind : NumKnownProtocolKindBits
+    );
+  } Bits;
 
   DeclAttribute *Next = nullptr;
 
   DeclAttribute(DeclAttrKind DK, SourceLoc AtLoc, SourceRange Range,
                 bool Implicit) : AttributeBase(AtLoc, Range) {
-    DeclAttrBits.Kind = static_cast<unsigned>(DK);
-    DeclAttrBits.Implicit = Implicit;
-    DeclAttrBits.Invalid = 0;
+    Bits.OpaqueBits = 0;
+    Bits.DeclAttribute.Kind = static_cast<unsigned>(DK);
+    Bits.DeclAttribute.Implicit = Implicit;
+    Bits.DeclAttribute.Invalid = false;
   }
 
+private:
+  // NOTE: We cannot use DeclKind due to layering. Even if we could, there is no
+  // guarantee that the first DeclKind starts at zero. This is only used to
+  // build "OnXYZ" flags.
+  enum class DeclKindIndex : unsigned {
+#define DECL(Name, _) Name,
+#define LAST_DECL(Name) Last_Decl = Name
+#include "swift/AST/DeclNodes.def"
+  };
+
 public:
-  enum DeclAttrOptions {
+  enum DeclAttrOptions : uint64_t {
+    // There is one entry for each DeclKind, and some higher level buckets
+    // below. These are used in Attr.def to control which kinds of declarations
+    // an attribute can be attached to.
+#define DECL(Name, _) On##Name = 1ull << unsigned(DeclKindIndex::Name),
+#include "swift/AST/DeclNodes.def"
+
+    // Abstract class aggregations for use in Attr.def.
+    OnValue = 0
+#define DECL(Name, _)
+#define VALUE_DECL(Name, _) |On##Name
+#include "swift/AST/DeclNodes.def"
+    ,
+
+    OnNominalType = 0
+#define DECL(Name, _)
+#define NOMINAL_TYPE_DECL(Name, _) |On##Name
+#include "swift/AST/DeclNodes.def"
+    ,
+    OnConcreteNominalType = OnNominalType & ~OnProtocol,
+    OnGenericType = OnNominalType | OnTypeAlias,
+
+    OnAbstractFunction = 0
+#define DECL(Name, _)
+#define ABSTRACT_FUNCTION_DECL(Name, _) |On##Name
+#include "swift/AST/DeclNodes.def"
+    ,
+
+    OnOperator = 0
+#define DECL(Name, _)
+#define OPERATOR_DECL(Name, _) |On##Name
+#include "swift/AST/DeclNodes.def"
+    ,
+
+    OnAnyDecl = 0
+#define DECL(Name, _) |On##Name
+#include "swift/AST/DeclNodes.def"
+    ,
+
     /// True if multiple instances of this attribute are allowed on a single
     /// declaration.
-    AllowMultipleAttributes = 1 << 0,
+    AllowMultipleAttributes = 1ull << (unsigned(DeclKindIndex::Last_Decl) + 1),
 
     /// True if this is a decl modifier - i.e., that it should not be spelled
     /// with an @.
-    DeclModifier = 1 << 1,
+    DeclModifier = 1ull << (unsigned(DeclKindIndex::Last_Decl) + 2),
 
     /// True if this is a long attribute that should be printed on its own line.
     ///
     /// Currently has no effect on DeclModifier attributes.
-    LongAttribute = 1 << 2,
+    LongAttribute = 1ull << (unsigned(DeclKindIndex::Last_Decl) + 3),
 
     /// True if this shouldn't be serialized.
-    NotSerialized = 1 << 3,
+    NotSerialized = 1ull << (unsigned(DeclKindIndex::Last_Decl) + 4),
     
     /// True if this attribute is only valid when parsing a .sil file.
-    SILOnly = 1 << 4,
+    SILOnly = 1ull << (unsigned(DeclKindIndex::Last_Decl) + 5),
 
     /// The attribute should be reported by parser as unknown.
-    RejectByParser = 1 << 5,
+    RejectByParser = 1ull << (unsigned(DeclKindIndex::Last_Decl) + 6),
 
     /// Whether client code cannot use the attribute.
-    UserInaccessible = 1 << 6,
-
-    // There is one entry for each DeclKind here, and some higher level buckets
-    // down below.  These are used in Attr.def to control which kinds of
-    // declarations an attribute can be attached to.
-    OnPrecedenceGroup  = 1 << 7,
-    OnImport           = 1 << 8,
-    OnExtension        = 1 << 9,
-    OnPatternBinding   = 1 << 10,
-    OnEnumCase         = 1 << 11,
-    OnTopLevelCode     = 1 << 12,
-    OnIfConfig         = 1 << 13,
-    OnInfixOperator    = 1 << 14,  // "infix operator"
-    OnPrefixOperator   = 1 << 15,  // "prefix operator"
-    OnPostfixOperator  = 1 << 16,  // "postfix operator"
-
-    OnEnum             = 1 << 17,
-    OnStruct           = 1 << 18,
-    OnClass            = 1 << 19,
-    OnProtocol         = 1 << 20,
-    OnTypeAlias        = 1 << 21,
-    OnVar              = 1 << 22,
-    OnSubscript        = 1 << 23,
-
-    OnConstructor      = 1 << 24,
-    OnDestructor       = 1 << 25,
-    OnFunc             = 1 << 26,
-    OnEnumElement      = 1 << 27,
-
-    OnGenericTypeParam = 1 << 28,
-    OnAssociatedType   = 1 << 29,
-    OnParam            = 1 << 30,
-    OnModule           = 1 << 31,
-
-    // More coarse-grained aggregations for use in Attr.def.
-    OnOperator = OnInfixOperator|OnPrefixOperator|OnPostfixOperator,
-
-    OnAnyDecl = OnImport|OnExtension|OnPatternBinding|OnEnumCase|
-                OnTopLevelCode|OnIfConfig|OnInfixOperator|OnPrefixOperator|
-                OnPostfixOperator|OnEnum|OnStruct|OnClass|OnProtocol|
-                OnTypeAlias|OnVar|OnSubscript|OnConstructor|OnDestructor|
-                OnFunc|OnEnumElement|OnGenericTypeParam|OnAssociatedType|
-                OnParam|OnPrecedenceGroup
+    UserInaccessible = 1ull << (unsigned(DeclKindIndex::Last_Decl) + 7),
   };
 
-  static unsigned getOptions(DeclAttrKind DK);
+  LLVM_READNONE
+  static uint64_t getOptions(DeclAttrKind DK);
 
-  unsigned getOptions() const {
+  uint64_t getOptions() const {
     return getOptions(getKind());
   }
 
   /// Prints this attribute (if applicable), returning `true` if anything was
   /// printed.
-  bool printImpl(ASTPrinter &Printer, const PrintOptions &Options) const;
+  bool printImpl(ASTPrinter &Printer, const PrintOptions &Options,
+                 const Decl *D = nullptr) const;
 
 public:
   DeclAttrKind getKind() const {
-    return static_cast<DeclAttrKind>(DeclAttrBits.Kind);
+    return static_cast<DeclAttrKind>(Bits.DeclAttribute.Kind);
   }
 
   /// Whether this attribute was implicitly added.
-  bool isImplicit() const { return DeclAttrBits.Implicit; }
+  bool isImplicit() const { return Bits.DeclAttribute.Implicit; }
 
   /// Set whether this attribute was implicitly added.
-  void setImplicit(bool Implicit) {
-    DeclAttrBits.Implicit = Implicit;
+  void setImplicit(bool Implicit = true) {
+    Bits.DeclAttribute.Implicit = Implicit;
   }
 
   /// Returns true if this attribute was find to be invalid in some way by
   /// semantic analysis.  In that case, the attribute should not be considered,
   /// the attribute node should be only used to retrieve source information.
-  bool isInvalid() const { return DeclAttrBits.Invalid; }
-  void setInvalid() { DeclAttrBits.Invalid = true; }
+  bool isInvalid() const { return Bits.DeclAttribute.Invalid; }
+  void setInvalid() { Bits.DeclAttribute.Invalid = true; }
 
   bool isValid() const { return !isInvalid(); }
 
@@ -340,10 +383,11 @@ public:
   }
 
   /// Print the attribute to the provided ASTPrinter.
-  void print(ASTPrinter &Printer, const PrintOptions &Options) const;
+  void print(ASTPrinter &Printer, const PrintOptions &Options,
+             const Decl *D = nullptr) const;
 
   /// Print the attribute to the provided stream.
-  void print(llvm::raw_ostream &OS) const;
+  void print(llvm::raw_ostream &OS, const Decl *D = nullptr) const;
 
   /// Returns true if this attribute can appear on the specified decl.  This is
   /// controlled by the flags in Attr.def.
@@ -351,6 +395,7 @@ public:
     return canAttributeAppearOnDecl(getKind(), D);
   }
 
+  LLVM_READONLY
   static bool canAttributeAppearOnDecl(DeclAttrKind DK, const Decl *D);
 
   /// Returns true if multiple instances of an attribute kind
@@ -404,6 +449,7 @@ public:
     return isNotSerialized(getKind());
   }
 
+  LLVM_READNONE
   static bool canAttributeAppearOnDeclKind(DeclAttrKind DAK, DeclKind DK);
 
   /// Returns the source name of the attribute, without the @ or any arguments.
@@ -505,11 +551,11 @@ class AlignmentAttr : public DeclAttribute {
 public:
   AlignmentAttr(unsigned Value, SourceLoc AtLoc, SourceRange Range,
                 bool Implicit)
-    : DeclAttribute(DAK_Alignment, AtLoc, Range, Implicit),
-      Value(Value) {}
-  
-  // The alignment value.
-  const unsigned Value;
+      : DeclAttribute(DAK_Alignment, AtLoc, Range, Implicit) {
+    Bits.AlignmentAttr.Value = Value;
+  }
+
+  unsigned getValue() const { return Bits.AlignmentAttr.Value; }
   
   static bool classof(const DeclAttribute *DA) {
     return DA->getKind() == DAK_Alignment;
@@ -578,21 +624,24 @@ enum class PlatformAgnosticAvailabilityKind {
 class AvailableAttr : public DeclAttribute {
 public:
 #define INIT_VER_TUPLE(X)\
-  X(X.empty() ? Optional<clang::VersionTuple>() : X)
+  X(X.empty() ? Optional<llvm::VersionTuple>() : X)
 
   AvailableAttr(SourceLoc AtLoc, SourceRange Range,
                    PlatformKind Platform,
                    StringRef Message, StringRef Rename,
-                   const clang::VersionTuple &Introduced,
-                   const clang::VersionTuple &Deprecated,
-                   const clang::VersionTuple &Obsoleted,
+                   const llvm::VersionTuple &Introduced,
+                   SourceRange IntroducedRange,
+                   const llvm::VersionTuple &Deprecated,
+                   SourceRange DeprecatedRange,
+                   const llvm::VersionTuple &Obsoleted,
+                   SourceRange ObsoletedRange,
                    PlatformAgnosticAvailabilityKind PlatformAgnostic,
                    bool Implicit)
     : DeclAttribute(DAK_Available, AtLoc, Range, Implicit),
       Message(Message), Rename(Rename),
-      INIT_VER_TUPLE(Introduced),
-      INIT_VER_TUPLE(Deprecated),
-      INIT_VER_TUPLE(Obsoleted),
+      INIT_VER_TUPLE(Introduced), IntroducedRange(IntroducedRange),
+      INIT_VER_TUPLE(Deprecated), DeprecatedRange(DeprecatedRange),
+      INIT_VER_TUPLE(Obsoleted), ObsoletedRange(ObsoletedRange),
       PlatformAgnostic(PlatformAgnostic),
       Platform(Platform)
   {}
@@ -611,13 +660,22 @@ public:
   const StringRef Rename;
 
   /// Indicates when the symbol was introduced.
-  const Optional<clang::VersionTuple> Introduced;
+  const Optional<llvm::VersionTuple> Introduced;
+
+  /// Indicates where the Introduced version was specified.
+  const SourceRange IntroducedRange;
 
   /// Indicates when the symbol was deprecated.
-  const Optional<clang::VersionTuple> Deprecated;
+  const Optional<llvm::VersionTuple> Deprecated;
+
+  /// Indicates where the Deprecated version was specified.
+  const SourceRange DeprecatedRange;
 
   /// Indicates when the symbol was obsoleted.
-  const Optional<clang::VersionTuple> Obsoleted;
+  const Optional<llvm::VersionTuple> Obsoleted;
+
+  /// Indicates where the Obsoleted version was specified.
+  const SourceRange ObsoletedRange;
 
   /// Indicates if the declaration has platform-agnostic availability.
   const PlatformAgnosticAvailabilityKind PlatformAgnostic;
@@ -675,8 +733,8 @@ public:
   createPlatformAgnostic(ASTContext &C, StringRef Message, StringRef Rename = "",
                       PlatformAgnosticAvailabilityKind Reason
                          = PlatformAgnosticAvailabilityKind::Unavailable,
-                         clang::VersionTuple Obsoleted
-                         = clang::VersionTuple());
+                         llvm::VersionTuple Obsoleted
+                         = llvm::VersionTuple());
 
   static bool classof(const DeclAttribute *DA) {
     return DA->getKind() == DAK_Available;
@@ -697,8 +755,9 @@ class ObjCAttr final : public DeclAttribute,
     : DeclAttribute(DAK_ObjC, SourceLoc(), SourceRange(), /*Implicit=*/true),
       NameData(nullptr)
   {
-    ObjCAttrBits.HasTrailingLocationInfo = false;
-    ObjCAttrBits.ImplicitName = implicitName;
+    Bits.ObjCAttr.HasTrailingLocationInfo = false;
+    Bits.ObjCAttr.ImplicitName = implicitName;
+    Bits.ObjCAttr.Swift3Inferred = false;
 
     if (name) {
       NameData = name->getOpaqueValue();
@@ -711,7 +770,7 @@ class ObjCAttr final : public DeclAttribute,
 
   /// Determine whether this attribute has trailing location information.
   bool hasTrailingLocationInfo() const {
-    return ObjCAttrBits.HasTrailingLocationInfo;
+    return Bits.ObjCAttr.HasTrailingLocationInfo;
   }
 
   /// Retrieve the trailing location information.
@@ -789,7 +848,7 @@ public:
 
   /// Determine whether the name associated with this attribute was
   /// implicit.
-  bool isNameImplicit() const { return ObjCAttrBits.ImplicitName; }
+  bool isNameImplicit() const { return Bits.ObjCAttr.ImplicitName; }
 
   /// Set the name of this entity.
   void setName(ObjCSelector name, bool implicit) {
@@ -799,11 +858,23 @@ public:
     if (hasTrailingLocationInfo() &&
         (!hasName() ||
          getName()->getNumSelectorPieces() < name.getNumSelectorPieces())) {
-      ObjCAttrBits.HasTrailingLocationInfo = false;
+      Bits.ObjCAttr.HasTrailingLocationInfo = false;
     }
 
     NameData = name.getOpaqueValue();
-    ObjCAttrBits.ImplicitName = implicit;
+    Bits.ObjCAttr.ImplicitName = implicit;
+  }
+
+  /// Determine whether this attribute was inferred based on Swift 3's
+  /// deprecated @objc inference rules.
+  bool isSwift3Inferred() const {
+    return Bits.ObjCAttr.Swift3Inferred;
+  }
+
+  /// Set whether this attribute was inferred based on Swift 3's deprecated
+  /// @objc inference rules.
+  void setSwift3Inferred(bool inferred = true) {
+    Bits.ObjCAttr.Swift3Inferred = inferred;
   }
 
   /// Clear the name of this entity.
@@ -830,101 +901,192 @@ public:
   }
 };
 
-/// Represents any sort of accessibility modifier.
-class AbstractAccessibilityAttr : public DeclAttribute {
-protected:
-  AbstractAccessibilityAttr(DeclAttrKind DK, SourceLoc atLoc, SourceRange range,
-                            Accessibility access, bool implicit)
-      : DeclAttribute(DK, atLoc, range, implicit) {
-    AccessibilityAttrBits.AccessLevel = static_cast<unsigned>(access);
-    assert(getAccess() == access && "not enough bits for accessibility");
+class PrivateImportAttr final
+: public DeclAttribute {
+  StringRef SourceFile;
+
+  PrivateImportAttr(SourceLoc atLoc, SourceRange baseRange,
+                    StringRef sourceFile, SourceRange parentRange);
+
+public:
+  static PrivateImportAttr *create(ASTContext &Ctxt, SourceLoc AtLoc,
+                                   SourceLoc PrivateLoc, SourceLoc LParenLoc,
+                                   StringRef sourceFile, SourceLoc RParenLoc);
+
+  StringRef getSourceFile() const {
+    return SourceFile;
+  }
+  static bool classof(const DeclAttribute *DA) {
+    return DA->getKind() == DAK_PrivateImport;
+  }
+};
+
+/// The @_dynamicReplacement(for:) attribute.
+class DynamicReplacementAttr final
+    : public DeclAttribute,
+      private llvm::TrailingObjects<DynamicReplacementAttr, SourceLoc> {
+  friend TrailingObjects;
+
+  DeclName ReplacedFunctionName;
+  AbstractFunctionDecl *ReplacedFunction;
+
+  /// Create an @_dynamicReplacement(for:) attribute written in the source.
+  DynamicReplacementAttr(SourceLoc atLoc, SourceRange baseRange,
+                         DeclName replacedFunctionName, SourceRange parenRange);
+
+  explicit DynamicReplacementAttr(DeclName name)
+      : DeclAttribute(DAK_DynamicReplacement, SourceLoc(), SourceRange(),
+                      /*Implicit=*/false),
+        ReplacedFunctionName(name), ReplacedFunction(nullptr) {
+    Bits.DynamicReplacementAttr.HasTrailingLocationInfo = false;
+  }
+
+  /// Retrieve the trailing location information.
+  MutableArrayRef<SourceLoc> getTrailingLocations() {
+    assert(Bits.DynamicReplacementAttr.HasTrailingLocationInfo);
+    unsigned length = 2;
+    return {getTrailingObjects<SourceLoc>(), length};
+  }
+
+  /// Retrieve the trailing location information.
+  ArrayRef<SourceLoc> getTrailingLocations() const {
+    assert(Bits.DynamicReplacementAttr.HasTrailingLocationInfo);
+    unsigned length = 2; // lParens, rParens
+    return {getTrailingObjects<SourceLoc>(), length};
   }
 
 public:
-  Accessibility getAccess() const {
-    return static_cast<Accessibility>(AccessibilityAttrBits.AccessLevel);
+  static DynamicReplacementAttr *
+  create(ASTContext &Context, SourceLoc AtLoc, SourceLoc DynReplLoc,
+         SourceLoc LParenLoc, DeclName replacedFunction, SourceLoc RParenLoc);
+
+  static DynamicReplacementAttr *create(ASTContext &ctx,
+                                        DeclName replacedFunction);
+
+  static DynamicReplacementAttr *create(ASTContext &ctx,
+                                        DeclName replacedFunction,
+                                        AbstractFunctionDecl *replacedFuncDecl);
+
+  DeclName getReplacedFunctionName() const {
+    return ReplacedFunctionName;
+  }
+
+  AbstractFunctionDecl *getReplacedFunction() const {
+    return ReplacedFunction;
+  }
+
+  void setReplacedFunction(AbstractFunctionDecl *f) {
+    assert(ReplacedFunction == nullptr);
+    ReplacedFunction = f;
+  }
+
+  /// Retrieve the location of the opening parentheses, if there is one.
+  SourceLoc getLParenLoc() const;
+
+  /// Retrieve the location of the closing parentheses, if there is one.
+  SourceLoc getRParenLoc() const;
+
+  static bool classof(const DeclAttribute *DA) {
+    return DA->getKind() == DAK_DynamicReplacement;
+  }
+};
+
+/// Represents any sort of access control modifier.
+class AbstractAccessControlAttr : public DeclAttribute {
+protected:
+  AbstractAccessControlAttr(DeclAttrKind DK, SourceLoc atLoc, SourceRange range,
+                            AccessLevel access, bool implicit)
+      : DeclAttribute(DK, atLoc, range, implicit) {
+    Bits.AbstractAccessControlAttr.AccessLevel = static_cast<unsigned>(access);
+    assert(getAccess() == access && "not enough bits for access control");
+  }
+
+public:
+  AccessLevel getAccess() const {
+    return static_cast<AccessLevel>(Bits.AbstractAccessControlAttr.AccessLevel);
   }
 
   static bool classof(const DeclAttribute *DA) {
-    return DA->getKind() == DAK_Accessibility ||
-           DA->getKind() == DAK_SetterAccessibility;
+    return DA->getKind() == DAK_AccessControl ||
+           DA->getKind() == DAK_SetterAccess;
   }
 };
 
 /// Represents a 'private', 'internal', or 'public' marker on a declaration.
-class AccessibilityAttr : public AbstractAccessibilityAttr {
+class AccessControlAttr : public AbstractAccessControlAttr {
 public:
-  AccessibilityAttr(SourceLoc atLoc, SourceRange range, Accessibility access,
+  AccessControlAttr(SourceLoc atLoc, SourceRange range, AccessLevel access,
                     bool implicit = false)
-      : AbstractAccessibilityAttr(DAK_Accessibility, atLoc, range, access,
+      : AbstractAccessControlAttr(DAK_AccessControl, atLoc, range, access,
                                   implicit) {}
 
   static bool classof(const DeclAttribute *DA) {
-    return DA->getKind() == DAK_Accessibility;
+    return DA->getKind() == DAK_AccessControl;
   }
 };
 
 /// Represents a 'private', 'internal', or 'public' marker for a setter on a
 /// declaration.
-class SetterAccessibilityAttr : public AbstractAccessibilityAttr {
+class SetterAccessAttr : public AbstractAccessControlAttr {
 public:
-  SetterAccessibilityAttr(SourceLoc atLoc, SourceRange range,
-                          Accessibility access, bool implicit = false)
-      : AbstractAccessibilityAttr(DAK_SetterAccessibility, atLoc, range, access,
+  SetterAccessAttr(SourceLoc atLoc, SourceRange range,
+                          AccessLevel access, bool implicit = false)
+      : AbstractAccessControlAttr(DAK_SetterAccess, atLoc, range, access,
                                   implicit) {}
 
   static bool classof(const DeclAttribute *DA) {
-    return DA->getKind() == DAK_SetterAccessibility;
-  }
-};
-
-/// Represents the autoclosure attribute.
-class AutoClosureAttr : public DeclAttribute {
-public:
-  AutoClosureAttr(SourceLoc atLoc, SourceRange range, bool escaping,
-                  bool implicit = false)
-    : DeclAttribute(DAK_AutoClosure, atLoc, range, implicit)
-  {
-    AutoClosureAttrBits.Escaping = escaping;
-  }
-
-  /// Determine whether this autoclosure is escaping.
-  bool isEscaping() const { return AutoClosureAttrBits.Escaping; }
-
-  static bool classof(const DeclAttribute *DA) {
-    return DA->getKind() == DAK_AutoClosure;
+    return DA->getKind() == DAK_SetterAccess;
   }
 };
 
 /// Represents an inline attribute.
 class InlineAttr : public DeclAttribute {
-  InlineKind Kind;
 public:
   InlineAttr(SourceLoc atLoc, SourceRange range, InlineKind kind)
-    : DeclAttribute(DAK_Inline, atLoc, range, /*Implicit=*/false), 
-      Kind(kind) {}
+      : DeclAttribute(DAK_Inline, atLoc, range, /*Implicit=*/false) {
+    Bits.InlineAttr.kind = unsigned(kind);
+  }
 
   InlineAttr(InlineKind kind)
     : InlineAttr(SourceLoc(), SourceRange(), kind) {}
 
-  InlineKind getKind() const { return Kind; }
+  InlineKind getKind() const { return InlineKind(Bits.InlineAttr.kind); }
   static bool classof(const DeclAttribute *DA) {
     return DA->getKind() == DAK_Inline;
   }
 };
 
+/// Represents the optimize attribute.
+class OptimizeAttr : public DeclAttribute {
+public:
+  OptimizeAttr(SourceLoc atLoc, SourceRange range, OptimizationMode mode)
+      : DeclAttribute(DAK_Optimize, atLoc, range, /*Implicit=*/false) {
+    Bits.OptimizeAttr.mode = unsigned(mode);
+  }
+
+  OptimizeAttr(OptimizationMode mode)
+    : OptimizeAttr(SourceLoc(), SourceRange(), mode) {}
+
+  OptimizationMode getMode() const {
+    return OptimizationMode(Bits.OptimizeAttr.mode);
+  }
+  static bool classof(const DeclAttribute *DA) {
+    return DA->getKind() == DAK_Optimize;
+  }
+};
+
 /// Represents the side effects attribute.
 class EffectsAttr : public DeclAttribute {
-  EffectsKind Kind;
 public:
   EffectsAttr(SourceLoc atLoc, SourceRange range, EffectsKind kind)
-  : DeclAttribute(DAK_Effects, atLoc, range, /*Implicit=*/false),
-  Kind(kind) {}
+      : DeclAttribute(DAK_Effects, atLoc, range, /*Implicit=*/false) {
+    Bits.EffectsAttr.kind = unsigned(kind);
+  }
 
   EffectsAttr(EffectsKind kind)
   : EffectsAttr(SourceLoc(), SourceRange(), kind) {}
 
-  EffectsKind getKind() const { return Kind; }
+  EffectsKind getKind() const { return EffectsKind(Bits.EffectsAttr.kind); }
   static bool classof(const DeclAttribute *DA) {
     return DA->getKind() == DAK_Effects;
   }
@@ -933,24 +1095,28 @@ public:
 
 
 /// Represents weak/unowned/unowned(unsafe) decl modifiers.
-class OwnershipAttr : public DeclAttribute {
-  const Ownership ownership;
+class ReferenceOwnershipAttr : public DeclAttribute {
 public:
-  OwnershipAttr(SourceRange range, Ownership kind)
-    : DeclAttribute(DAK_Ownership, range.Start, range, /*Implicit=*/false),
-      ownership(kind) {}
+  ReferenceOwnershipAttr(SourceRange range, ReferenceOwnership kind)
+      : DeclAttribute(DAK_ReferenceOwnership, range.Start, range,
+                      /*Implicit=*/false) {
+    Bits.ReferenceOwnershipAttr.ownership = unsigned(kind);
+  }
 
-  OwnershipAttr(Ownership kind) : OwnershipAttr(SourceRange(), kind) {}
+  ReferenceOwnershipAttr(ReferenceOwnership kind)
+      : ReferenceOwnershipAttr(SourceRange(), kind) {}
 
-  Ownership get() const { return ownership; }
+  ReferenceOwnership get() const {
+    return ReferenceOwnership(Bits.ReferenceOwnershipAttr.ownership);
+  }
 
   /// Returns a copy of this attribute without any source information.
-  OwnershipAttr *clone(ASTContext &context) const {
-    return new (context) OwnershipAttr(get());
+  ReferenceOwnershipAttr *clone(ASTContext &context) const {
+    return new (context) ReferenceOwnershipAttr(get());
   }
 
   static bool classof(const DeclAttribute *DA) {
-    return DA->getKind() == DAK_Ownership;
+    return DA->getKind() == DAK_ReferenceOwnership;
   }
 };
 
@@ -1005,19 +1171,26 @@ public:
 /// rather, it is introduced by the Clang importer to indicate
 /// synthesized conformances.
 class SynthesizedProtocolAttr : public DeclAttribute {
-  KnownProtocolKind ProtocolKind;
+  LazyConformanceLoader *Loader;
 
 public:
-  SynthesizedProtocolAttr(KnownProtocolKind protocolKind)
+  SynthesizedProtocolAttr(KnownProtocolKind protocolKind,
+                          LazyConformanceLoader *Loader)
     : DeclAttribute(DAK_SynthesizedProtocol, SourceLoc(), SourceRange(),
-                    /*Implicit=*/true),
-      ProtocolKind(protocolKind)
+                    /*Implicit=*/true), Loader(Loader)
   {
+    Bits.SynthesizedProtocolAttr.kind = unsigned(protocolKind);
   }
 
   /// Retrieve the known protocol kind naming the protocol to be
   /// synthesized.
-  KnownProtocolKind getProtocolKind() const { return ProtocolKind; }
+  KnownProtocolKind getProtocolKind() const {
+    return KnownProtocolKind(Bits.SynthesizedProtocolAttr.kind);
+  }
+
+  /// Retrieve the lazy loader that will be used to populate the
+  /// synthesized conformance.
+  LazyConformanceLoader *getLazyLoader() const { return Loader; }
 
   static bool classof(const DeclAttribute *DA) {
     return DA->getKind() == DAK_SynthesizedProtocol;
@@ -1027,30 +1200,198 @@ public:
 /// The @_specialize attribute, which forces specialization on the specified
 /// type list.
 class SpecializeAttr : public DeclAttribute {
-  unsigned numTypes;
-  ConcreteDeclRef specializedDecl;
+public:
+  // NOTE: When adding new kinds, you must update the inline bitfield macro.
+  enum class SpecializationKind {
+    Full,
+    Partial
+  };
 
-  TypeLoc *getTypeLocData() {
-    return reinterpret_cast<TypeLoc *>(this + 1);
+private:
+  TrailingWhereClause *trailingWhereClause;
+
+  Requirement *getRequirementsData() {
+    return reinterpret_cast<Requirement *>(this+1);
   }
 
   SpecializeAttr(SourceLoc atLoc, SourceRange Range,
-                 ArrayRef<TypeLoc> typeLocs);
+                 TrailingWhereClause *clause, bool exported,
+                 SpecializationKind kind);
+
+  SpecializeAttr(SourceLoc atLoc, SourceRange Range,
+                 ArrayRef<Requirement> requirements,
+                 bool exported,
+                 SpecializationKind kind);
 
 public:
   static SpecializeAttr *create(ASTContext &Ctx, SourceLoc atLoc,
-                                SourceRange Range, ArrayRef<TypeLoc> typeLocs);
+                                SourceRange Range, TrailingWhereClause *clause,
+                                bool exported, SpecializationKind kind);
 
-  ArrayRef<TypeLoc> getTypeLocs() const;
+  static SpecializeAttr *create(ASTContext &Ctx, SourceLoc atLoc,
+                                SourceRange Range,
+                                ArrayRef<Requirement> requirement,
+                                bool exported, SpecializationKind kind);
 
-  MutableArrayRef<TypeLoc> getTypeLocs();
+  TrailingWhereClause *getTrailingWhereClause() const;
 
-  ConcreteDeclRef getConcreteDecl() const { return specializedDecl; }
+  ArrayRef<Requirement> getRequirements() const;
 
-  void setConcreteDecl(ConcreteDeclRef ref) { specializedDecl = ref; }
+  MutableArrayRef<Requirement> getRequirements() {
+    return { getRequirementsData(), Bits.SpecializeAttr.numRequirements };
+  }
+
+  void setRequirements(ASTContext &Ctx, ArrayRef<Requirement> requirements);
+
+  bool isExported() const {
+    return Bits.SpecializeAttr.exported;
+  }
+
+  SpecializationKind getSpecializationKind() const {
+    return SpecializationKind(Bits.SpecializeAttr.kind);
+  }
+
+  bool isFullSpecialization() const {
+    return getSpecializationKind() == SpecializationKind::Full;
+  }
+
+  bool isPartialSpecialization() const {
+    return getSpecializationKind() == SpecializationKind::Partial;
+  }
 
   static bool classof(const DeclAttribute *DA) {
     return DA->getKind() == DAK_Specialize;
+  }
+};
+
+/// The @_implements attribute, which treats a decl as the implementation for
+/// some named protocol requirement (but otherwise not-visible by that name).
+class ImplementsAttr : public DeclAttribute {
+
+  TypeLoc ProtocolType;
+  DeclName MemberName;
+  DeclNameLoc MemberNameLoc;
+
+public:
+  ImplementsAttr(SourceLoc atLoc, SourceRange Range,
+                 TypeLoc ProtocolType,
+                 DeclName MemberName,
+                 DeclNameLoc MemberNameLoc);
+
+  static ImplementsAttr *create(ASTContext &Ctx, SourceLoc atLoc,
+                                SourceRange Range,
+                                TypeLoc ProtocolType,
+                                DeclName MemberName,
+                                DeclNameLoc MemberNameLoc);
+
+  TypeLoc getProtocolType() const;
+  TypeLoc &getProtocolType();
+  DeclName getMemberName() const { return MemberName; }
+  DeclNameLoc getMemberNameLoc() const { return MemberNameLoc; }
+
+  static bool classof(const DeclAttribute *DA) {
+    return DA->getKind() == DAK_Implements;
+  }
+};
+
+/// A limited variant of \c @objc that's used for classes with generic ancestry.
+class ObjCRuntimeNameAttr : public DeclAttribute {
+  static StringRef getSimpleName(const ObjCAttr &Original) {
+    assert(Original.hasName());
+    return Original.getName()->getSimpleName().str();
+  }
+public:
+  ObjCRuntimeNameAttr(StringRef Name, SourceLoc AtLoc, SourceRange Range,
+                      bool Implicit)
+    : DeclAttribute(DAK_ObjCRuntimeName, AtLoc, Range, Implicit),
+      Name(Name) {}
+
+  explicit ObjCRuntimeNameAttr(const ObjCAttr &Original)
+    : ObjCRuntimeNameAttr(getSimpleName(Original), Original.AtLoc,
+                          Original.Range, Original.isImplicit()) {}
+
+  const StringRef Name;
+
+  static bool classof(const DeclAttribute *DA) {
+    return DA->getKind() == DAK_ObjCRuntimeName;
+  }
+};
+
+/// Attribute that specifies a protocol conformance that has been restated
+/// (i.e., is redundant) but should still be emitted in Objective-C metadata.
+class RestatedObjCConformanceAttr : public DeclAttribute {
+public:
+  explicit RestatedObjCConformanceAttr(ProtocolDecl *proto)
+    : DeclAttribute(DAK_RestatedObjCConformance, SourceLoc(), SourceRange(),
+                    /*Implicit=*/true),
+      Proto(proto) {}
+
+  /// The protocol to which this type conforms.
+  ProtocolDecl * const Proto;
+
+  static bool classof(const DeclAttribute *DA) {
+    return DA->getKind() == DAK_RestatedObjCConformance;
+  }
+};
+
+/// Attached to type declarations synthesized by the Clang importer.
+///
+/// Used to control manglings.
+class ClangImporterSynthesizedTypeAttr : public DeclAttribute {
+public:
+  // NOTE: When adding new kinds, you must update the inline bitfield macro.
+  enum class Kind : char {
+    /// A struct synthesized by the importer to represent an NSError with a
+    /// particular domain, as specified by an enum with the \c ns_error_domain
+    /// Clang attribute.
+    ///
+    /// This one is for enums with names.
+    NSErrorWrapper,
+
+    /// A struct synthesized by the importer to represent an NSError with a
+    /// particular domain, as specified by an enum with the \c ns_error_domain
+    /// Clang attribute.
+    ///
+    /// This one is for anonymous enums that are immediately typedef'd, giving
+    /// them a unique name for linkage purposes according to the C++ standard.
+    NSErrorWrapperAnon,
+  };
+
+  /// The (Clang) name of the declaration that caused this type declaration to
+  /// be synthesized.
+  ///
+  /// Must be a valid Swift identifier as well, for mangling purposes.
+  const StringRef originalTypeName;
+
+  explicit ClangImporterSynthesizedTypeAttr(StringRef originalTypeName,
+                                            Kind kind)
+    : DeclAttribute(DAK_ClangImporterSynthesizedType, SourceLoc(),
+                    SourceRange(), /*Implicit=*/true),
+      originalTypeName(originalTypeName) {
+    assert(!originalTypeName.empty());
+    Bits.ClangImporterSynthesizedTypeAttr.kind = unsigned(kind);
+  }
+
+  Kind getKind() const {
+    return Kind(Bits.ClangImporterSynthesizedTypeAttr.kind);
+  }
+
+  StringRef getManglingName() const {
+    return manglingNameForKind(getKind());
+  }
+
+  static StringRef manglingNameForKind(Kind kind) {
+    switch (kind) {
+    case Kind::NSErrorWrapper:
+      return "e";
+    case Kind::NSErrorWrapperAnon:
+      return "E";
+    }
+    llvm_unreachable("unhandled kind");
+  }
+
+  static bool classof(const DeclAttribute *DA) {
+    return DA->getKind() == DAK_ClangImporterSynthesizedType;
   }
 };
 
@@ -1088,10 +1429,9 @@ public:
   }
 
   /// Determine whether there is a swiftVersionSpecific attribute that's
-  /// unavailable relative to the provided language version (defaulting to
-  /// current language version).
-  bool isUnavailableInSwiftVersion(const version::Version &effectiveVersion =
-           version::Version::getCurrentLanguageVersion()) const;
+  /// unavailable relative to the provided language version.
+  bool
+  isUnavailableInSwiftVersion(const version::Version &effectiveVersion) const;
 
   /// Returns the first @available attribute that indicates
   /// a declaration is unavailable, or null otherwise.
@@ -1101,8 +1441,9 @@ public:
   /// a declaration is deprecated on all deployment targets, or null otherwise.
   const AvailableAttr *getDeprecated(const ASTContext &ctx) const;
 
-  void dump() const;
-  void print(ASTPrinter &Printer, const PrintOptions &Options) const;
+  void dump(const Decl *D = nullptr) const;
+  void print(ASTPrinter &Printer, const PrintOptions &Options,
+             const Decl *D = nullptr) const;
 
   template <typename T, typename DERIVED>
   class iterator_base : public std::iterator<std::forward_iterator_tag, T *> {
@@ -1143,13 +1484,13 @@ public:
   /// Retrieve the first attribute of the given attribute class.
   template <typename ATTR>
   const ATTR *getAttribute(bool AllowInvalid = false) const {
-    return const_cast<DeclAttributes *>(this)->getAttribute<ATTR>();
+    return const_cast<DeclAttributes *>(this)->getAttribute<ATTR>(AllowInvalid);
   }
 
   template <typename ATTR>
   ATTR *getAttribute(bool AllowInvalid = false) {
     for (auto Attr : *this)
-      if (ATTR *SpecificAttr = dyn_cast<ATTR>(Attr))
+      if (auto *SpecificAttr = dyn_cast<ATTR>(Attr))
         if (SpecificAttr->isValid() || AllowInvalid)
           return SpecificAttr;
     return nullptr;
@@ -1192,7 +1533,7 @@ public:
 
   /// Return a range with all attributes in DeclAttributes with AttrKind
   /// ATTR.
-  template <typename ATTR, bool AllowInvalid>
+  template <typename ATTR, bool AllowInvalid = false>
   AttributeKindRange<ATTR, AllowInvalid> getAttributes() const {
     return AttributeKindRange<ATTR, AllowInvalid>(
         make_range(begin(), end()), ToAttributeKind<ATTR, AllowInvalid>());

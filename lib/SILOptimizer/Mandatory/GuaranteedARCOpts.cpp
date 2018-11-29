@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -14,14 +14,17 @@
 #include "swift/SILOptimizer/PassManager/Passes.h"
 #include "swift/SILOptimizer/PassManager/Transforms.h"
 #include "swift/SIL/SILVisitor.h"
+#include "llvm/ADT/Statistic.h"
 
 using namespace swift;
+
+STATISTIC(NumInstsEliminated, "Number of instructions eliminated");
 
 namespace {
 
 struct GuaranteedARCOptsVisitor
     : SILInstructionVisitor<GuaranteedARCOptsVisitor, bool> {
-  bool visitValueBase(ValueBase *V) { return false; }
+  bool visitSILInstruction(SILInstruction *I) { return false; }
   bool visitDestroyAddrInst(DestroyAddrInst *DAI);
   bool visitStrongReleaseInst(StrongReleaseInst *SRI);
   bool visitDestroyValueInst(DestroyValueInst *DVI);
@@ -32,8 +35,7 @@ struct GuaranteedARCOptsVisitor
 
 static SILBasicBlock::reverse_iterator
 getPrevReverseIterator(SILInstruction *I) {
-  auto Iter = std::next(I->getIterator());
-  return std::next(SILBasicBlock::reverse_iterator(Iter));
+  return std::next(I->getIterator().getReverse());
 }
 
 bool GuaranteedARCOptsVisitor::visitDestroyAddrInst(DestroyAddrInst *DAI) {
@@ -48,6 +50,7 @@ bool GuaranteedARCOptsVisitor::visitDestroyAddrInst(DestroyAddrInst *DAI) {
       if (CA->getSrc() == Operand && !CA->isTakeOfSrc()) {
         CA->setIsTakeOfSrc(IsTake);
         DAI->eraseFromParent();
+        NumInstsEliminated += 2;
         return true;
       }
     }
@@ -69,12 +72,32 @@ bool GuaranteedARCOptsVisitor::visitDestroyAddrInst(DestroyAddrInst *DAI) {
 
 static bool couldReduceStrongRefcount(SILInstruction *Inst) {
   // Simple memory accesses cannot reduce refcounts.
-  if (isa<LoadInst>(Inst) || isa<StoreInst>(Inst) ||
-      isa<RetainValueInst>(Inst) || isa<UnownedRetainInst>(Inst) ||
-      isa<UnownedReleaseInst>(Inst) || isa<StrongRetainUnownedInst>(Inst) ||
-      isa<StoreWeakInst>(Inst) || isa<StrongRetainInst>(Inst) ||
-      isa<AllocStackInst>(Inst) || isa<DeallocStackInst>(Inst))
+  switch (Inst->getKind()) {
+#define NEVER_LOADABLE_CHECKED_REF_STORAGE(Name, ...) \
+  case SILInstructionKind::Store##Name##Inst:
+#define ALWAYS_LOADABLE_CHECKED_REF_STORAGE(Name, ...) \
+  case SILInstructionKind::Name##RetainInst: \
+  case SILInstructionKind::Name##ReleaseInst: \
+  case SILInstructionKind::StrongRetain##Name##Inst: \
+  case SILInstructionKind::Copy##Name##ValueInst:
+#define SOMETIMES_LOADABLE_CHECKED_REF_STORAGE(Name, ...) \
+  NEVER_LOADABLE_CHECKED_REF_STORAGE(Name, "...") \
+  ALWAYS_LOADABLE_CHECKED_REF_STORAGE(Name, "...")
+#include "swift/AST/ReferenceStorage.def"
+  case SILInstructionKind::LoadInst:
+  case SILInstructionKind::StoreInst:
+  case SILInstructionKind::RetainValueInst:
+  case SILInstructionKind::StrongRetainInst:
+  case SILInstructionKind::AllocStackInst:
+  case SILInstructionKind::DeallocStackInst:
+  case SILInstructionKind::BeginAccessInst:
+  case SILInstructionKind::EndAccessInst:
+  case SILInstructionKind::BeginUnpairedAccessInst:
+  case SILInstructionKind::EndUnpairedAccessInst:
     return false;
+  default:
+    break;
+  }
 
   // Assign and copyaddr of trivial types cannot drop refcounts, and 'inits'
   // never can either.  Nontrivial ones can though, because the overwritten
@@ -106,8 +129,10 @@ static bool couldReduceStrongRefcount(SILInstruction *Inst) {
 bool GuaranteedARCOptsVisitor::visitStrongReleaseInst(StrongReleaseInst *SRI) {
   SILValue Operand = SRI->getOperand();
   // Release on a functionref is a noop.
-  if (isa<FunctionRefInst>(Operand)) {
+  if (isa<FunctionRefInst>(Operand) || isa<DynamicFunctionRefInst>(Operand) ||
+      isa<PreviousDynamicFunctionRefInst>(Operand)) {
     SRI->eraseFromParent();
+    ++NumInstsEliminated;
     return true;
   }
 
@@ -122,6 +147,7 @@ bool GuaranteedARCOptsVisitor::visitStrongReleaseInst(StrongReleaseInst *SRI) {
       if (SRA->getOperand() == Operand) {
         SRA->eraseFromParent();
         SRI->eraseFromParent();
+        NumInstsEliminated += 2;
         return true;
       }
       // Skip past unrelated retains.
@@ -149,6 +175,7 @@ bool GuaranteedARCOptsVisitor::visitDestroyValueInst(DestroyValueInst *DVI) {
         CVI->replaceAllUsesWith(CVI->getOperand());
         CVI->eraseFromParent();
         DVI->eraseFromParent();
+        NumInstsEliminated += 2;
         return true;
       }
       // Skip past unrelated retains.
@@ -175,6 +202,7 @@ bool GuaranteedARCOptsVisitor::visitReleaseValueInst(ReleaseValueInst *RVI) {
       if (SRA->getOperand() == Operand) {
         SRA->eraseFromParent();
         RVI->eraseFromParent();
+        NumInstsEliminated += 2;
         return true;
       }
       // Skip past unrelated retains.
@@ -196,6 +224,9 @@ bool GuaranteedARCOptsVisitor::visitReleaseValueInst(ReleaseValueInst *RVI) {
 
 namespace {
 
+// Even though this is a mandatory pass, it is rerun after deserialization in
+// case DiagnosticConstantPropagation exposed anything new in this assert
+// configuration.
 struct GuaranteedARCOpts : SILFunctionTransform {
   void run() override {
     GuaranteedARCOptsVisitor Visitor;
@@ -214,11 +245,9 @@ struct GuaranteedARCOpts : SILFunctionTransform {
       invalidateAnalysis(SILAnalysis::InvalidationKind::Instructions);
     }
   }
-
-  StringRef getName() override { return "Guaranteed ARC Opts"; }
 };
 
-} // end swift namespace
+} // end anonymous namespace
 
 SILTransform *swift::createGuaranteedARCOpts() {
   return new GuaranteedARCOpts();

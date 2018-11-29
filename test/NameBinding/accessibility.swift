@@ -1,10 +1,10 @@
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: %empty-directory(%t)
 // RUN: cp %s %t/main.swift
 
 // RUN: %target-swift-frontend -emit-module -o %t %S/Inputs/has_accessibility.swift -D DEFINE_VAR_FOR_SCOPED_IMPORT -enable-testing
-// RUN: %target-swift-frontend -parse -primary-file %t/main.swift %S/Inputs/accessibility_other.swift -module-name accessibility -I %t -sdk "" -enable-access-control -verify
-// RUN: %target-swift-frontend -parse -primary-file %t/main.swift %S/Inputs/accessibility_other.swift -module-name accessibility -I %t -sdk "" -disable-access-control -D ACCESS_DISABLED
-// RUN: not %target-swift-frontend -parse -primary-file %t/main.swift %S/Inputs/accessibility_other.swift -module-name accessibility -I %t -sdk "" -D TESTABLE 2>&1 | %FileCheck -check-prefix=TESTABLE %s
+// RUN: %target-swift-frontend -typecheck -primary-file %t/main.swift %S/Inputs/accessibility_other.swift -module-name accessibility -I %t -sdk "" -enable-access-control -verify -verify-ignore-unknown
+// RUN: %target-swift-frontend -typecheck -primary-file %t/main.swift %S/Inputs/accessibility_other.swift -module-name accessibility -I %t -sdk "" -disable-access-control -D ACCESS_DISABLED
+// RUN: not %target-swift-frontend -typecheck -primary-file %t/main.swift %S/Inputs/accessibility_other.swift -module-name accessibility -I %t -sdk "" -D TESTABLE 2>&1 | %FileCheck -check-prefix=TESTABLE %s
 
 #if TESTABLE
 @testable import has_accessibility
@@ -54,7 +54,7 @@ _ = Foo() // expected-error {{'Foo' initializer is inaccessible due to 'internal
 // <rdar://problem/27982012> QoI: Poor diagnostic for inaccessible initializer
 struct rdar27982012 {
   var x: Int
-  private init(_ x: Int) { self.x = x } // expected-note {{'init' declared here}}
+  private init(_ x: Int) { self.x = x } // expected-note {{'init(_:)' declared here}}
 }
 
 _ = { rdar27982012($0.0) }((1, 2)) // expected-error {{initializer is inaccessible due to 'private' protection level}}
@@ -126,29 +126,19 @@ extension Foo : TypeProto {} // expected-error {{type 'Foo' does not conform to 
 #if !ACCESS_DISABLED
 private func privateInBothFiles() {} // no-warning
 private func privateInPrimaryFile() {} // expected-error {{invalid redeclaration}}
-func privateInOtherFile() {} // expected-note {{previously declared here}}
-#endif
-
-
-#if !ACCESS_DISABLED
-// rdar://problem/21408035
-private class PrivateBox<T> { // expected-note 2 {{type declared here}}
-  typealias ValueType = T
-  typealias AlwaysFloat = Float
-}
-
-let boxUnboxInt: PrivateBox<Int>.ValueType = 0 // expected-error {{constant must be declared private or fileprivate because its type uses a private type}}
-let boxFloat: PrivateBox<Int>.AlwaysFloat = 0 // expected-error {{constant must be declared private or fileprivate because its type uses a private type}}
+func privateInOtherFile() {}
 #endif
 
 
 #if !ACCESS_DISABLED
 struct ConformerByTypeAlias : TypeProto {
-  private typealias TheType = Int // expected-error {{type alias 'TheType' must be declared internal because it matches a requirement in internal protocol 'TypeProto'}} {{3-10=internal}}
+  private typealias TheType = Int // expected-error {{type alias 'TheType' must be declared internal because it matches a requirement in internal protocol 'TypeProto'}} {{none}}
+  // expected-note@-1 {{mark the type alias as 'internal' to satisfy the requirement}} {{3-10=internal}}
 }
 
 struct ConformerByLocalType : TypeProto {
-  private struct TheType {} // expected-error {{struct 'TheType' must be declared internal because it matches a requirement in internal protocol 'TypeProto'}} {{3-10=internal}}
+  private struct TheType {} // expected-error {{struct 'TheType' must be declared internal because it matches a requirement in internal protocol 'TypeProto'}} {{none}}
+  // expected-note@-1 {{mark the struct as 'internal' to satisfy the requirement}} {{3-10=internal}}
 }
 
 private struct PrivateConformerByLocalType : TypeProto {
@@ -156,7 +146,8 @@ private struct PrivateConformerByLocalType : TypeProto {
 }
 
 private struct PrivateConformerByLocalTypeBad : TypeProto {
-  private struct TheType {} // expected-error {{struct 'TheType' must be as accessible as its enclosing type because it matches a requirement in protocol 'TypeProto'}} {{3-10=fileprivate}}
+  private struct TheType {} // expected-error {{struct 'TheType' must be as accessible as its enclosing type because it matches a requirement in protocol 'TypeProto'}} {{none}}
+  // expected-note@-1 {{mark the struct as 'fileprivate' to satisfy the requirement}} {{3-10=fileprivate}}
 }
 #endif
 
@@ -173,3 +164,15 @@ internal class TestableSub: InternalBase {} // expected-error {{undeclared type 
 public class TestablePublicSub: InternalBase {} // expected-error {{undeclared type 'InternalBase'}}
 // TESTABLE-NOT: undeclared type 'InternalBase'
 #endif
+
+// FIXME: Remove -verify-ignore-unknown.
+// <unknown>:0: error: unexpected note produced: 'y' declared here
+// <unknown>:0: error: unexpected note produced: 'z' declared here
+// <unknown>:0: error: unexpected note produced: 'init()' declared here
+// <unknown>:0: error: unexpected note produced: 'method()' declared here
+// <unknown>:0: error: unexpected note produced: 'method' declared here
+// <unknown>:0: error: unexpected note produced: 'method' declared here
+
+class AccessMemberOfInternalProtocol : ImplementsInternalProtocol {
+  func testProperty() { let _ = i } // expected-error {{'i' is inaccessible due to 'internal' protection level}}
+}

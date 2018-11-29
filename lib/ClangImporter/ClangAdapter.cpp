@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -31,10 +31,10 @@ using namespace importer;
 
 /// Get a bit vector indicating which arguments are non-null for a
 /// given function or method.
-llvm::SmallBitVector
+SmallBitVector
 importer::getNonNullArgs(const clang::Decl *decl,
                          ArrayRef<const clang::ParmVarDecl *> params) {
-  llvm::SmallBitVector result;
+  SmallBitVector result;
   if (!decl)
     return result;
 
@@ -53,7 +53,8 @@ importer::getNonNullArgs(const clang::Decl *decl,
     if (result.empty())
       result.resize(params.size(), false);
 
-    for (unsigned idx : nonnull->args()) {
+    for (auto paramIdx : nonnull->args()) {
+      unsigned idx = paramIdx.getASTIndex();
       if (idx < result.size())
         result.set(idx);
     }
@@ -298,6 +299,9 @@ OmissionTypeName importer::getClangTypeNameForOmission(clang::ASTContext &ctx,
     case clang::BuiltinType::Double:
       return "Double";
 
+    case clang::BuiltinType::Char8:
+      return "UInt8";
+
     case clang::BuiltinType::Char16:
       return "UInt16";
 
@@ -335,8 +339,33 @@ OmissionTypeName importer::getClangTypeNameForOmission(clang::ASTContext &ctx,
       return OmissionTypeName();
 
     // FIXME: Types that can be mapped, but aren't yet.
+    case clang::BuiltinType::ShortAccum:
+    case clang::BuiltinType::Accum:
+    case clang::BuiltinType::LongAccum:
+    case clang::BuiltinType::UShortAccum:
+    case clang::BuiltinType::UAccum:
+    case clang::BuiltinType::ULongAccum:
+    case clang::BuiltinType::ShortFract:
+    case clang::BuiltinType::Fract:
+    case clang::BuiltinType::LongFract:
+    case clang::BuiltinType::UShortFract:
+    case clang::BuiltinType::UFract:
+    case clang::BuiltinType::ULongFract:
+    case clang::BuiltinType::SatShortAccum:
+    case clang::BuiltinType::SatAccum:
+    case clang::BuiltinType::SatLongAccum:
+    case clang::BuiltinType::SatUShortAccum:
+    case clang::BuiltinType::SatUAccum:
+    case clang::BuiltinType::SatULongAccum:
+    case clang::BuiltinType::SatShortFract:
+    case clang::BuiltinType::SatFract:
+    case clang::BuiltinType::SatLongFract:
+    case clang::BuiltinType::SatUShortFract:
+    case clang::BuiltinType::SatUFract:
+    case clang::BuiltinType::SatULongFract:
     case clang::BuiltinType::Half:
     case clang::BuiltinType::LongDouble:
+    case clang::BuiltinType::Float16:
     case clang::BuiltinType::Float128:
     case clang::BuiltinType::NullPtr:
       return OmissionTypeName();
@@ -389,7 +418,6 @@ OmissionTypeName importer::getClangTypeNameForOmission(clang::ASTContext &ctx,
     case clang::BuiltinType::OCLEvent:
     case clang::BuiltinType::OCLClkEvent:
     case clang::BuiltinType::OCLQueue:
-    case clang::BuiltinType::OCLNDRange:
     case clang::BuiltinType::OCLReserveID:
       return OmissionTypeName();
 
@@ -418,20 +446,15 @@ OmissionTypeName importer::getClangTypeNameForOmission(clang::ASTContext &ctx,
   return StringRef();
 }
 
-clang::SwiftNewtypeAttr *
-importer::getSwiftNewtypeAttr(const clang::TypedefNameDecl *decl,
-                              bool useSwift2Name) {
-  // If we're determining the Swift 2 name, don't honor this attribute.
-  if (useSwift2Name)
-    return nullptr;
-
+static clang::SwiftNewtypeAttr *
+retrieveNewTypeAttr(const clang::TypedefNameDecl *decl) {
   // Retrieve the attribute.
   auto attr = decl->getAttr<clang::SwiftNewtypeAttr>();
   if (!attr)
     return nullptr;
 
-  // Blacklist types that temporarily lose their
-  // swift_wrapper/swift_newtype attributes in Foundation.
+  // FIXME: CFErrorDomain is marked as CF_EXTENSIBLE_STRING_ENUM, but it turned
+  // out to be more disruptive than not to leave it that way.
   auto name = decl->getName();
   if (name == "CFErrorDomain")
     return nullptr;
@@ -439,14 +462,22 @@ importer::getSwiftNewtypeAttr(const clang::TypedefNameDecl *decl,
   return attr;
 }
 
+clang::SwiftNewtypeAttr *
+importer::getSwiftNewtypeAttr(const clang::TypedefNameDecl *decl,
+                              ImportNameVersion version) {
+  // Newtype was introduced in Swift 3
+  if (version <= ImportNameVersion::swift2())
+    return nullptr;
+  return retrieveNewTypeAttr(decl);
+}
+
 // If this decl is associated with a swift_newtype typedef, return it, otherwise
 // null
 clang::TypedefNameDecl *importer::findSwiftNewtype(const clang::NamedDecl *decl,
                                                    clang::Sema &clangSema,
-                                                   bool useSwift2Name) {
-  // If we aren't honoring the swift_newtype attribute, don't even
-  // bother looking. Similarly for swift2 names
-  if (useSwift2Name)
+                                                   ImportNameVersion version) {
+  // Newtype was introduced in Swift 3
+  if (version <= ImportNameVersion::swift2())
     return nullptr;
 
   auto varDecl = dyn_cast<clang::VarDecl>(decl);
@@ -454,7 +485,7 @@ clang::TypedefNameDecl *importer::findSwiftNewtype(const clang::NamedDecl *decl,
     return nullptr;
 
   if (auto typedefTy = varDecl->getType()->getAs<clang::TypedefType>())
-    if (getSwiftNewtypeAttr(typedefTy->getDecl(), false))
+    if (retrieveNewTypeAttr(typedefTy->getDecl()))
       return typedefTy->getDecl();
 
   // Special case: "extern NSString * fooNotification" adopts
@@ -472,7 +503,7 @@ clang::TypedefNameDecl *importer::findSwiftNewtype(const clang::NamedDecl *decl,
       return nullptr;
 
     // Make sure it also has a newtype decl on it
-    if (getSwiftNewtypeAttr(nsDecl, false))
+    if (retrieveNewTypeAttr(nsDecl))
       return nsDecl;
 
     return nullptr;
@@ -563,6 +594,8 @@ OptionalTypeKind importer::translateNullability(clang::NullabilityKind kind) {
   case clang::NullabilityKind::Unspecified:
     return OptionalTypeKind::OTK_ImplicitlyUnwrappedOptional;
   }
+
+  llvm_unreachable("Invalid NullabilityKind.");
 }
 
 bool importer::hasDesignatedInitializers(
@@ -666,14 +699,8 @@ bool importer::isUnavailableInSwift(
   if (enableObjCInterop && isObjCId(decl))
     return true;
 
-  // FIXME: Somewhat duplicated from importAttributes(), but this is a
-  // more direct path.
-  if (decl->getAvailability() == clang::AR_Unavailable)
+  if (decl->isUnavailable())
     return true;
-
-  // Apply the deprecated-as-unavailable filter.
-  if (!platformAvailability.deprecatedAsUnavailableFilter)
-    return false;
 
   for (auto *attr : decl->specific_attrs<clang::AvailabilityAttr>()) {
     if (attr->getPlatform()->getName() == "swift")
@@ -684,12 +711,15 @@ bool importer::isUnavailableInSwift(
       continue;
     }
 
-    clang::VersionTuple version = attr->getDeprecated();
-    if (version.empty())
-      continue;
-    if (platformAvailability.deprecatedAsUnavailableFilter(version.getMajor(),
-                                                           version.getMinor()))
-      return true;
+    if (platformAvailability.deprecatedAsUnavailableFilter) {
+      llvm::VersionTuple version = attr->getDeprecated();
+      if (version.empty())
+        continue;
+      if (platformAvailability.deprecatedAsUnavailableFilter(
+            version.getMajor(), version.getMinor())) {
+        return true;
+      }
+    }
   }
 
   return false;
@@ -711,11 +741,10 @@ OptionalTypeKind importer::getParamOptionality(version::Version swiftVersion,
     return OTK_None;
 
   // Check for the 'static' annotation on C arrays.
-  if (!swiftVersion.isVersion3())
-    if (const auto *DT = dyn_cast<clang::DecayedType>(paramTy))
-      if (const auto *AT = DT->getOriginalType()->getAsArrayTypeUnsafe())
-        if (AT->getSizeModifier() == clang::ArrayType::Static)
-          return OTK_None;
+  if (const auto *DT = dyn_cast<clang::DecayedType>(paramTy))
+    if (const auto *AT = DT->getOriginalType()->getAsArrayTypeUnsafe())
+      if (AT->getSizeModifier() == clang::ArrayType::Static)
+        return OTK_None;
 
   // Default to implicitly unwrapped optionals.
   return OTK_ImplicitlyUnwrappedOptional;

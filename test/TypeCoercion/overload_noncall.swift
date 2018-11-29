@@ -1,4 +1,4 @@
-// RUN: %target-parse-verify-swift
+// RUN: %target-typecheck-verify-swift
 
 struct X { }
 struct Y { }
@@ -52,7 +52,7 @@ func test_inout() {
   x = accept_XY(&xy);
 
   x = xy
-  x = &xy; // expected-error{{'&' used with non-inout argument of type 'X'}}
+  x = &xy; // expected-error {{use of extraneous '&'}}
   accept_Z(&xy); // expected-error{{cannot convert value of type 'X' to expected argument type 'Z'}}
 }
 

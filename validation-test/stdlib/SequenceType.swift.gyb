@@ -558,8 +558,9 @@ func callStaticContains(
 }
 
 func callGenericContains<
-  S : Sequence where S.Iterator.Element : Equatable
->(_ sequence: S, _ element: S.Iterator.Element) -> Bool {
+  S : Sequence
+>(_ sequence: S, _ element: S.Iterator.Element) -> Bool
+where S.Iterator.Element : Equatable {
   return sequence.contains(element)
 }
 
@@ -572,7 +573,7 @@ SequenceTypeTests.test("Set<T>.contains/CustomImplementation/${dispatch}") {
     let s = Set<MinimalHashableValue>(
       test.sequence.map { MinimalHashableValue($0.value) })
     MinimalHashableValue.timesEqualEqualWasCalled = 0
-    MinimalHashableValue.timesHashValueWasCalled = 0
+    MinimalHashableValue.timesHashIntoWasCalled = 0
     expectEqual(
       test.expected != nil,
       call${dispatch}Contains(s, MinimalHashableValue(test.element.value)),
@@ -582,11 +583,11 @@ SequenceTypeTests.test("Set<T>.contains/CustomImplementation/${dispatch}") {
         0, MinimalHashableValue.timesEqualEqualWasCalled,
         stackTrace: SourceLocStack().with(test.loc))
       expectEqual(
-        0, MinimalHashableValue.timesHashValueWasCalled,
+        0, MinimalHashableValue.timesHashIntoWasCalled,
         stackTrace: SourceLocStack().with(test.loc))
     } else {
       expectNotEqual(
-        0, MinimalHashableValue.timesHashValueWasCalled,
+        0, MinimalHashableValue.timesHashIntoWasCalled,
         stackTrace: SourceLocStack().with(test.loc))
     }
     if test.expected != nil {
@@ -609,6 +610,35 @@ SequenceTypeTests.test("contains/Predicate") {
       stackTrace: SourceLocStack().with(test.loc))
     expectEqual(
       test.expectedLeftoverSequence.map { $0.value }, s.map { $0.value },
+      stackTrace: SourceLocStack().with(test.loc))
+  }
+}
+
+SequenceTypeTests.test("allSatisfy/Predicate") {
+  for test in findTests {
+    let s = MinimalSequence<OpaqueValue<Int>>(
+      elements: test.sequence.map { OpaqueValue($0.value) })
+    expectEqual(
+      test.expected == nil,
+      s.allSatisfy { $0.value != test.element.value },
+      stackTrace: SourceLocStack().with(test.loc))
+    expectEqual(
+      test.expectedLeftoverSequence.map { $0.value }, s.map { $0.value },
+      stackTrace: SourceLocStack().with(test.loc))
+  }
+}
+
+//===----------------------------------------------------------------------===//
+// count(where:)
+//===----------------------------------------------------------------------===//
+
+SequenceTypeTests.test("count/Predicate") {
+  for test in predicateCountTests {
+    let s = MinimalSequence<OpaqueValue<Int>>(
+      elements: test.sequence.map { OpaqueValue($0) })
+    expectEqual(
+      test.expected,
+      s.count(where: { test.includeElement($0.value) }),
       stackTrace: SourceLocStack().with(test.loc))
   }
 }
@@ -679,7 +709,7 @@ SequenceTypeTests.test("reverse/WhereIndexIsRandomAccess,RandomAccessReverseView
       elements: test.sequence.map(OpaqueValue.init))
     var result = s.reversed()
     expectType(
-      ReversedRandomAccessCollection<MinimalRandomAccessCollection<OpaqueValue<Int>>>.self,
+      ReversedCollection<MinimalRandomAccessCollection<OpaqueValue<Int>>>.self,
       &result)
     expectEqual(
       test.expected, result.map { $0.value },
@@ -694,12 +724,6 @@ SequenceTypeTests.test("reverse/WhereIndexIsRandomAccess,RandomAccessReverseView
 //===----------------------------------------------------------------------===//
 // filter()
 //===----------------------------------------------------------------------===//
-
-SequenceTypeTests.test("filter/Sequence/Dispatch") {
-  let tester = SequenceLog.dispatchTester([OpaqueValue(1)])
-  _ = tester.filter { _ in false }
-  expectCustomizable(tester, tester.log.filter)
-}
 
 SequenceTypeTests.test("filter/Sequence/Semantics") {
   for test in filterTests {
@@ -808,9 +832,7 @@ func callGenericSequenceMap<S : Sequence, T>(
   return result
 }
 
-% for Implementation in ['Default', 'Custom']:
-
-%   for dispatch in ['Static', 'Generic']:
+% for dispatch in ['Static', 'Generic']:
 
 SequenceTypeTests.test(
   "map/Sequence/${Implementation}Implementation/${dispatch}"
@@ -827,9 +849,6 @@ SequenceTypeTests.test(
       let closureLifetimeTracker = LifetimeTracked(0)
       expectEqual(1, LifetimeTracked.instances)
       var timesClosureWasCalled = 0
-%     if Implementation == 'Custom':
-      MinimalSequenceWithCustomMap<OpaqueValue<Int>>.timesMapWasCalled = 0
-%     end
       var result = call${dispatch}SequenceMap(s) {
         (element: OpaqueValue<Int>) -> OpaqueValue<Int32> in
         _blackHole(closureLifetimeTracker)
@@ -838,20 +857,13 @@ SequenceTypeTests.test(
       }
       expectType([OpaqueValue<Int32>].self, &result)
       expectEqual(test.expected, result.map { $0.value })
-%     if Implementation == 'Custom':
-      expectEqual(
-        1, MinimalSequenceWithCustomMap<OpaqueValue<Int>>.timesMapWasCalled)
-%     end
       expectEqual([], s.map { $0.value }, "sequence should be consumed")
-      expectEqual(
-        test.sequence.count, timesClosureWasCalled,
+      expectEqual(        test.sequence.count, timesClosureWasCalled,
         "map() should be eager and should only call its predicate"
         + "once per element")
     }
   }
 }
-
-%   end
 
 % end
 
@@ -909,7 +921,7 @@ SequenceTypeTests.test("flatMap/Sequence/TransformProducesOptional") {
       let closureLifetimeTracker = LifetimeTracked(0)
       expectEqual(1, LifetimeTracked.instances)
       var timesClosureWasCalled = 0
-      var result = s.flatMap {
+      var result = s.compactMap {
         (element: OpaqueValue<Int>) -> OpaqueValue<Int32>? in
         _blackHole(closureLifetimeTracker)
         timesClosureWasCalled += 1
@@ -932,92 +944,12 @@ SequenceTypeTests.test("flatMap/Sequence/TransformProducesOptional") {
 }
 
 //===----------------------------------------------------------------------===//
-// forEach()
-//===----------------------------------------------------------------------===//
-
-SequenceTypeTests.test("forEach/dispatch") {
-  let tester = SequenceLog.dispatchTester([OpaqueValue(1)])
-  tester.forEach { print($0) }
-  expectCustomizable(tester, tester.log.forEach)
-}
-
-//===----------------------------------------------------------------------===//
-// dropFirst()
-//===----------------------------------------------------------------------===//
-
-SequenceTypeTests.test("dropFirst/dispatch") {
-  var tester = SequenceLog.dispatchTester([OpaqueValue(1)])
-  _ = tester.dropFirst(1)
-  expectCustomizable(tester, tester.log.dropFirst)
-}
-
-//===----------------------------------------------------------------------===//
-// dropLast()
-//===----------------------------------------------------------------------===//
-
-SequenceTypeTests.test("dropLast/dispatch") {
-  var tester = SequenceLog.dispatchTester([OpaqueValue(1)])
-  _ = tester.dropLast(1)
-  expectCustomizable(tester, tester.log.dropLast)
-}
-
-//===----------------------------------------------------------------------===//
-// drop(while:)
-//===----------------------------------------------------------------------===//
-
-SequenceTypeTests.test("drop(while:)/dispatch") {
-  var tester = SequenceLog.dispatchTester([OpaqueValue(1)])
-  tester.drop { _ in return false }
-  expectCustomizable(tester, tester.log.dropWhile)
-}
-
-//===----------------------------------------------------------------------===//
-// prefix()
-//===----------------------------------------------------------------------===//
-
-SequenceTypeTests.test("prefix/dispatch") {
-  var tester = SequenceLog.dispatchTester([OpaqueValue(1)])
-  _ = tester.prefix(1)
-  expectCustomizable(tester, tester.log.prefixMaxLength)
-}
-
-//===----------------------------------------------------------------------===//
-// prefix(while:)
-//===----------------------------------------------------------------------===//
-
-SequenceTypeTests.test("prefix(while:)/dispatch") {
-  var tester = SequenceLog.dispatchTester([OpaqueValue(1)])
-  tester.prefix { _ in return false }
-  expectCustomizable(tester, tester.log.prefixWhile)
-}
-
-//===----------------------------------------------------------------------===//
-// suffix()
-//===----------------------------------------------------------------------===//
-
-SequenceTypeTests.test("suffix/dispatch") {
-  var tester = SequenceLog.dispatchTester([OpaqueValue(1)])
-  _ = tester.suffix(1)
-  expectCustomizable(tester, tester.log.suffixMaxLength)
-}
-
-//===----------------------------------------------------------------------===//
-// split()
-//===----------------------------------------------------------------------===//
-
-SequenceTypeTests.test("Sequence/split/dispatch") {
-  var tester = SequenceLog.dispatchTester([OpaqueValue(1)])
-  _ = tester.split { $0.value == 1 }
-  expectCustomizable(tester, tester.log.split)
-}
-
-//===----------------------------------------------------------------------===//
 // zip()
 //===----------------------------------------------------------------------===//
 
 // Check generic parameter names.
-extension Zip2Iterator
-  where Iterator1 : TestProtocol1, Iterator2 : TestProtocol1 {
+extension Zip2Sequence.Iterator
+  where Sequence1 : TestProtocol1, Sequence2 : TestProtocol1 {
 
   var _generator1IsTestProtocol1: Bool {
     fatalError("not implemented")

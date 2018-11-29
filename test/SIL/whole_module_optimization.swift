@@ -13,17 +13,17 @@ private func privateFn() -> Int32 {
   return 2
 }
 
-// CHECK-LABEL: sil @_TF4main9getAnswerFT_Vs5Int32
-// CHECK-SINGLE-FILE-LABEL: sil @_TF4main9getAnswerFT_Vs5Int32
+// CHECK-LABEL: sil @$s4main9getAnswers5Int32VyF
+// CHECK-SINGLE-FILE-LABEL: sil @$s4main9getAnswers5Int32VyF
 public func getAnswer() -> Int32 {
   // CHECK: %0 = integer_literal $Builtin.Int32, 42
   // CHECK-NEXT: %1 = struct $Int32 (%0 : $Builtin.Int32)
   // CHECK-NEXT: return %1 : $Int32
 
-  // CHECK-SINGLE-FILE: %0 = function_ref @_TF4main7computeFFT_Vs5Int32S0_
-  // CHECK-SINGLE-FILE: %1 = function_ref @_TF4mainP33_4704C82F83811927370AA02DFDC75B5A9privateFnFT_Vs5Int32
-  // CHECK-SINGLE-FILE: %2 = thin_to_thick_function %1
-  // CHECK-SINGLE-FILE: %3 = apply %0(%2)
+  // CHECK-SINGLE-FILE: %0 = function_ref @$s4main9privateFn33_4704C82F83811927370AA02DFDC75B5ALLs5Int32VyF
+  // CHECK-SINGLE-FILE: %1 = thin_to_thick_function %0 {{.*}} to $@noescape
+  // CHECK-SINGLE-FILE: %2 = function_ref @$s4main7computeys5Int32VADyXEF
+  // CHECK-SINGLE-FILE: %3 = apply %2(%1)
   // CHECK-SINGLE-FILE: return %3 : $Int
 
   return compute(privateFn)

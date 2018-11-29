@@ -1,4 +1,4 @@
-// RUN: %target-parse-verify-swift
+// RUN: %target-typecheck-verify-swift
 
 // CHECK PARSING
 private // expected-note {{modifier already specified here}}
@@ -90,7 +90,9 @@ private enum TestEnum {
 private protocol TestProtocol {
   private associatedtype Foo // expected-error {{'private' modifier cannot be applied to this declaration}} {{3-11=}}
   internal var Bar: Int { get } // expected-error {{'internal' modifier cannot be used in protocols}} {{3-12=}}
+  // expected-note@-1 {{protocol requirements implicitly have the same access as the protocol itself}}
   public func baz() // expected-error {{'public' modifier cannot be used in protocols}} {{3-10=}}
+  // expected-note@-1 {{protocol requirements implicitly have the same access as the protocol itself}}
 }
 
 public(set) func publicSetFunc() {} // expected-error {{'public' modifier cannot be applied to this declaration}} {{1-13=}}
@@ -120,6 +122,7 @@ public struct Properties {
   }
   private(set) let constant = 42 // expected-error {{'private(set)' modifier cannot be applied to read-only properties}} {{3-16=}}
   public(set) var defaultVis = 0 // expected-error {{internal property cannot have a public setter}}
+  open(set) var defaultVis2 = 0 // expected-error {{internal property cannot have an open setter}}
 
   public(set) subscript(a a: Int) -> Int { // expected-error {{internal subscript cannot have a public setter}}
     get { return 0 }
@@ -143,6 +146,10 @@ public struct Properties {
 
 private extension Properties {
   public(set) var extProp: Int { // expected-error {{private property cannot have a public setter}}
+    get { return 42 }
+    set { }
+  }
+  open(set) var extProp2: Int { // expected-error {{private property cannot have an open setter}}
     get { return 42 }
     set { }
   }
@@ -184,12 +191,14 @@ private extension PublicProto where Assoc == PrivateStruct {}
 
 extension PublicProto where Assoc == InternalStruct {
   public func foo() {} // expected-error {{cannot declare a public instance method in an extension with internal requirements}} {{3-9=internal}}
+  open func bar() {} // expected-error {{cannot declare an open instance method in an extension with internal requirements}} {{3-7=internal}}
 }
 extension InternalProto {
   public func foo() {} // no effect, but no warning
 }
 extension InternalProto where Assoc == PublicStruct {
   public func foo() {} // expected-error {{cannot declare a public instance method in an extension with internal requirements}} {{3-9=internal}}
+  open func bar() {} // expected-error {{cannot declare an open instance method in an extension with internal requirements}} {{3-7=internal}}
 }
 
 public struct GenericStruct<Param> {}
@@ -199,35 +208,24 @@ extension GenericStruct where Param: InternalProto {
 }
 
 
-public protocol ProtoWithReqs {
-  associatedtype Assoc
-  func foo()
+public class OuterClass {
+  class InnerClass {}
 }
 
-public struct Adopter<T> : ProtoWithReqs {}
-extension Adopter {
-  typealias Assoc = Int // expected-error {{type alias 'Assoc' must be declared public because it matches a requirement in public protocol 'ProtoWithReqs'}} {{3-3=public }}
-  func foo() {} // expected-error {{method 'foo()' must be declared public because it matches a requirement in public protocol 'ProtoWithReqs'}} {{3-3=public }}
+public protocol PublicProto2 {
+  associatedtype T
+  associatedtype U
 }
 
-public class AnotherAdopterBase {
-  typealias Assoc = Int // expected-error {{type alias 'Assoc' must be declared public because it matches a requirement in public protocol 'ProtoWithReqs'}} {{3-3=public }}
-  func foo() {} // expected-error {{method 'foo()' must be declared public because it matches a requirement in public protocol 'ProtoWithReqs'}} {{3-3=public }}
-}
-public class AnotherAdopterSub : AnotherAdopterBase, ProtoWithReqs {}
+// FIXME: With the current design, the below should not diagnose.
+//
+// However, it does, because we look at the bound decl in the
+// TypeRepr first, and it happens to already be set.
+//
+// FIXME: Once we no longer do that, come up with another strategy
+// to make the above diagnose.
 
-public protocol ReqProvider {}
-extension ReqProvider {
-  func foo() {} // expected-error {{method 'foo()' must be declared public because it matches a requirement in public protocol 'ProtoWithReqs'}} {{3-3=public }}
-}
-public struct AdoptViaProtocol : ProtoWithReqs, ReqProvider {
-  public typealias Assoc = Int
-}
-
-public protocol ReqProvider2 {}
-extension ProtoWithReqs where Self : ReqProvider2 {
-  func foo() {} // expected-error {{method 'foo()' must be declared public because it matches a requirement in public protocol 'ProtoWithReqs'}} {{3-3=public }}
-}
-public struct AdoptViaCombinedProtocol : ProtoWithReqs, ReqProvider2 {
-  public typealias Assoc = Int
+extension PublicProto2 where Self.T : OuterClass, Self.U == Self.T.InnerClass {
+  public func cannotBePublic() {}
+  // expected-error@-1 {{cannot declare a public instance method in an extension with internal requirements}}
 }

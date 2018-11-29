@@ -2,17 +2,18 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
 #include "TestContext.h"
 #include "swift/AST/Module.h"
 #include "swift/Strings.h"
+#include "swift/Subsystems.h"
 
 using namespace swift;
 using namespace swift::unittest;
@@ -33,7 +34,8 @@ static void declareOptionalType(ASTContext &ctx, SourceFile *fileForLookups,
 }
 
 TestContext::TestContext(ShouldDeclareOptionalTypes optionals)
-    : Ctx(LangOpts, SearchPathOpts, SourceMgr, Diags) {
+    : Ctx(*ASTContext::get(LangOpts, SearchPathOpts, SourceMgr, Diags)) {
+  registerTypeCheckerRequestFunctions(Ctx.evaluator);
   auto stdlibID = Ctx.getIdentifier(STDLIB_NAME);
   auto *module = ModuleDecl::create(stdlibID, Ctx);
   Ctx.LoadedModules[stdlibID] = module;
@@ -41,7 +43,8 @@ TestContext::TestContext(ShouldDeclareOptionalTypes optionals)
   using ImplicitModuleImportKind = SourceFile::ImplicitModuleImportKind;
   FileForLookups = new (Ctx) SourceFile(*module, SourceFileKind::Library,
                                         /*buffer*/None,
-                                        ImplicitModuleImportKind::None);
+                                        ImplicitModuleImportKind::None,
+                                        /*keeps token*/false);
   module->addFile(*FileForLookups);
 
   if (optionals == DeclareOptionalTypes) {

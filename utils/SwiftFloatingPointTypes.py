@@ -2,11 +2,11 @@
 #
 # This source file is part of the Swift.org open source project
 #
-# Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+# Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 # Licensed under Apache License v2.0 with Runtime Library Exception
 #
-# See http://swift.org/LICENSE.txt for license information
-# See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+# See https://swift.org/LICENSE.txt for license information
+# See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 
 
 # returns (lower, upper) exclusive bounds for the integer values
@@ -38,9 +38,9 @@ class SwiftFloatType(object):
 
 def floating_point_bits_to_type():
     return {
-        32: SwiftFloatType(name="Float",   cFuncSuffix="f", significandBits=23,
-                           exponentBits=8,  significandSize=32, totalBits=32),
-        64: SwiftFloatType(name="Double",  cFuncSuffix="",  significandBits=52,
+        32: SwiftFloatType(name="Float", cFuncSuffix="f", significandBits=23,
+                           exponentBits=8, significandSize=32, totalBits=32),
+        64: SwiftFloatType(name="Double", cFuncSuffix="", significandBits=52,
                            exponentBits=11, significandSize=64, totalBits=64),
         80: SwiftFloatType(name="Float80", cFuncSuffix="l", significandBits=63,
                            exponentBits=15, significandSize=64, totalBits=80),

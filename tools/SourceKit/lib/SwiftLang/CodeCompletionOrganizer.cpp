@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -158,7 +158,7 @@ bool SourceKit::CodeCompletion::addCustomCompletions(
     CodeCompletion::SwiftResult swiftResult(
         CodeCompletion::SwiftResult::ResultKind::Pattern,
         SemanticContextKind::ExpressionSpecific,
-        /*numBytesToErase=*/0, completionString);
+        /*NumBytesToErase=*/0, completionString);
 
     CompletionBuilder builder(sink, swiftResult);
     builder.setCustomKind(customCompletion.Kind);
@@ -179,7 +179,14 @@ bool SourceKit::CodeCompletion::addCustomCompletions(
     case CompletionKind::AssignmentRHS:
     case CompletionKind::CallArg:
     case CompletionKind::ReturnStmtExpr:
+    case CompletionKind::YieldStmtExpr:
       if (custom.Contexts.contains(CustomCompletionInfo::Expr)) {
+        changed = true;
+        addCompletion(custom);
+      }
+      break;
+    case CompletionKind::ForEachSequence:
+      if (custom.Contexts.contains(CustomCompletionInfo::ForEachSequence)) {
         changed = true;
         addCompletion(custom);
       }
@@ -314,8 +321,8 @@ CodeCompletionViewRef CodeCompletionOrganizer::takeResultsView() {
 //===----------------------------------------------------------------------===//
 
 ImportDepth::ImportDepth(ASTContext &context, CompilerInvocation &invocation) {
-  llvm::DenseSet<Module *> seen;
-  std::deque<std::pair<Module *, uint8_t>> worklist;
+  llvm::DenseSet<ModuleDecl *> seen;
+  std::deque<std::pair<ModuleDecl *, uint8_t>> worklist;
 
   StringRef mainModule = invocation.getModuleName();
   auto *main = context.getLoadedModule(context.getIdentifier(mainModule));
@@ -331,8 +338,8 @@ ImportDepth::ImportDepth(ASTContext &context, CompilerInvocation &invocation) {
 
   // Private imports from this module.
   // FIXME: only the private imports from the current source file.
-  SmallVector<Module::ImportedModule, 16> mainImports;
-  main->getImportedModules(mainImports, Module::ImportFilter::Private);
+  SmallVector<ModuleDecl::ImportedModule, 16> mainImports;
+  main->getImportedModules(mainImports, ModuleDecl::ImportFilter::Private);
   for (auto &import : mainImports) {
     uint8_t depth = 1;
     if (auxImports.count(import.second->getName().str()))
@@ -342,7 +349,7 @@ ImportDepth::ImportDepth(ASTContext &context, CompilerInvocation &invocation) {
 
   // Fill depths with BFS over module imports.
   while (!worklist.empty()) {
-    Module *module;
+    ModuleDecl *module;
     uint8_t depth;
     std::tie(module, depth) = worklist.front();
     worklist.pop_front();
@@ -359,7 +366,7 @@ ImportDepth::ImportDepth(ASTContext &context, CompilerInvocation &invocation) {
     }
 
     // Add imports to the worklist.
-    SmallVector<Module::ImportedModule, 16> imports;
+    SmallVector<ModuleDecl::ImportedModule, 16> imports;
     module->getImportedModules(imports);
     for (auto &import : imports) {
       uint8_t next = std::max(depth, uint8_t(depth + 1)); // unsigned wrap
@@ -447,22 +454,32 @@ static bool isHighPriorityKeyword(CodeCompletionKeywordKind kind) {
   }
 }
 
-bool FilterRules::hideName(StringRef name) const {
-  auto I = hideByName.find(name);
-  if (I != hideByName.end())
-      return I->getValue();
+bool FilterRules::hideFilterName(StringRef name) const {
+  auto I = hideByFilterName.find(name);
+  if (I != hideByFilterName.end())
+    return I->getValue();
   return hideAll;
 }
 
 bool FilterRules::hideCompletion(Completion *completion) const {
-  return hideCompletion(completion, completion->getName(), completion->getCustomKind());
+  return hideCompletion(completion, completion->getName(),
+                        completion->getDescription(),
+                        completion->getCustomKind());
 }
 
-bool FilterRules::hideCompletion(SwiftResult *completion, StringRef name, void *customKind) const {
+bool FilterRules::hideCompletion(SwiftResult *completion, StringRef filterName,
+                                 StringRef description,
+                                 void *customKind) const {
 
-  if (!name.empty()) {
-    auto I = hideByName.find(name);
-    if (I != hideByName.end())
+  if (!description.empty()) {
+    auto I = hideByDescription.find(description);
+    if (I != hideByDescription.end())
+      return I->getValue();
+  }
+
+  if (!filterName.empty()) {
+    auto I = hideByFilterName.find(filterName);
+    if (I != hideByFilterName.end())
       return I->getValue();
   }
 
@@ -952,7 +969,7 @@ static void sortRecursive(const Options &options, Group *group,
   auto &contents = group->contents;
   double best = -1.0;
   for (auto &item : contents) {
-    if (Group *g = dyn_cast<Group>(item.get())) {
+    if (auto *g = dyn_cast<Group>(item.get())) {
       sortRecursive(options, g, hasExpectedTypes);
     } else {
       Result *r = cast<Result>(item.get());
@@ -1047,7 +1064,7 @@ void CodeCompletionOrganizer::Impl::groupStemsRecursive(
 
   auto start = worklist.begin();
   while (start != worklist.end()) {
-    if (Group *g = dyn_cast<Group>(start->get())) {
+    if (auto *g = dyn_cast<Group>(start->get())) {
       groupStemsRecursive(g, recurseIntoNewGroups, getStem);
       newContents.push_back(std::move(*start));
       ++start;
@@ -1196,6 +1213,7 @@ void CompletionBuilder::getFilterName(CodeCompletionString *str,
       case ChunkKind::Whitespace:
       case ChunkKind::Ellipsis:
       case ChunkKind::Ampersand:
+      case ChunkKind::OptionalMethodCallTail:
         continue;
       case ChunkKind::CallParameterColon:
         // Since we don't add the type, also don't add the space after ':'.
@@ -1356,7 +1374,6 @@ NameStyle::NameStyle(StringRef name)
   unsigned underscores = 0;
   unsigned caseCount[3] = {0, 0, 0};
   Case leadingCase = None;
-  Case prevCase = None;
   for (; pos < center.size(); ++pos) {
     char c = center[pos];
     Case curCase = caseOf(c);
@@ -1365,7 +1382,6 @@ NameStyle::NameStyle(StringRef name)
 
     underscores += (c == '_');
     caseCount[curCase] += 1;
-    prevCase = curCase;
   }
 
   assert(caseCount[leadingCase] > 0);

@@ -19,7 +19,7 @@ struct PlusOne<X : Nat> : Nat {
 
 // Compiler used to keep performing the generic specialization of
 // computeNat for increasingly deeply nested bound generic types
-// like  PlusOne<PlusOne<....<PlusOne<Zero>>>
+// like PlusOne<PlusOne<....<PlusOne<Zero>>>
 func computeNat<T: Nat>(_ v : Int32, _ t: T) -> Int32 {
   if v == 0 {
     return t.val
@@ -27,8 +27,40 @@ func computeNat<T: Nat>(_ v : Int32, _ t: T) -> Int32 {
   return computeNat(v - 1, PlusOne<T>())
 }
 
-// CHECK-LABEL: sil @_TF24specialize_deep_generics14testComputeNatFT_Vs5Int32
+// CHECK-LABEL: sil @$s24specialize_deep_generics14testComputeNats5Int32VyF
 public func testComputeNat() -> Int32 {
  return computeNat(8, Zero())
 }
 
+// Check that compiler does not hang producing very wide tuples during
+// specialization.
+@inline(never)
+func computeTuple<T>(t: T) {
+  computeTuple(t: (t, t))
+}
+
+// CHECK-LABEL: sil @$s24specialize_deep_generics16testComputeTupleyyF
+public func testComputeTuple() {
+  computeTuple(t: 0)
+}
+
+// Check that compiler does not hang producing very deep metatypes.
+@inline(never)
+public func computeMetatype<T>(t: T) {
+  computeMetatype(t: T.self)
+}
+
+// CHECK-LABEL: sil @$s24specialize_deep_generics19testComputeMetatypeyyF
+public func testComputeMetatype() {
+  computeMetatype(t: 0)
+}
+
+// Check that compiler does not hang producing very deep function types.
+@inline(never)
+public func computeFunctionType<T>(t: [T]) {
+  computeFunctionType(t: [{ t[0] }])
+}
+
+public func testComputeFunctionType() {
+  computeFunctionType(t: [0])
+}

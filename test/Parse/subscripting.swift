@@ -1,6 +1,6 @@
-// RUN: %target-parse-verify-swift
+// RUN: %target-typecheck-verify-swift
 
-struct X { }
+struct X { } // expected-note {{did you mean}}
 
 // Simple examples
 struct X1 {
@@ -80,9 +80,8 @@ let y2 = Y2() // expected-note{{change 'let' to 'var' to make it mutable}}{{1-4=
 _ = y2[0] // expected-error{{cannot use mutating getter on immutable value: 'y2' is a 'let' constant}}
 
 // Parsing errors
-// FIXME: Recovery here is horrible
 struct A0 {
-  subscript // expected-error{{expected '(' for subscript parameters}}
+  subscript // expected-error {{expected '(' for subscript parameters}}
     i : Int
      -> Int {
     get {
@@ -92,16 +91,20 @@ struct A0 {
       stored = value
     }
   }
+  
+  subscript -> Int { // expected-error {{expected '(' for subscript parameters}} {{12-12=()}}
+    return 1
+  }
 }
 
 struct A1 {
   subscript (i : Int) // expected-error{{expected '->' for subscript element type}}
      Int {
     get {
-      return stored
+      return stored // expected-error{{use of unresolved identifier}}
     }
     set {
-      stored = value
+      stored = newValue// expected-error{{use of unresolved identifier}}
     }
   }
 }
@@ -113,13 +116,14 @@ struct A2 {
       return stored
     }
     set {
-      stored = value
+      stored = newValue // expected-error{{use of unresolved identifier}}
     }
   }
 }
 
 struct A3 {
   subscript(i : Int) // expected-error {{expected '->' for subscript element type}}
+                     // expected-error@-1 {{expected subscripting element type}}
   {
     get {
       return i
@@ -129,6 +133,7 @@ struct A3 {
 
 struct A4 {
   subscript(i : Int) { // expected-error {{expected '->' for subscript element type}}
+                       // expected-error@-1 {{expected subscripting element type}}
     get {
       return i
     }
@@ -141,8 +146,10 @@ struct A5 {
 
 struct A6 {
   subscript(i: Int)(j: Int) -> Int { // expected-error {{expected '->' for subscript element type}}
+                                     // expected-error@-1 {{function types cannot have argument labels}}
+                                     // expected-note@-2 {{did you mean}}
     get {
-      return i + j
+      return i + j // expected-error {{use of unresolved identifier}}
     }
   }
 }
@@ -172,4 +179,26 @@ struct A8 {
       stored = value
     }
   }
+
+struct A9 {
+  subscript x() -> Int { // expected-error {{subscripts cannot have a name}} {{13-14=}}
+    return 0
+  }
+}
+
+struct A10 {
+  subscript x(i: Int) -> Int { // expected-error {{subscripts cannot have a name}} {{13-14=}}
+    return 0
+  }
+  subscript x<T>(i: T) -> Int { // expected-error {{subscripts cannot have a name}} {{13-14=}}
+    return 0
+  }
+}
+
+struct A11 {
+  subscript x y : Int -> Int { // expected-error {{expected '(' for subscript parameters}}
+    return 0
+  }
+}
+
 } // expected-error{{extraneous '}' at top level}} {{1-3=}}

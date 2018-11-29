@@ -1,7 +1,8 @@
-// RUN: rm -rf %t  &&  mkdir -p %t
+// RUN: %empty-directory(%t)
 //
 // RUN: %target-clang %S/Inputs/Mirror/Mirror.mm -c -o %t/Mirror.mm.o -g
 // RUN: %target-build-swift -parse-stdlib -Xfrontend -disable-access-control -module-name a -I %S/Inputs/Mirror/ -Xlinker %t/Mirror.mm.o %s -o %t.out
+// RUN: %target-codesign %t.out
 // RUN: %target-run %t.out
 // REQUIRES: executable_test
 // REQUIRES: objc_interop
@@ -292,13 +293,13 @@ Runtime.test("forceBridgeFromObjectiveC") {
 
 
 Runtime.test("isBridgedToObjectiveC") {
-  expectTrue(_isBridgedToObjectiveC(BridgedValueType))
-  expectTrue(_isBridgedToObjectiveC(BridgedVerbatimRefType))
+  expectTrue(_isBridgedToObjectiveC(BridgedValueType.self))
+  expectTrue(_isBridgedToObjectiveC(BridgedVerbatimRefType.self))
 }
 
 Runtime.test("isBridgedVerbatimToObjectiveC") {
-  expectFalse(_isBridgedVerbatimToObjectiveC(BridgedValueType))
-  expectTrue(_isBridgedVerbatimToObjectiveC(BridgedVerbatimRefType))
+  expectFalse(_isBridgedVerbatimToObjectiveC(BridgedValueType.self))
+  expectTrue(_isBridgedVerbatimToObjectiveC(BridgedVerbatimRefType.self))
 }
 
 //===----------------------------------------------------------------------===//
@@ -361,9 +362,9 @@ Runtime.test("Generic class ObjC runtime names") {
   expectEqual("_TtGC1a12GenericClassMPS_9ProtocolAS_9ProtocolB__",
               NSStringFromClass(GenericClass<(ProtocolB & ProtocolA).Protocol>.self))
 
-  expectEqual("_TtGC1a12GenericClassCSo7CFArray_",
+  expectEqual("_TtGC1a12GenericClassaSo10CFArrayRef_",
               NSStringFromClass(GenericClass<CFArray>.self))
-  expectEqual("_TtGC1a12GenericClassVSC7Decimal_",
+  expectEqual("_TtGC1a12GenericClassaSo9NSDecimal_",
               NSStringFromClass(GenericClass<Decimal>.self))
   expectEqual("_TtGC1a12GenericClassCSo8NSObject_",
               NSStringFromClass(GenericClass<NSObject>.self))
@@ -374,10 +375,20 @@ Runtime.test("Generic class ObjC runtime names") {
   expectEqual("_TtGC1a12GenericClassPSo9NSCopyingS_9ProtocolAS_9ProtocolB__",
               NSStringFromClass(GenericClass<ProtocolB & NSCopying & ProtocolA>.self))
 
+  expectEqual("_TtGC1a12GenericClassXcCS_9SomeClassS_9ProtocolA__",
+              NSStringFromClass(GenericClass<ProtocolA & SomeClass>.self))
+  expectEqual("_TtGC1a12GenericClassPS_9ProtocolAs9AnyObject__",
+              NSStringFromClass(GenericClass<ProtocolA & AnyObject>.self))
+  expectEqual("_TtGC1a12GenericClassPs9AnyObject__",
+              NSStringFromClass(GenericClass<AnyObject>.self))
+
   expectEqual("_TtGC1a17MultiGenericClassGVS_13GenericStructSi_GOS_11GenericEnumGS2_Si___",
               NSStringFromClass(MultiGenericClass<GenericStruct<Int>,
                                                   GenericEnum<GenericEnum<Int>>>.self))
 }
+
+@objc protocol P {}
+struct AnyObjStruct<T: AnyObject> {}
 
 Runtime.test("typeByName") {
   // Make sure we don't crash if we have foreign classes in the
@@ -385,6 +396,7 @@ Runtime.test("typeByName") {
   print(CFArray.self)
   expectTrue(_typeByName("a.SomeClass") == SomeClass.self)
   expectTrue(_typeByName("DoesNotExist") == nil)
+  expectTrue(_typeByName("1a12AnyObjStructVyAA1P_pG") == AnyObjStruct<P>.self)
 }
 
 Runtime.test("casting AnyObject to class metatypes") {
@@ -445,6 +457,9 @@ var nsStringCanaryCount = 0
   required init(coder: NSCoder) {
     fatalError("don't call this initializer")
   }
+  required init(itemProviderData data: Data, typeIdentifier: String) throws {
+    fatalError("don't call this initializer")    
+  }
   deinit {
     nsStringCanaryCount -= 1
   }
@@ -454,144 +469,6 @@ var nsStringCanaryCount = 0
   @objc override func character(at index: Int) -> unichar {
     fatalError("out-of-bounds access")
   }
-}
-
-RuntimeFoundationWrappers.test(
-  "_stdlib_compareNSStringDeterministicUnicodeCollation/NoLeak"
-) {
-  nsStringCanaryCount = 0
-  autoreleasepool {
-    let a = NSStringCanary()
-    let b = NSStringCanary()
-    expectEqual(2, nsStringCanaryCount)
-    _stdlib_compareNSStringDeterministicUnicodeCollation(a, b)
-  }
-  expectEqual(0, nsStringCanaryCount)
-}
-
-RuntimeFoundationWrappers.test(
-  "_stdlib_compareNSStringDeterministicUnicodeCollationPtr/NoLeak"
-) {
-  nsStringCanaryCount = 0
-  autoreleasepool {
-    let a = NSStringCanary()
-    let b = NSStringCanary()
-    expectEqual(2, nsStringCanaryCount)
-    let ptrA = unsafeBitCast(a, to: OpaquePointer.self)
-    let ptrB = unsafeBitCast(b, to: OpaquePointer.self)
-    _stdlib_compareNSStringDeterministicUnicodeCollationPointer(ptrA, ptrB)
-  }
-  expectEqual(0, nsStringCanaryCount)
-}
-
-RuntimeFoundationWrappers.test("_stdlib_NSStringHashValue/NoLeak") {
-  nsStringCanaryCount = 0
-  autoreleasepool {
-    let a = NSStringCanary()
-    expectEqual(1, nsStringCanaryCount)
-    _stdlib_NSStringHashValue(a, true)
-  }
-  expectEqual(0, nsStringCanaryCount)
-}
-
-RuntimeFoundationWrappers.test("_stdlib_NSStringHashValueNonASCII/NoLeak") {
-  nsStringCanaryCount = 0
-  autoreleasepool {
-    let a = NSStringCanary()
-    expectEqual(1, nsStringCanaryCount)
-    _stdlib_NSStringHashValue(a, false)
-  }
-  expectEqual(0, nsStringCanaryCount)
-}
-
-RuntimeFoundationWrappers.test("_stdlib_NSStringHashValuePointer/NoLeak") {
-  nsStringCanaryCount = 0
-  autoreleasepool {
-    let a = NSStringCanary()
-    expectEqual(1, nsStringCanaryCount)
-    let ptrA = unsafeBitCast(a, to: OpaquePointer.self)
-    _stdlib_NSStringHashValuePointer(ptrA, true)
-  }
-  expectEqual(0, nsStringCanaryCount)
-}
-
-RuntimeFoundationWrappers.test("_stdlib_NSStringHashValuePointerNonASCII/NoLeak") {
-  nsStringCanaryCount = 0
-  autoreleasepool {
-    let a = NSStringCanary()
-    expectEqual(1, nsStringCanaryCount)
-    let ptrA = unsafeBitCast(a, to: OpaquePointer.self)
-    _stdlib_NSStringHashValuePointer(ptrA, false)
-  }
-  expectEqual(0, nsStringCanaryCount)
-}
-
-RuntimeFoundationWrappers.test("_stdlib_NSStringHasPrefixNFDPointer/NoLeak") {
-  nsStringCanaryCount = 0
-  autoreleasepool {
-    let a = NSStringCanary()
-    let b = NSStringCanary()
-    expectEqual(2, nsStringCanaryCount)
-    let ptrA = unsafeBitCast(a, to: OpaquePointer.self)
-    let ptrB = unsafeBitCast(b, to: OpaquePointer.self)
-    _stdlib_NSStringHasPrefixNFDPointer(ptrA, ptrB)
-  }
-  expectEqual(0, nsStringCanaryCount)
-}
-
-RuntimeFoundationWrappers.test("_stdlib_NSStringHasSuffixNFDPointer/NoLeak") {
-  nsStringCanaryCount = 0
-  autoreleasepool {
-    let a = NSStringCanary()
-    let b = NSStringCanary()
-    expectEqual(2, nsStringCanaryCount)
-    let ptrA = unsafeBitCast(a, to: OpaquePointer.self)
-    let ptrB = unsafeBitCast(b, to: OpaquePointer.self)
-    _stdlib_NSStringHasSuffixNFDPointer(ptrA, ptrB)
-  }
-  expectEqual(0, nsStringCanaryCount)
-}
-
-RuntimeFoundationWrappers.test("_stdlib_NSStringHasPrefixNFD/NoLeak") {
-  nsStringCanaryCount = 0
-  autoreleasepool {
-    let a = NSStringCanary()
-    let b = NSStringCanary()
-    expectEqual(2, nsStringCanaryCount)
-    _stdlib_NSStringHasPrefixNFD(a, b)
-  }
-  expectEqual(0, nsStringCanaryCount)
-}
-
-RuntimeFoundationWrappers.test("_stdlib_NSStringHasSuffixNFD/NoLeak") {
-  nsStringCanaryCount = 0
-  autoreleasepool {
-    let a = NSStringCanary()
-    let b = NSStringCanary()
-    expectEqual(2, nsStringCanaryCount)
-    _stdlib_NSStringHasSuffixNFD(a, b)
-  }
-  expectEqual(0, nsStringCanaryCount)
-}
-
-RuntimeFoundationWrappers.test("_stdlib_NSStringLowercaseString/NoLeak") {
-  nsStringCanaryCount = 0
-  autoreleasepool {
-    let a = NSStringCanary()
-    expectEqual(1, nsStringCanaryCount)
-    _stdlib_NSStringLowercaseString(a)
-  }
-  expectEqual(0, nsStringCanaryCount)
-}
-
-RuntimeFoundationWrappers.test("_stdlib_NSStringUppercaseString/NoLeak") {
-  nsStringCanaryCount = 0
-  autoreleasepool {
-    let a = NSStringCanary()
-    expectEqual(1, nsStringCanaryCount)
-    _stdlib_NSStringUppercaseString(a)
-  }
-  expectEqual(0, nsStringCanaryCount)
 }
 
 RuntimeFoundationWrappers.test("_stdlib_CFStringCreateCopy/NoLeak") {
@@ -680,7 +557,7 @@ Reflection.test("MetatypeMirror") {
     expectEqual(expectedObjCProtocolConcrete, output)
 
     let compositionConcreteMetatype = (SomeNativeProto & SomeObjCProto).self
-    let expectedComposition = "- a.SomeObjCProto & a.SomeNativeProto #0\n"
+    let expectedComposition = "- a.SomeNativeProto & a.SomeObjCProto #0\n"
     output = ""
     dump(compositionConcreteMetatype, to: &output)
     expectEqual(expectedComposition, output)
@@ -751,8 +628,8 @@ Reflection.test("Unmanaged/not-nil") {
   dump(optionalURL, to: &output)
 
   let expected =
-    "▿ Optional(Swift.Unmanaged<__ObjC.CFURL>(_value: http://llvm.org/))\n" +
-    "  ▿ some: Swift.Unmanaged<__ObjC.CFURL>\n" +
+    "▿ Optional(Swift.Unmanaged<__C.CFURLRef>(_value: http://llvm.org/))\n" +
+    "  ▿ some: Swift.Unmanaged<__C.CFURLRef>\n" +
     "    - _value: http://llvm.org/ #0\n" +
     "      - super: NSObject\n"
 
@@ -804,7 +681,7 @@ Reflection.test("TupleMirror/NoLeak") {
   }
 }
 
-class TestArtificialSubclass: NSObject {
+@objc @objcMembers class TestArtificialSubclass: NSObject {
   dynamic var foo = "foo"
 }
 
@@ -812,11 +689,21 @@ var KVOHandle = 0
 
 Reflection.test("Name of metatype of artificial subclass") {
   let obj = TestArtificialSubclass()
+
+  expectEqual("\(type(of: obj))", "TestArtificialSubclass")
+  expectEqual(String(describing: type(of: obj)), "TestArtificialSubclass")
+  expectEqual(String(reflecting: type(of: obj)), "a.TestArtificialSubclass")
+
   // Trigger the creation of a KVO subclass for TestArtificialSubclass.
   obj.addObserver(obj, forKeyPath: "foo", options: [.new], context: &KVOHandle)
+  expectEqual("\(type(of: obj))", "TestArtificialSubclass")
+  expectEqual(String(describing: type(of: obj)), "TestArtificialSubclass")
+  expectEqual(String(reflecting: type(of: obj)), "a.TestArtificialSubclass")
   obj.removeObserver(obj, forKeyPath: "foo")
 
   expectEqual("\(type(of: obj))", "TestArtificialSubclass")
+  expectEqual(String(describing: type(of: obj)), "TestArtificialSubclass")
+  expectEqual(String(reflecting: type(of: obj)), "a.TestArtificialSubclass")
 }
 
 @objc class StringConvertibleInDebugAndOtherwise : NSObject {
@@ -853,6 +740,29 @@ ObjCConformsToProtocolTestSuite.test("cast/instance") {
 ObjCConformsToProtocolTestSuite.test("cast/metatype") {
   expectTrue(SomeClass.self is SomeObjCProto.Type)
   expectTrue(SomeSubclass.self is SomeObjCProto.Type)
+}
+
+// SR-7357
+
+extension Optional where Wrapped == NSData {
+    private class Inner {
+    }
+
+    var asInner: Inner {
+        return Inner()
+    }
+}
+
+var RuntimeClassNamesTestSuite = TestSuite("runtime class names")
+
+RuntimeClassNamesTestSuite.test("private class nested in same-type-constrained extension") {
+  let base: NSData? = nil
+  let util = base.asInner
+
+  let clas = unsafeBitCast(type(of: util), to: NSObject.self)
+  let desc = clas.description
+  expectEqual("_TtCE1a", desc.prefix(7))
+  expectEqual("Inner", desc.suffix(5))
 }
 
 runAllTests()

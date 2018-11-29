@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -185,7 +185,7 @@ REPLCompletions::REPLCompletions()
   // Consumer.
   CompletionCallbacksFactory.reset(
       ide::makeCodeCompletionCallbacksFactory(CompletionContext,
-                                              *Consumer.get()));
+                                              *Consumer));
 }
 
 static void
@@ -193,7 +193,7 @@ doCodeCompletion(SourceFile &SF, StringRef EnteredCode, unsigned *BufferID,
                  CodeCompletionCallbacksFactory *CompletionCallbacksFactory) {
   // Temporarily disable printing the diagnostics.
   ASTContext &Ctx = SF.getASTContext();
-  auto DiagnosticConsumers = Ctx.Diags.takeConsumers();
+  DiagnosticTransaction DelayedDiags(Ctx.Diags);
 
   std::string AugmentedCode = EnteredCode.str();
   AugmentedCode += '\0';
@@ -206,30 +206,23 @@ doCodeCompletion(SourceFile &SF, StringRef EnteredCode, unsigned *BufferID,
   // Parse, typecheck and temporarily insert the incomplete code into the AST.
   const unsigned OriginalDeclCount = SF.Decls.size();
 
-  unsigned CurElem = OriginalDeclCount;
-  PersistentParserState PersistentState;
+  PersistentParserState PersistentState(Ctx);
   std::unique_ptr<DelayedParsingCallbacks> DelayedCB(
       new CodeCompleteDelayedCallbacks(Ctx.SourceMgr.getCodeCompletionLoc()));
   bool Done;
   do {
     parseIntoSourceFile(SF, *BufferID, &Done, nullptr, &PersistentState,
                         DelayedCB.get());
-    performTypeChecking(SF, PersistentState.getTopLevelContext(), None, 
-                        CurElem);
-    CurElem = SF.Decls.size();
   } while (!Done);
+  performTypeChecking(SF, PersistentState.getTopLevelContext(), None,
+                      OriginalDeclCount);
 
   performDelayedParsing(&SF, PersistentState, CompletionCallbacksFactory);
 
   // Now we are done with code completion.  Remove the declarations we
   // temporarily inserted.
   SF.Decls.resize(OriginalDeclCount);
-
-  // Add the diagnostic consumers back.
-  for (auto DC : DiagnosticConsumers)
-    Ctx.Diags.addConsumer(*DC);
-
-  Ctx.Diags.resetHadAnyError();
+  DelayedDiags.abort();
 }
 
 void REPLCompletions::populate(SourceFile &SF, StringRef EnteredCode) {

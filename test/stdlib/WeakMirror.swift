@@ -2,15 +2,14 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
-// RUN: rm -rf %t
-// RUN: mkdir -p %t
+// RUN: %empty-directory(%t)
 //
 // RUN: if [ %target-runtime == "objc" ]; \
 // RUN: then \
@@ -19,6 +18,7 @@
 // RUN: else \
 // RUN:   %target-build-swift %s -Xfrontend -disable-access-control -o %t/Mirror; \
 // RUN: fi
+// RUN: %target-codesign %t/Mirror
 // RUN: %target-run %t/Mirror
 // REQUIRES: executable_test
 
@@ -99,12 +99,30 @@ mirrors.test("struct/StructHasNativeWeakReference") {
   print(extractedChild)
 }
 
+// SR-8878: Using Mirror to access a weak reference results in object
+// being retained indefinitely
+mirrors.test("class/NativeSwiftClassHasNativeWeakReferenceNoLeak") {
+  weak var verifier: AnyObject?
+  do {
+    let parent = NativeSwiftClassHasWeak(x: 1010)
+    let child = NativeSwiftClass(x: 2020)
+    verifier = child
+    parent.weakProperty = child
+    let mirror = Mirror(reflecting: parent)
+    let children = Array(mirror.children)
+    let extractedChild = children[0].1 as! NativeSwiftClass
+    expectNotNil(extractedChild)
+    expectNotNil(verifier)
+  }
+  expectNil(verifier)
+}
+
 #if _runtime(_ObjC)
 
 import Foundation
 
 @objc protocol ObjCClassExistential : class {
-  weak var weakProperty: AnyObject? { get set }
+  var weakProperty: AnyObject? { get set }
   var x: Int { get }
 }
 

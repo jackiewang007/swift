@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -17,20 +17,24 @@
 
 using namespace swift;
 
+PrettyStackTraceSILFunctionTransform::PrettyStackTraceSILFunctionTransform(
+  SILFunctionTransform *SFT, unsigned PassNumber):
+  PrettyStackTraceSILFunction("Running SIL Function Transform",
+                              SFT->getFunction()),
+  SFT(SFT), PassNumber(PassNumber) {}
+
 void PrettyStackTraceSILFunctionTransform::print(llvm::raw_ostream &out) const {
   out << "While running pass #" << PassNumber
-      << " SILFunctionTransform \"" << SFT->getName()
+      << " SILFunctionTransform \"" << SFT->getID()
       << "\" on SILFunction ";
   if (!SFT->getFunction()) {
     out << " <<null>>";
     return;
   }
-  out << "\"";
-  SFT->getFunction()->printName(out);
-  out << "\".\n";
+  printFunctionInfo(out);
 }
 
 void PrettyStackTraceSILModuleTransform::print(llvm::raw_ostream &out) const {
   out << "While running pass #" << PassNumber
-      << " SILModuleTransform \"" << SMT->getName() << "\".\n";
+      << " SILModuleTransform \"" << SMT->getID() << "\".\n";
 }

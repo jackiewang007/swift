@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -17,9 +17,11 @@ import Darwin
 // CGAffineTransform
 //===----------------------------------------------------------------------===//
 
-extension CGAffineTransform: Equatable {}
-public func ==(lhs: CGAffineTransform, rhs: CGAffineTransform) -> Bool {
-  return lhs.__equalTo(rhs)
+extension CGAffineTransform: Equatable {
+  public static func ==(lhs: CGAffineTransform,
+                        rhs: CGAffineTransform) -> Bool {
+    return lhs.__equalTo(rhs)
+  }
 }
 
 //===----------------------------------------------------------------------===//
@@ -27,7 +29,7 @@ public func ==(lhs: CGAffineTransform, rhs: CGAffineTransform) -> Bool {
 //===----------------------------------------------------------------------===//
 
 extension CGColor {
-  @available(OSX 10.3, iOS 2.0, *)
+  @available(macOS 10.3, iOS 2.0, *)
   public var components: [CGFloat]? {
     guard let pointer = self.__unsafeComponents else { return nil }
     let buffer = UnsafeBufferPointer(start: pointer, count: self.numberOfComponents)
@@ -46,11 +48,49 @@ extension CGColor {
 #endif
 }
 
-extension CGColor: Equatable {}
-public func ==(lhs: CGColor, rhs: CGColor) -> Bool {
-  return lhs.__equalTo(rhs)
+public protocol _CGColorInitTrampoline {
+#if os(macOS)
+  init(red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat)
+#else
+  init?(colorSpace space: CGColorSpace, components: UnsafePointer<CGFloat>)
+#endif
 }
 
+extension _CGColorInitTrampoline {
+  public init(_colorLiteralRed red: Float, green: Float, blue: Float,
+              alpha: Float) {
+    let red = CGFloat(red)
+    let green = CGFloat(green)
+    let blue = CGFloat(blue)
+    let alpha = CGFloat(alpha)
+    // This initializer used to call the CGColorCreateGenericRGB, which is
+    // known to Swift as CGColor(red:green:blue:alpha:). Unfortunately this API
+    // is not available on platforms other than macOS. It would be possible to
+    // replicate the exact functionality of that API using
+    // kGColorSpaceGenericRGB, but it is marked as unavailable for Swift. The
+    // next best option is to use an sRGB color space, which is available but
+    // was introduced a little later than the (now legacy) generic RGB color
+    // space.
+    // Should be OK, since this code only affects the playgrounds, where
+    // you can't really pick the OS version other than "what's currently
+    // shipping".
+#if os(macOS)
+    self.init(red: red, green: green, blue: blue, alpha: alpha)
+#else
+    if #available(iOS 9.0, tvOS 9.0, watchOS 2.0, *) {
+      guard let space = CGColorSpace(name: CGColorSpace.sRGB) else {
+        fatalError("Unable to create an sRGB color space")
+      }
+      self.init(colorSpace: space, components: [red, green, blue, alpha])!
+    }
+    else {
+      fatalError("Cannot create a CGColor on this version of OS")
+    }
+#endif
+  }
+}
+
+extension CGColor : _CGColorInitTrampoline, _ExpressibleByColorLiteral { }
 
 //===----------------------------------------------------------------------===//
 // CGColorSpace
@@ -59,7 +99,8 @@ public func ==(lhs: CGColor, rhs: CGColor) -> Bool {
 extension CGColorSpace {
   public var colorTable: [UInt8]? {
     guard self.model == .indexed else { return nil }
-    var table = [UInt8](repeating: 0, count: self.__colorTableCount)
+    let components = self.baseColorSpace?.numberOfComponents ?? 1
+    var table = [UInt8](repeating: 0, count: self.__colorTableCount * components)
     self.__unsafeGetColorTable(&table)
     return table
   }
@@ -217,11 +258,14 @@ public extension CGPoint {
   }
 }
 
-extension CGPoint : CustomReflectable, CustomPlaygroundQuickLookable {
+extension CGPoint : CustomReflectable {
   public var customMirror: Mirror {
     return Mirror(self, children: ["x": x, "y": y], displayStyle: .`struct`)
   }
+}
 
+extension CGPoint : _CustomPlaygroundQuickLookable {
+  @available(*, deprecated, message: "CGPoint.customPlaygroundQuickLook will be removed in a future Swift version")
   public var customPlaygroundQuickLook: PlaygroundQuickLook {
     return .point(Double(x), Double(y))
   }
@@ -233,10 +277,26 @@ extension CGPoint : CustomDebugStringConvertible {
   }
 }
 
-extension CGPoint : Equatable {}
-@_transparent // @fragile
-public func == (lhs: CGPoint, rhs: CGPoint) -> Bool {
-  return lhs.x == rhs.x  &&  lhs.y == rhs.y
+extension CGPoint : Equatable {
+  @_transparent // @fragile
+  public static func == (lhs: CGPoint, rhs: CGPoint) -> Bool {
+    return lhs.x == rhs.x  &&  lhs.y == rhs.y
+  }
+}
+
+extension CGPoint : Codable {
+  public init(from decoder: Decoder) throws {
+    var container = try decoder.unkeyedContainer()
+    let x = try container.decode(CGFloat.self)
+    let y = try container.decode(CGFloat.self)
+    self.init(x: x, y: y)
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.unkeyedContainer()
+    try container.encode(x)
+    try container.encode(y)
+  }
 }
 
 public extension CGSize {
@@ -265,14 +325,17 @@ public extension CGSize {
   }
 }
 
-extension CGSize : CustomReflectable, CustomPlaygroundQuickLookable {
+extension CGSize : CustomReflectable {
   public var customMirror: Mirror {
     return Mirror(
       self,
       children: ["width": width, "height": height],
       displayStyle: .`struct`)
   }
+}
 
+extension CGSize : _CustomPlaygroundQuickLookable {
+  @available(*, deprecated, message: "CGSize.customPlaygroundQuickLook will be removed in a future Swift version")
   public var customPlaygroundQuickLook: PlaygroundQuickLook {
     return .size(Double(width), Double(height))
   }
@@ -284,10 +347,26 @@ extension CGSize : CustomDebugStringConvertible {
   }
 }
 
-extension CGSize : Equatable {}
-@_transparent // @fragile
-public func == (lhs: CGSize, rhs: CGSize) -> Bool {
-  return lhs.width == rhs.width  &&  lhs.height == rhs.height
+extension CGSize : Equatable {
+  @_transparent // @fragile
+  public static func == (lhs: CGSize, rhs: CGSize) -> Bool {
+    return lhs.width == rhs.width  &&  lhs.height == rhs.height
+  }
+}
+
+extension CGSize : Codable {
+  public init(from decoder: Decoder) throws {
+    var container = try decoder.unkeyedContainer()
+    let width = try container.decode(CGFloat.self)
+    let height = try container.decode(CGFloat.self)
+    self.init(width: width, height: height)
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.unkeyedContainer()
+    try container.encode(width)
+    try container.encode(height)
+  }
 }
 
 public extension CGVector {
@@ -307,12 +386,33 @@ public extension CGVector {
   }
 }
 
-extension CGVector : Equatable {}
-@_transparent // @fragile
-public func == (lhs: CGVector, rhs: CGVector) -> Bool {
-  return lhs.dx == rhs.dx  &&  lhs.dy == rhs.dy
+extension CGVector : Equatable {
+  @_transparent // @fragile
+  public static func == (lhs: CGVector, rhs: CGVector) -> Bool {
+    return lhs.dx == rhs.dx  &&  lhs.dy == rhs.dy
+  }
 }
 
+extension CGVector : CustomDebugStringConvertible {
+  public var debugDescription : String {
+    return "(\(dx), \(dy))"
+  }
+}
+
+extension CGVector : Codable {
+  public init(from decoder: Decoder) throws {
+    var container = try decoder.unkeyedContainer()
+    let dx = try container.decode(CGFloat.self)
+    let dy = try container.decode(CGFloat.self)
+    self.init(dx: dx, dy: dy)
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.unkeyedContainer()
+    try container.encode(dx)
+    try container.encode(dy)
+  }
+}
 
 public extension CGRect {
   static var zero: CGRect {
@@ -357,16 +457,25 @@ public extension CGRect {
            from: fromEdge)
     return (slice, remainder)
   }
+
+  @available(*, unavailable, renamed: "minX")
+  var x: CGFloat { return minX }
+
+  @available(*, unavailable, renamed: "minY")
+  var y: CGFloat { return minY }
 }
 
-extension CGRect : CustomReflectable, CustomPlaygroundQuickLookable {
+extension CGRect : CustomReflectable {
   public var customMirror: Mirror {
     return Mirror(
       self,
       children: ["origin": origin, "size": size],
       displayStyle: .`struct`)
   }
+}
 
+extension CGRect : _CustomPlaygroundQuickLookable {
+  @available(*, deprecated, message: "CGRect.customPlaygroundQuickLook will be removed in a future Swift version")
   public var customPlaygroundQuickLook: PlaygroundQuickLook {
     return .rectangle(
       Double(origin.x), Double(origin.y),
@@ -380,10 +489,26 @@ extension CGRect : CustomDebugStringConvertible {
   }
 }
 
-extension CGRect : Equatable {}
-@_transparent // @fragile
-public func == (lhs: CGRect, rhs: CGRect) -> Bool {
-  return lhs.equalTo(rhs)
+extension CGRect : Equatable {
+  @_transparent // @fragile
+  public static func == (lhs: CGRect, rhs: CGRect) -> Bool {
+    return lhs.equalTo(rhs)
+  }
+}
+
+extension CGRect : Codable {
+  public init(from decoder: Decoder) throws {
+    var container = try decoder.unkeyedContainer()
+    let origin = try container.decode(CGPoint.self)
+    let size = try container.decode(CGSize.self)
+    self.init(origin: origin, size: size)
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.unkeyedContainer()
+    try container.encode(origin)
+    try container.encode(size)
+  }
 }
 
 extension CGAffineTransform {
@@ -393,13 +518,36 @@ extension CGAffineTransform {
  }
 }
 
+extension CGAffineTransform : Codable {
+  public init(from decoder: Decoder) throws {
+    var container = try decoder.unkeyedContainer()
+    let a = try container.decode(CGFloat.self)
+    let b = try container.decode(CGFloat.self)
+    let c = try container.decode(CGFloat.self)
+    let d = try container.decode(CGFloat.self)
+    let tx = try container.decode(CGFloat.self)
+    let ty = try container.decode(CGFloat.self)
+    self.init(a: a, b: b, c: c, d: d, tx: tx, ty: ty)
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.unkeyedContainer()
+    try container.encode(a)
+    try container.encode(b)
+    try container.encode(c)
+    try container.encode(d)
+    try container.encode(tx)
+    try container.encode(ty)
+  }
+}
+
 //===----------------------------------------------------------------------===//
 // CGImage
 //===----------------------------------------------------------------------===//
 
 extension CGImage {
   public func copy(maskingColorComponents components: [CGFloat]) -> CGImage? {
-    return self.__copy(maskingColorComponents: UnsafePointer(components))
+    return self.__copy(maskingColorComponents: components)
   }
 }
 
@@ -469,11 +617,6 @@ extension CGPath {
     return self.__containsPoint(transform: [transform],
      point: point, eoFill: (rule == .evenOdd))
   }
-}
-
-extension CGPath: Equatable {}
-public func ==(lhs: CGPath, rhs: CGPath) -> Bool {
-  return lhs.__equalTo(rhs)
 }
 
 extension CGMutablePath {

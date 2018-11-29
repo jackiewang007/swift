@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -46,7 +46,7 @@ public func assert(
   // Only assert in debug mode.
   if _isDebugAssertConfiguration() {
     if !_branchHint(condition(), expected: true) {
-      _assertionFailed("assertion failed", message(), file, line,
+      _assertionFailure("Assertion failed", message(), file: file, line: line,
         flags: _fatalErrorFlags())
     }
   }
@@ -85,10 +85,10 @@ public func precondition(
   _ message: @autoclosure () -> String = String(),
   file: StaticString = #file, line: UInt = #line
 ) {
-  // Only check in debug and release mode.  In release mode just trap.
+  // Only check in debug and release mode. In release mode just trap.
   if _isDebugAssertConfiguration() {
     if !_branchHint(condition(), expected: true) {
-      _assertionFailed("precondition failed", message(), file, line,
+      _assertionFailure("Precondition failed", message(), file: file, line: line,
         flags: _fatalErrorFlags())
     }
   } else if _isReleaseAssertConfiguration() {
@@ -122,13 +122,14 @@ public func precondition(
 ///     where `assertionFailure(_:file:line:)` is called.
 ///   - line: The line number to print along with `message`. The default is the
 ///     line number where `assertionFailure(_:file:line:)` is called.
+@inlinable
 @inline(__always)
 public func assertionFailure(
   _ message: @autoclosure () -> String = String(),
   file: StaticString = #file, line: UInt = #line
 ) {
   if _isDebugAssertConfiguration() {
-    _assertionFailed("fatal error", message(), file, line,
+    _assertionFailure("Fatal error", message(), file: file, line: line,
       flags: _fatalErrorFlags())
   }
   else if _isFastAssertConfiguration() {
@@ -167,7 +168,7 @@ public func preconditionFailure(
 ) -> Never {
   // Only check in debug and release mode.  In release mode just trap.
   if _isDebugAssertConfiguration() {
-    _assertionFailed("fatal error", message(), file, line,
+    _assertionFailure("Fatal error", message(), file: file, line: line,
       flags: _fatalErrorFlags())
   } else if _isReleaseAssertConfiguration() {
     Builtin.int_trap()
@@ -188,7 +189,7 @@ public func fatalError(
   _ message: @autoclosure () -> String = String(),
   file: StaticString = #file, line: UInt = #line
 ) -> Never {
-  _assertionFailed("fatal error", message(), file, line,
+  _assertionFailure("Fatal error", message(), file: file, line: line,
     flags: _fatalErrorFlags())
 }
 
@@ -198,15 +199,15 @@ public func fatalError(
 /// building in fast mode they are disabled.  In release mode they don't print
 /// an error message but just trap. In debug mode they print an error message
 /// and abort.
-@_transparent
-public func _precondition(
+@usableFromInline @_transparent
+internal func _precondition(
   _ condition: @autoclosure () -> Bool, _ message: StaticString = StaticString(),
   file: StaticString = #file, line: UInt = #line
 ) {
   // Only check in debug and release mode. In release mode just trap.
   if _isDebugAssertConfiguration() {
     if !_branchHint(condition(), expected: true) {
-      _fatalErrorMessage("fatal error", message, file, line,
+      _fatalErrorMessage("Fatal error", message, file: file, line: line,
         flags: _fatalErrorFlags())
     }
   } else if _isReleaseAssertConfiguration() {
@@ -215,8 +216,8 @@ public func _precondition(
   }
 }
 
-@_transparent
-public func _preconditionFailure(
+@usableFromInline @_transparent
+internal func _preconditionFailure(
   _ message: StaticString = StaticString(),
   file: StaticString = #file, line: UInt = #line
 ) -> Never {
@@ -235,8 +236,8 @@ public func _overflowChecked<T>(
   let (result, error) = args
   if _isDebugAssertConfiguration() {
     if _branchHint(error, expected: false) {
-      _fatalErrorMessage("fatal error", "Overflow/underflow", file, line,
-        flags: _fatalErrorFlags())
+      _fatalErrorMessage("Fatal error", "Overflow/underflow", 
+        file: file, line: line, flags: _fatalErrorFlags())
     }
   } else {
     Builtin.condfail(error._value)
@@ -252,26 +253,26 @@ public func _overflowChecked<T>(
 /// and abort.
 /// They are meant to be used when the check is not comprehensively checking for
 /// all possible errors.
-@_transparent
-public func _debugPrecondition(
+@usableFromInline @_transparent
+internal func _debugPrecondition(
   _ condition: @autoclosure () -> Bool, _ message: StaticString = StaticString(),
   file: StaticString = #file, line: UInt = #line
 ) {
   // Only check in debug mode.
-  if _isDebugAssertConfiguration() {
+  if _slowPath(_isDebugAssertConfiguration()) {
     if !_branchHint(condition(), expected: true) {
-      _fatalErrorMessage("fatal error", message, file, line,
+      _fatalErrorMessage("Fatal error", message, file: file, line: line,
         flags: _fatalErrorFlags())
     }
   }
 }
 
-@_transparent
-public func _debugPreconditionFailure(
+@usableFromInline @_transparent
+internal func _debugPreconditionFailure(
   _ message: StaticString = StaticString(),
   file: StaticString = #file, line: UInt = #line
 ) -> Never {
-  if _isDebugAssertConfiguration() {
+  if _slowPath(_isDebugAssertConfiguration()) {
     _precondition(false, message, file: file, line: line)
   }
   _conditionallyUnreachable()
@@ -283,24 +284,24 @@ public func _debugPreconditionFailure(
 /// standard library. They are only enable when the standard library is built
 /// with the build configuration INTERNAL_CHECKS_ENABLED enabled. Otherwise, the
 /// call to this function is a noop.
-@_transparent
-public func _sanityCheck(
+@usableFromInline @_transparent
+internal func _internalInvariant(
   _ condition: @autoclosure () -> Bool, _ message: StaticString = StaticString(),
   file: StaticString = #file, line: UInt = #line
 ) {
 #if INTERNAL_CHECKS_ENABLED
   if !_branchHint(condition(), expected: true) {
-    _fatalErrorMessage("fatal error", message, file, line,
+    _fatalErrorMessage("Fatal error", message, file: file, line: line,
       flags: _fatalErrorFlags())
   }
 #endif
 }
 
-@_transparent
-public func _sanityCheckFailure(
+@usableFromInline @_transparent
+internal func _internalInvariantFailure(
   _ message: StaticString = StaticString(),
   file: StaticString = #file, line: UInt = #line
 ) -> Never {
-  _sanityCheck(false, message, file: file, line: line)
+  _internalInvariant(false, message, file: file, line: line)
   _conditionallyUnreachable()
 }

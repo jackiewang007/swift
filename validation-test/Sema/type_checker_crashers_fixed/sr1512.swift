@@ -1,4 +1,4 @@
-// RUN: not %target-swift-frontend %s -parse
+// RUN: not %target-swift-frontend %s -typecheck
 
 public struct CollectionWrapper<C:RangeReplaceableCollection where C.Index:Comparable> {
 
@@ -32,13 +32,13 @@ extension CollectionWrapper : Collection {
 
 	public var isEmpty: Bool { return collection.isEmpty }
 
-    public var count: C.IndexDistance { return collection.count }
+    public var count: Int { return collection.count }
 
     public var first: C.Iterator.Element? { return collection.first }
 
 	public func index(after idx: C.Index) -> C.Index { return collection.index(after: idx) }
 
-	public func index(_ idx: C.Index, offsetBy offset: C.IndexDistance, limitedBy limit: C.Index? = nil) -> C.Index {
+	public func index(_ idx: C.Index, offsetBy offset: Int, limitedBy limit: C.Index? = nil) -> C.Index {
 		return collection.index(idx, offsetBy: offset, limitedBy: limit)
 	}
 }

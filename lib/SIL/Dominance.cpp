@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -14,20 +14,26 @@
 #include "swift/SIL/SILBasicBlock.h"
 #include "swift/SIL/SILArgument.h"
 #include "swift/SIL/Dominance.h"
-#include "llvm/Support/GenericDomTree.h"
 #include "llvm/Support/GenericDomTreeConstruction.h"
 
 using namespace swift;
 
-template class llvm::DominatorTreeBase<SILBasicBlock>;
-template class llvm::DominatorBase<SILBasicBlock>;
+template class llvm::DominatorTreeBase<SILBasicBlock, false>;
+template class llvm::DominatorTreeBase<SILBasicBlock, true>;
 template class llvm::DomTreeNodeBase<SILBasicBlock>;
+
+namespace llvm {
+namespace DomTreeBuilder {
+template void Calculate<SILDomTree>(SILDomTree &DT);
+template void Calculate<SILPostDomTree>(SILPostDomTree &DT);
+} // namespace DomTreeBuilder
+} // namespace llvm
 
 /// Compute the immediate-dominators map.
 DominanceInfo::DominanceInfo(SILFunction *F)
-    : DominatorTreeBase(/*isPostDom*/ false) {
-      assert(!F->isExternalDeclaration() &&
-             "Make sure the function is a definition and not a declaration.");
+    : DominatorTreeBase() {
+  assert(!F->isExternalDeclaration() &&
+         "Make sure the function is a definition and not a declaration.");
   recalculate(*F);
 }
 
@@ -55,7 +61,7 @@ bool DominanceInfo::properlyDominates(SILInstruction *a, SILInstruction *b) {
 
 /// Does value A properly dominate instruction B?
 bool DominanceInfo::properlyDominates(SILValue a, SILInstruction *b) {
-  if (auto *Inst = dyn_cast<SILInstruction>(a)) {
+  if (auto *Inst = a->getDefiningInstruction()) {
     return properlyDominates(Inst, b);
   }
   if (auto *Arg = dyn_cast<SILArgument>(a)) {
@@ -81,7 +87,7 @@ void DominanceInfo::verify() const {
 
 /// Compute the immediate-post-dominators map.
 PostDominanceInfo::PostDominanceInfo(SILFunction *F)
-  : DominatorTreeBase(/*isPostDom*/ true) {
+   : PostDominatorTreeBase() {
   assert(!F->isExternalDeclaration() &&
          "Cannot construct a post dominator tree for a declaration");
   recalculate(*F);

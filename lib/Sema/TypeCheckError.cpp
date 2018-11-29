@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2018 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -18,6 +18,8 @@
 #include "TypeChecker.h"
 #include "swift/AST/ASTWalker.h"
 #include "swift/AST/DiagnosticsSema.h"
+#include "swift/AST/Initializer.h"
+#include "swift/AST/Pattern.h"
 
 using namespace swift;
 
@@ -39,31 +41,26 @@ private:
   };
   unsigned TheKind : 2;
   unsigned IsRethrows : 1;
-  unsigned IsProtocolMethod : 1;
-  unsigned ParamCount : 28;
+  unsigned ParamCount : 2;
 
 public:
   explicit AbstractFunction(Kind kind, Expr *fn)
     : TheKind(kind),
       IsRethrows(false),
-      IsProtocolMethod(false),
       ParamCount(1) {
     TheExpr = fn;
   }
 
-  explicit AbstractFunction(AbstractFunctionDecl *fn,
-                            bool isProtocolMethod)
+  explicit AbstractFunction(AbstractFunctionDecl *fn)
     : TheKind(Kind::Function),
       IsRethrows(fn->getAttrs().hasAttribute<RethrowsAttr>()),
-      IsProtocolMethod(isProtocolMethod),
-      ParamCount(fn->getNumParameterLists()) {
+      ParamCount(fn->hasImplicitSelfDecl() ? 2 : 1) {
     TheFunction = fn;
   }
 
   explicit AbstractFunction(AbstractClosureExpr *closure)
     : TheKind(Kind::Closure),
       IsRethrows(false),
-      IsProtocolMethod(false),
       ParamCount(1) {
     TheClosure = closure;
   }
@@ -71,7 +68,6 @@ public:
   explicit AbstractFunction(ParamDecl *parameter)
     : TheKind(Kind::Parameter),
       IsRethrows(false),
-      IsProtocolMethod(false),
       ParamCount(1) {
     TheParameter = parameter;
   }
@@ -82,7 +78,7 @@ public:
   bool isBodyRethrows() const { return IsRethrows; }
 
   unsigned getNumArgumentsForFullApply() const {
-    return (ParamCount - unsigned(IsProtocolMethod));
+    return ParamCount;
   }
 
   Type getType() const {
@@ -118,10 +114,6 @@ public:
     return TheExpr;
   }
 
-  bool isProtocolMethod() const {
-    return IsProtocolMethod;
-  }
-
   static AbstractFunction decomposeApply(ApplyExpr *apply,
                                          SmallVectorImpl<Expr*> &args) {
     Expr *fn;
@@ -136,35 +128,36 @@ public:
   static AbstractFunction decomposeFunction(Expr *fn) {
     assert(fn->getValueProvidingExpr() == fn);
 
-    // Look through Optional unwraps
     while (true) {
+      // Look through Optional unwraps.
       if (auto conversion = dyn_cast<ForceValueExpr>(fn)) {
         fn = conversion->getSubExpr()->getValueProvidingExpr();
       } else if (auto conversion = dyn_cast<BindOptionalExpr>(fn)) {
         fn = conversion->getSubExpr()->getValueProvidingExpr();
+      // Look through optional injections.
+      } else if (auto injection = dyn_cast<InjectIntoOptionalExpr>(fn)) {
+        fn = injection->getSubExpr()->getValueProvidingExpr();
+      // Look through function conversions.
+      } else if (auto conversion = dyn_cast<FunctionConversionExpr>(fn)) {
+        fn = conversion->getSubExpr()->getValueProvidingExpr();
+      // Look through base-ignored qualified references (Module.methodName).
+      } else if (auto baseIgnored = dyn_cast<DotSyntaxBaseIgnoredExpr>(fn)) {
+        fn = baseIgnored->getRHS();
+      // Look through closure capture lists.
+      } else if (auto captureList = dyn_cast<CaptureListExpr>(fn)) {
+        fn = captureList->getClosureBody();
       } else {
         break;
       }
     }
-    // Look through function conversions.
-    while (auto conversion = dyn_cast<FunctionConversionExpr>(fn)) {
-      fn = conversion->getSubExpr()->getValueProvidingExpr();
-    }
-
+    
     // Normal function references.
     if (auto declRef = dyn_cast<DeclRefExpr>(fn)) {
       ValueDecl *decl = declRef->getDecl();
       if (auto fn = dyn_cast<AbstractFunctionDecl>(decl)) {
-        return AbstractFunction(fn, false);
+        return AbstractFunction(fn);
       } else if (auto param = dyn_cast<ParamDecl>(decl)) {
         return AbstractFunction(param);
-      }
-
-    // Archetype function references.
-    } else if (auto memberRef = dyn_cast<MemberRefExpr>(fn)) {
-      if (auto fn = dyn_cast<AbstractFunctionDecl>(
-                                          memberRef->getMember().getDecl())) {
-        return AbstractFunction(fn, true);
       }
 
     // Closures.
@@ -188,9 +181,14 @@ class ErrorHandlingWalker : public ASTWalker {
   Impl &asImpl() { return *static_cast<Impl*>(this); }
 public:
   bool walkToDeclPre(Decl *D) override {
+    ShouldRecurse_t recurse = ShouldRecurse;
     // Skip the implementations of all local declarations... except
     // PBD.  We should really just have a PatternBindingStmt.
-    return isa<PatternBindingDecl>(D);
+    if (auto ic = dyn_cast<IfConfigDecl>(D))
+      recurse = asImpl().checkIfConfig(ic);
+    else if (!isa<PatternBindingDecl>(D))
+      recurse = ShouldNotRecurse;
+    return bool(recurse);
   }
 
   std::pair<bool, Expr*> walkToExprPre(Expr *E) override {
@@ -209,6 +207,8 @@ public:
       recurse = asImpl().checkOptionalTry(optionalTryExpr);
     } else if (auto apply = dyn_cast<ApplyExpr>(E)) {
       recurse = asImpl().checkApply(apply);
+    } else if (auto interpolated = dyn_cast<InterpolatedStringLiteralExpr>(E)) {
+      recurse = asImpl().checkInterpolatedStringLiteral(interpolated);
     }
     // Error handling validation (via checkTopLevelErrorHandling) happens after
     // type checking. If an unchecked expression is still around, the code was
@@ -226,8 +226,6 @@ public:
       recurse = asImpl().checkDoCatch(doCatch);
     } else if (auto thr = dyn_cast<ThrowStmt>(S)) {
       recurse = asImpl().checkThrow(thr);
-    } else if (auto ic = dyn_cast<IfConfigStmt>(S)) {
-      recurse = asImpl().checkIfConfig(ic);
     } else {
       assert(!isa<CatchStmt>(S));
     }
@@ -401,6 +399,7 @@ public:
     // But if the expression didn't type-check, suppress diagnostics.
     if (!E->getType() || E->getType()->hasError())
       return Classification::forInvalidCode();
+
     auto type = E->getFn()->getType();
     if (!type) return Classification::forInvalidCode();
     auto fnType = type->getAs<AnyFunctionType>();
@@ -423,6 +422,20 @@ public:
     // count, then this is a call to the opaque value returned from
     // the function.
     if (args.size() != fnRef.getNumArgumentsForFullApply()) {
+      // Special case: a reference to an operator within a type might be
+      // missing 'self'.
+      // FIXME: The issue here is that this is an ill-formed expression, but
+      // we don't know it from the structure of the expression.
+      if (args.size() == 1 && fnRef.getKind() == AbstractFunction::Function &&
+          isa<FuncDecl>(fnRef.getFunction()) &&
+          cast<FuncDecl>(fnRef.getFunction())->isOperator() &&
+          fnRef.getNumArgumentsForFullApply() == 2 &&
+          fnRef.getFunction()->getDeclContext()->isTypeContext()) {
+        // Can only happen with invalid code.
+        assert(fnRef.getFunction()->getASTContext().Diags.hadAnyError());
+        return Classification::forInvalidCode();
+      }
+
       assert(args.size() > fnRef.getNumArgumentsForFullApply() &&
              "partial application was throwing?");
       return Classification::forThrow(PotentialReason::forThrowingApply());
@@ -437,21 +450,15 @@ public:
       Type type = fnRef.getType();
       if (!type) return Classification::forInvalidCode();
 
-      if (fnRef.isProtocolMethod()) {
-        if (auto fnType = type->getAs<AnyFunctionType>()) {
-          type = fnType->getResult();
-        } else {
-          Classification::forInvalidCode();
-        }
-      }
-
       // Use the most significant result from the arguments.
       Classification result;
       for (auto arg : reversed(args)) {
         auto fnType = type->getAs<AnyFunctionType>();
         if (!fnType) return Classification::forInvalidCode();
 
-        result.merge(classifyRethrowsArgument(arg, fnType->getInput()));
+        auto paramType = FunctionType::composeInput(fnType->getASTContext(),
+                                                    fnType->getParams(), false);
+        result.merge(classifyRethrowsArgument(arg, paramType));
         type = fnType->getResult();
       }
       return result;
@@ -498,7 +505,7 @@ private:
 
   Classification classifyThrowingParameterBody(ParamDecl *param,
                                                PotentialReason reason) {
-    assert(param->getType()->lookThroughAllAnyOptionalTypes()->castTo<AnyFunctionType>()->throws());
+    assert(param->getType()->lookThroughAllOptionalTypes()->castTo<AnyFunctionType>()->throws());
 
     // If we're currently doing rethrows-checking on the body of the
     // function which declares the parameter, it's rethrowing-only.
@@ -586,8 +593,11 @@ private:
       Result = ThrowingKind::Throws;
       return ShouldRecurse;
     }
+    ShouldRecurse_t checkInterpolatedStringLiteral(InterpolatedStringLiteralExpr *E) {
+      return ShouldRecurse;
+    }
 
-    ShouldRecurse_t checkIfConfig(IfConfigStmt *S) {
+    ShouldRecurse_t checkIfConfig(IfConfigDecl *D) {
       return ShouldRecurse;
     }
 
@@ -660,25 +670,33 @@ private:
   Classification classifyRethrowsArgument(Expr *arg, Type paramType) {
     arg = arg->getValueProvidingExpr();
 
-    // If the parameter was a tuple, try to look through the various
-    // tuple operations.
-    if (auto paramTupleType = paramType->getAs<TupleType>()) {
+    // If the parameter was structurally a tuple, try to look through the
+    // various tuple operations.
+    if (auto paramTupleType = dyn_cast<TupleType>(paramType.getPointer())) {
       if (auto tuple = dyn_cast<TupleExpr>(arg)) {
         return classifyTupleRethrowsArgument(tuple, paramTupleType);
       } else if (auto shuffle = dyn_cast<TupleShuffleExpr>(arg)) {
         return classifyShuffleRethrowsArgument(shuffle, paramTupleType);
       }
 
-      // Otherwise, we're passing an opaque tuple expression, and we
-      // should treat it as contributing to 'rethrows' if the original
-      // parameter type included a throwing function type.
-      return classifyArgumentByType(paramType,
+      if (paramTupleType->getNumElements() != 1) {
+        // Otherwise, we're passing an opaque tuple expression, and we
+        // should treat it as contributing to 'rethrows' if the original
+        // parameter type included a throwing function type.
+        return classifyArgumentByType(
+                                    paramType,
                                     PotentialReason::forRethrowsArgument(arg));
+      }
+
+      // FIXME: There's a case where we can end up with an ApplyExpr that
+      // has a single-element-tuple argument type, but the argument is just
+      // a ClosureExpr and not a TupleExpr/TupleShuffleExpr.
+      paramType = paramTupleType->getElementType(0);
     }
 
     // Otherwise, if the original parameter type was not a throwing
     // function type, it does not contribute to 'rethrows'.
-    auto paramFnType = paramType->lookThroughAllAnyOptionalTypes()->getAs<AnyFunctionType>();
+    auto paramFnType = paramType->lookThroughAllOptionalTypes()->getAs<AnyFunctionType>();
     if (!paramFnType || !paramFnType->throws())
       return Classification();
 
@@ -762,7 +780,7 @@ private:
 
     auto mapping = shuffle->getElementMapping();
     for (unsigned destIndex = 0; destIndex != mapping.size(); ++destIndex) {
-      auto srcIndex = shuffle->getElementMapping()[destIndex];
+      auto srcIndex = mapping[destIndex];
       if (srcIndex >= 0) {
         origSrcElts[srcIndex] = origParamTupleType->getElement(destIndex);
       } else if (srcIndex == TupleShuffleExpr::DefaultInitialize ||
@@ -777,9 +795,6 @@ private:
           origSrcElts[srcIndex] =
             origParamTupleType->getASTContext().TheRawPointerType;
         }
-
-        // We're done iterating these elements.
-        break;
       } else {
         llvm_unreachable("bad source-element mapping!");
       }
@@ -870,9 +885,18 @@ private:
     llvm_unreachable("invalid classify result");
   }
 
+  static Context getContextForPatternBinding(PatternBindingDecl *pbd) {
+    if (!pbd->isStatic() && pbd->getDeclContext()->isTypeContext()) {
+      return Context(Kind::IVarInitializer);
+    } else {
+      return Context(Kind::GlobalVarInitializer);
+    }
+  }
+
   Kind TheKind;
   bool DiagnoseErrorOnTry = false;
   DeclContext *RethrowsDC = nullptr;
+  InterpolatedStringLiteralExpr * InterpolatedString;
 
   explicit Context(Kind kind) : TheKind(kind) {}
 
@@ -892,8 +916,25 @@ public:
       result.RethrowsDC = D;
       return result;
     }
+
+    // HACK: If the decl is the synthesized getter for a 'lazy' property, then
+    // treat the context as a property initializer in order to produce a better
+    // diagnostic; the only code we should be diagnosing on is within the
+    // initializer expression that has been transplanted from the var's pattern
+    // binding decl. We don't perform the analysis on the initializer while it's
+    // still a part of that PBD, as it doesn't get a solution applied there.
+    if (auto *accessor = dyn_cast<AccessorDecl>(D)) {
+      if (auto *var = dyn_cast<VarDecl>(accessor->getStorage())) {
+        if (accessor->isGetter() && var->getAttrs().hasAttribute<LazyAttr>()) {
+          auto *pbd = var->getParentPatternBinding();
+          assert(pbd && "lazy var didn't have a pattern binding decl");
+          return getContextForPatternBinding(pbd);
+        }
+      }
+    }
+
     return Context(getKindForFunctionBody(
-        D->getType(), D->getNumParameterLists()));
+        D->getInterfaceType(), D->hasImplicitSelfDecl() ? 2 : 1));
   }
 
   static Context forInitializer(Initializer *init) {
@@ -901,14 +942,10 @@ public:
       return Context(Kind::DefaultArgument);
     }
 
-    auto binding = cast<PatternBindingInitializer>(init)->getBinding();
+    auto *binding = cast<PatternBindingInitializer>(init)->getBinding();
     assert(!binding->getDeclContext()->isLocalContext() &&
            "setting up error context for local pattern binding?");
-    if (!binding->isStatic() && binding->getDeclContext()->isTypeContext()) {
-      return Context(Kind::IVarInitializer);
-    } else {
-      return Context(Kind::GlobalVarInitializer);
-    }
+    return getContextForPatternBinding(binding);
   }
 
   static Context forEnumElementInitializer(EnumElementDecl *elt) {
@@ -932,6 +969,12 @@ public:
 
   static Context forCatchGuard(CatchStmt *S) {
     return Context(Kind::CatchGuard);
+  }
+
+  Context withInterpolatedString(InterpolatedStringLiteralExpr *E) const {
+    Context copy = *this;
+    copy.InterpolatedString = E;
+    return copy;
   }
 
   Kind getKind() const { return TheKind; }
@@ -959,6 +1002,9 @@ public:
   }
 
   DeclContext *getRethrowsDC() const { return RethrowsDC; }
+  InterpolatedStringLiteralExpr * getInterpolatedString() const {
+    return InterpolatedString;
+  }
 
   static void diagnoseThrowInIllegalContext(TypeChecker &TC, ASTNode node,
                                             StringRef description) {
@@ -995,6 +1041,7 @@ public:
                                   const PotentialReason &reason) {
     auto message = diag::throwing_call_without_try;
     auto loc = E.getStartLoc();
+    SourceLoc insertLoc;
     SourceRange highlight;
     
     // Generate more specific messages in some cases.
@@ -1004,11 +1051,35 @@ public:
         loc = e->getFn()->getStartLoc();
         message = diag::throwing_operator_without_try;
       }
+      insertLoc = loc;
       highlight = e->getSourceRange();
+      
+      if (InterpolatedString && e->getCalledValue()->getBaseName() ==
+          TC.Context.Id_appendInterpolation) {
+        message = diag::throwing_interpolation_without_try;
+        insertLoc = InterpolatedString->getLoc();
+      }
     }
     
     TC.diagnose(loc, message).highlight(highlight);
     maybeAddRethrowsNote(TC, loc, reason);
+
+    // If this is a call without expected 'try[?|!]', like this:
+    //
+    // func foo() throws {}
+    // [let _ = ]foo()
+    //
+    // Let's suggest couple of alternative fix-its
+    // because complete context is unavailable.
+    if (reason.getKind() != PotentialReason::Kind::CallThrows)
+      return;
+
+    TC.diagnose(loc, diag::note_forgot_try)
+        .fixItInsert(insertLoc, "try ");
+    TC.diagnose(loc, diag::note_error_to_optional)
+        .fixItInsert(insertLoc, "try? ");
+    TC.diagnose(loc, diag::note_disable_error_propagation)
+        .fixItInsert(insertLoc, "try! ");
   }
 
   void diagnoseThrowInLegalContext(TypeChecker &TC, ASTNode node,
@@ -1259,6 +1330,12 @@ class CheckErrorCoverage : public ErrorHandlingWalker<CheckErrorCoverage> {
       OldMaxThrowingKind = std::max(OldMaxThrowingKind, Self.MaxThrowingKind);
     }
 
+    void preserveCoverageFromInterpolatedString() {
+      OldFlags.mergeFrom(ContextFlags::HasAnyThrowSite, Self.Flags);
+      OldFlags.mergeFrom(ContextFlags::HasTryThrowSite, Self.Flags);
+      OldMaxThrowingKind = std::max(OldMaxThrowingKind, Self.MaxThrowingKind);
+    }
+    
     bool wasTopLevelDebuggerFunction() const {
       return OldFlags.has(ContextFlags::IsTopLevelDebuggerFunction);
     }
@@ -1391,15 +1468,32 @@ private:
 
     // HACK: functions can get queued multiple times in
     // definedFunctions, so be sure to be idempotent.
-    if (!E->isThrowsSet()) {
+    if (!E->isThrowsSet() &&
+        classification.getResult() != ThrowingKind::Invalid) {
       E->setThrows(classification.getResult() == ThrowingKind::RethrowingOnly ||
                    classification.getResult() == ThrowingKind::Throws);
     }
 
-    return ShouldRecurse;
+    // If current apply expression did not type-check, don't attempt
+    // walking inside of it. This accounts for the fact that we don't
+    // erase types without type variables to enable better code complication,
+    // so DeclRefExpr(s) or ApplyExpr with DeclRefExpr as function contained
+    // inside would have their types preserved, which makes classification
+    // incorrect.
+    auto type = E->getType();
+    return !type || type->hasError() ? ShouldNotRecurse : ShouldRecurse;
   }
 
-  ShouldRecurse_t checkIfConfig(IfConfigStmt *S) {
+  ShouldRecurse_t
+  checkInterpolatedStringLiteral(InterpolatedStringLiteralExpr *E) {
+    ContextScope scope(*this, CurContext.withInterpolatedString(E));
+    if (E->getSemanticExpr())
+      E->getSemanticExpr()->walk(*this);
+    scope.preserveCoverageFromInterpolatedString();
+    return ShouldNotRecurse;
+  }
+
+  ShouldRecurse_t checkIfConfig(IfConfigDecl *ICD) {
     // Check the inactive regions of a #if block to disable warnings that may
     // be due to platform specific code.
     struct ConservativeThrowChecker : public ASTWalker {
@@ -1420,7 +1514,7 @@ private:
       }
     };
 
-    for (auto &clause : S->getClauses()) {
+    for (auto &clause : ICD->getClauses()) {
       // Active clauses are handled by the normal AST walk.
       if (clause.isActive) continue;
       
@@ -1458,6 +1552,9 @@ private:
       Flags.set(ContextFlags::HasAnyThrowSite);
       if (requiresTry) Flags.set(ContextFlags::HasTryThrowSite);
 
+      // We set the throwing bit of an apply expr after performing this
+      // analysis, so ensure we don't emit duplicate diagnostics for functions
+      // that have been queued multiple times.
       if (auto expr = E.dyn_cast<Expr*>())
         if (auto apply = dyn_cast<ApplyExpr>(expr))
           if (apply->isThrowsSet())
@@ -1528,7 +1625,7 @@ private:
   }
 };
 
-} // end anonymous namespace 
+} // end anonymous namespace
 
 void TypeChecker::checkTopLevelErrorHandling(TopLevelCodeDecl *code) {
   CheckErrorCoverage checker(*this, Context::forTopLevelCode(code));
@@ -1541,6 +1638,10 @@ void TypeChecker::checkTopLevelErrorHandling(TopLevelCodeDecl *code) {
 }
 
 void TypeChecker::checkFunctionErrorHandling(AbstractFunctionDecl *fn) {
+  // In some cases, we won't have validated the signature
+  // by the time we got here.
+  if (!fn->hasInterfaceType()) return;
+
   CheckErrorCoverage checker(*this, Context::forFunction(fn));
 
   // If this is a debugger function, suppress 'try' marking at the top level.

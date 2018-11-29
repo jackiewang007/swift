@@ -1,4 +1,6 @@
-add_swift_library(swiftIRGen STATIC
+add_swift_host_library(swiftIRGen STATIC
+  AllocStackHoisting.cpp
+  ClassLayout.cpp
   DebugTypeInfo.cpp
   EnumPayload.cpp
   ExtraInhabitants.cpp
@@ -19,6 +21,8 @@ add_swift_library(swiftIRGen STATIC
   GenFunc.cpp
   GenHeap.cpp
   GenInit.cpp
+  GenIntegerLiteral.cpp
+  GenKeyPath.cpp
   GenMeta.cpp
   GenObjC.cpp
   GenOpaque.cpp
@@ -26,24 +30,32 @@ add_swift_library(swiftIRGen STATIC
   GenProto.cpp
   GenReflection.cpp
   GenStruct.cpp
+  GenThunk.cpp
   GenTuple.cpp
   GenType.cpp
   GenValueWitness.cpp
   IRGen.cpp
   IRGenDebugInfo.cpp
   IRGenFunction.cpp
+  IRGenMangler.cpp
   IRGenModule.cpp
   IRGenSIL.cpp
   Linking.cpp
+  LoadableByAddress.cpp
   LocalTypeData.cpp
+  MetadataLayout.cpp
+  MetadataRequest.cpp
+  Outlining.cpp
   StructLayout.cpp
   SwiftTargetInfo.cpp
+  TypeLayoutDumper.cpp
   TypeLayoutVerifier.cpp
   LINK_LIBRARIES
     swiftAST
     swiftLLVMPasses
     swiftSIL
     swiftSILGen
+    swiftSILOptimizer
 
     # Clang dependencies.
     # FIXME: Clang should really export these in some reasonable manner.

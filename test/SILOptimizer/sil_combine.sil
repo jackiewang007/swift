@@ -1,5 +1,8 @@
-// RUN: %target-sil-opt -assume-parsing-unqualified-ownership-sil -enable-sil-verify-all %s -sil-combine -verify-skip-unreachable-must-be-last | %FileCheck %s
+// RUN: %target-sil-opt -enable-objc-interop -assume-parsing-unqualified-ownership-sil -enforce-exclusivity=none -enable-sil-verify-all %s -sil-combine -verify-skip-unreachable-must-be-last | %FileCheck %s
 
+// Declare this SIL to be canonical because some tests break raw SIL
+// conventions. e.g. address-type block args. -enforce-exclusivity=none is also
+// required to allow address-type block args in canonical SIL.
 sil_stage canonical
 
 import Builtin
@@ -36,6 +39,8 @@ protocol FakeProtocol {
 sil [global_init] @global_init_fun : $@convention(thin) () -> Builtin.RawPointer
 
 sil @user : $@convention(thin) (@owned Builtin.NativeObject) -> ()
+
+sil @unknown : $@convention(thin) () -> ()
 
 //////////////////////
 // Simple DCE Tests //
@@ -130,7 +135,9 @@ bb2:
 
 sil @exit : $@convention(thin) () -> Never {
 bb0:
-  br bb0
+  br bb1
+bb1:
+  br bb1
 }
 
 // CHECK-LABEL: sil @removeTriviallyDeadInstructions
@@ -142,14 +149,14 @@ bb0:
 // CHECK-NOT: unchecked_ref_cast
 sil @removeTriviallyDeadInstructions : $@convention(thin) (@owned B) -> () {
 bb0(%0 : $B):
-  %1 = alloc_box $@box B
-  %1a = project_box %1 : $@box B, 0
-  %2 = store %0 to %1a : $*B
+  %1 = alloc_box $<τ_0_0> { var τ_0_0 } <B>
+  %1a = project_box %1 : $<τ_0_0> { var τ_0_0 } <B>, 0
+  store %0 to %1a : $*B
   %3 = load %1a : $*B
-  %4 = strong_retain %3 : $B
+  strong_retain %3 : $B
   %5 = unchecked_ref_cast %3 : $B to $Builtin.NativeObject
-  %7 = strong_release %3 : $B
-  %8 = strong_release %1 : $@box B
+  strong_release %3 : $B
+  strong_release %1 : $<τ_0_0> { var τ_0_0 } <B>
   %9 = function_ref @exit : $@convention(thin) () -> Never // ret.exit : () -> ()
   %10 = apply %9() : $@convention(thin) () -> Never
   unreachable
@@ -163,9 +170,9 @@ bb0(%0 : $B):
 sil @removeTriviallyDeadCrossBasicBlocks : $@convention(thin) (@owned B, Builtin.Int1) -> () {
 bb0(%0: $B, %1: $Builtin.Int1):
   %5 = unchecked_ref_cast %0 : $B to $Builtin.NativeObject
-  %13 = cond_br %1, bb1, bb2
+  cond_br %1, bb1, bb2
 bb1:
-  %22 = br bb2
+  br bb2
 bb2:
   %9 = function_ref @exit : $@convention(thin) () -> Never // ret.exit : () -> ()
   %10 = apply %9() : $@convention(thin) () -> Never
@@ -286,7 +293,7 @@ bb0(%0 : $*UInt8):
   %1 = load %0 : $*UInt8
   %2 = integer_literal $Builtin.Int8, 1
   %3 = struct_element_addr %0 : $*UInt8, #UInt8._value
-  %4 = store %2 to %3 : $*Builtin.Int8
+  store %2 to %3 : $*Builtin.Int8
   %5 = struct_extract %1 : $UInt8, #UInt8._value
   return %5 : $Builtin.Int8
 }
@@ -304,7 +311,7 @@ bb0(%0 : $*(Builtin.Int8, Builtin.Int8)):
   %1 = load %0 : $*(Builtin.Int8, Builtin.Int8)
   %2 = integer_literal $Builtin.Int8, 1
   %3 = tuple_element_addr %0 : $*(Builtin.Int8, Builtin.Int8), 0
-  %4 = store %2 to %3 : $*Builtin.Int8
+  store %2 to %3 : $*Builtin.Int8
   %5 = tuple_extract %1 : $(Builtin.Int8, Builtin.Int8), 0
   return %5 : $Builtin.Int8
 }
@@ -325,7 +332,7 @@ bb0(%0 : $*UInt8):
   %1 = load %0 : $*UInt8
   %2 = integer_literal $Builtin.Int8, 1
   %3 = struct_element_addr %0 : $*UInt8, #UInt8._value
-  %4 = store %2 to %3 : $*Builtin.Int8
+  store %2 to %3 : $*Builtin.Int8
   %5 = struct_extract %1 : $UInt8, #UInt8._value
   %6 = tuple (%1 : $UInt8, %5 : $Builtin.Int8)
   return %6 : $(UInt8, Builtin.Int8)
@@ -347,11 +354,58 @@ bb0(%0 : $*(Builtin.Int8, Builtin.Int8)):
   %1 = load %0 : $*(Builtin.Int8, Builtin.Int8)
   %2 = integer_literal $Builtin.Int8, 1
   %3 = tuple_element_addr %0 : $*(Builtin.Int8, Builtin.Int8), 0
-  %4 = store %2 to %3 : $*Builtin.Int8
+  store %2 to %3 : $*Builtin.Int8
   %5 = tuple_extract %1 : $(Builtin.Int8, Builtin.Int8), 0
   %6 = tuple (%1 : $(Builtin.Int8, Builtin.Int8), %5 : $Builtin.Int8)
   return %6 : $((Builtin.Int8, Builtin.Int8), Builtin.Int8)
 }
+
+// CHECK-LABEL: sil @optimize_load_first_char_from_string_literal
+// CHECK:      bb0:
+// CHECK-NEXT:   %0 = integer_literal $Builtin.Int8, 97
+// CHECK-NEXT:   return %0
+sil @optimize_load_first_char_from_string_literal : $@convention(thin) () -> Builtin.Int8 {
+bb0:
+  %0 = string_literal utf8 "abc123a"
+  %1 = pointer_to_address %0 : $Builtin.RawPointer to [strict] $*UInt8
+  %2 = struct_element_addr %1 : $*UInt8, #UInt8._value
+  %3 = load %2 : $*Builtin.Int8
+  return %3 : $Builtin.Int8
+}
+
+// CHECK-LABEL: sil @optimize_load_from_string_literal
+// CHECK:      bb0:
+// CHECK-NEXT:   %0 = integer_literal $Builtin.Int8, 49
+// CHECK-NEXT:   return %0
+sil @optimize_load_from_string_literal : $@convention(thin) () -> Builtin.Int8 {
+bb0:
+  %0 = string_literal utf8 "abc123a"
+  %1 = integer_literal $Builtin.Word, 3
+  %2 = pointer_to_address %0 : $Builtin.RawPointer to [strict] $*UInt8
+  %3 = index_addr %2 : $*UInt8, %1 : $Builtin.Word
+  %4 = struct_element_addr %3 : $*UInt8, #UInt8._value
+  %5 = load %4 : $*Builtin.Int8
+  return %5 : $Builtin.Int8
+}
+
+// CHECK-LABEL: sil @optimize_nested_index_addr
+// CHECK:      bb0(%0 : $Builtin.RawPointer):
+// CHECK-NEXT:   %1 = pointer_to_address %0
+// CHECK-NEXT:   %2 = integer_literal $Builtin.Word, 10
+// CHECK-NEXT:   %3 = index_addr %1 : $*UInt8, %2
+// CHECK-NEXT:   %4 = address_to_pointer %3
+// CHECK-NEXT:   return %4
+sil @optimize_nested_index_addr : $@convention(thin) (Builtin.RawPointer) -> Builtin.RawPointer {
+bb0(%0 : $Builtin.RawPointer):
+  %1 = integer_literal $Builtin.Word, 3
+  %2 = integer_literal $Builtin.Word, 7
+  %3 = pointer_to_address %0 : $Builtin.RawPointer to [strict] $*UInt8
+  %4 = index_addr %3 : $*UInt8, %1 : $Builtin.Word
+  %5 = index_addr %4 : $*UInt8, %2 : $Builtin.Word
+  %6 = address_to_pointer %5 : $*UInt8 to $Builtin.RawPointer
+  return %6 : $Builtin.RawPointer
+}
+
 
 // CHECK-LABEL: sil @release_value_test
 // CHECK: bb0({{%[0-9]+}} : $Builtin.Int8, [[RELEASE_TARGET:%[0-9]+]] : $Builtin.NativeObject):
@@ -397,8 +451,8 @@ bb0(%0 : $*Builtin.Word, %1 : $Builtin.RawPointer):
 
 // CHECK-LABEL: sil @a2p_p2a_reinterpret_cast_word_raw_pointer
 // CHECK: bb0
+// CHECK-NEXT: unchecked_addr_cast
 // CHECK-NEXT: load
-// CHECK-NEXT: unchecked_trivial_bit_cast
 // CHECK-NEXT: return
 sil @a2p_p2a_reinterpret_cast_word_raw_pointer : $@convention(thin) (@inout Builtin.Word, Builtin.RawPointer) -> Int32 {
 bb0(%0 : $*Builtin.Word, %1 : $Builtin.RawPointer):
@@ -440,8 +494,8 @@ enum U {
 // CHECK-NEXT: tuple ({{%[0-9]+}} : $U, {{%[0-9]+}} : $U, [[INVALID_CASE]] : $U)
 // CHECK-NEXT: return
 //
-// release_value  of an  enum without  any payload  or with  a trivial
-// typed payload  is a  no-op. Leave  enums with  non-trivial payloads
+// release_value of an enum without any payload or with a trivial
+// typed payload is a no-op. Leave enums with non-trivial payloads
 // alone.
 //
 // rdar://15568314
@@ -857,6 +911,51 @@ bb0(%0 : $Int):
   return %4 : $Int8                               // id: %5
 }
 
+// An archetype with a trivial layout constraint can never be a class.
+// CHECK-LABEL: sil @is_trivial_layout_constraint_class
+sil @is_trivial_layout_constraint_class : $@convention(thin) <T where T: _Trivial> (@in T) -> Int8 {
+bb0(%0 : $*T):
+  %1 = metatype $@thick T.Type
+// CHECK-NOT: builtin "canBeClass"
+// CHECK-NOT: apply
+  %3 = builtin "canBeClass"<T>(%1 : $@thick T.Type) : $Builtin.Int8
+// CHECK: [[LITERAL:%[a-zA-Z0-9]+]] = integer_literal $Builtin.Int8, 0
+// CHECK: [[RESULT:%[a-zA-Z0-9]+]] = struct $Int8 ([[LITERAL]] : $Builtin.Int8)
+  %4 = struct $Int8 (%3 : $Builtin.Int8)
+// CHECK: return [[RESULT]] : $Int8
+  return %4 : $Int8
+}
+
+// An archetype with a _Class layout constraint is always a class.
+// CHECK-LABEL: sil @is_class_layout_constraint_class
+sil @is_class_layout_constraint_class : $@convention(thin) <T where T: _Class> (@in T) -> Int8 {
+bb0(%0 : $*T):
+  %1 = metatype $@thick T.Type
+// CHECK-NOT: builtin "canBeClass"
+// CHECK-NOT: apply
+  %3 = builtin "canBeClass"<T>(%1 : $@thick T.Type) : $Builtin.Int8
+// CHECK: [[LITERAL:%[a-zA-Z0-9]+]] = integer_literal $Builtin.Int8, 1
+// CHECK: [[RESULT:%[a-zA-Z0-9]+]] = struct $Int8 ([[LITERAL]] : $Builtin.Int8)
+  %4 = struct $Int8 (%3 : $Builtin.Int8)
+// CHECK: return [[RESULT]] : $Int8
+  return %4 : $Int8
+}
+
+// An archetype with a _NativeClass layout constraint is always a class.
+// CHECK-LABEL: sil @is_native_class_layout_constraint_class
+sil @is_native_class_layout_constraint_class : $@convention(thin) <T where T: _NativeClass> (@in T) -> Int8 {
+bb0(%0 : $*T):
+  %1 = metatype $@thick T.Type
+// CHECK-NOT: builtin "canBeClass"
+// CHECK-NOT: apply
+  %3 = builtin "canBeClass"<T>(%1 : $@thick T.Type) : $Builtin.Int8
+// CHECK: [[LITERAL:%[a-zA-Z0-9]+]] = integer_literal $Builtin.Int8, 1
+// CHECK: [[RESULT:%[a-zA-Z0-9]+]] = struct $Int8 ([[LITERAL]] : $Builtin.Int8)
+  %4 = struct $Int8 (%3 : $Builtin.Int8)
+// CHECK: return [[RESULT]] : $Int8
+  return %4 : $Int8
+}
+
 @objc class MyClass {
 }
 
@@ -1081,9 +1180,9 @@ bb0:
 
 // CHECK-LABEL: sil @unchecked_addr_cast_formation : $@convention(thin) (@inout Builtin.NativeObject) -> Builtin.Word {
 // CHECK: bb0([[INPUT_PTR:%[0-9]+]] : $*Builtin.NativeObject):
-// CHECK-NEXT: [[INPUT_VALUE:%[0-9]+]] = load [[INPUT_PTR]] : $*Builtin.NativeObject
-// CHECK-NEXT: [[CAST_VALUE:%[0-9]+]] = unchecked_trivial_bit_cast [[INPUT_VALUE]] : $Builtin.NativeObject to $Builtin.Word
-// CHECK-NEXT: return
+// CHECK-NEXT: [[ADDR_CAST:%[0-9]+]] = unchecked_addr_cast [[INPUT_PTR]] : $*Builtin.NativeObject to $*Builtin.Word
+// CHECK-NEXT: [[RETURN_VALUE:%[0-9]+]] = load [[ADDR_CAST]] : $*Builtin.Word
+// CHECK-NEXT: return [[RETURN_VALUE]]
 sil @unchecked_addr_cast_formation : $@convention(thin) (@inout Builtin.NativeObject) -> Builtin.Word {
 bb0(%0 : $*Builtin.NativeObject):
   %1 = address_to_pointer %0 : $*Builtin.NativeObject to $Builtin.RawPointer
@@ -1094,9 +1193,10 @@ bb0(%0 : $*Builtin.NativeObject):
 
 // CHECK-LABEL: sil @unchecked_addr_cast_forwarding : $@convention(thin) (@inout Builtin.NativeObject) -> Builtin.Word {
 // CHECK: bb0([[INPUT_PTR:%[0-9]+]] : $*Builtin.NativeObject):
-// CHECK-NEXT: [[INPUT_VALUE:%[0-9]+]] = load [[INPUT_PTR]] : $*Builtin.NativeObject
-// CHECK-NEXT: [[CAST_VALUE:%[0-9]+]] = unchecked_trivial_bit_cast [[INPUT_VALUE]] : $Builtin.NativeObject to $Builtin.Word
-// CHECK-NEXT: return
+// CHECK-NEXT: [[ADDR_CAST:%[0-9]+]] = unchecked_addr_cast [[INPUT_PTR]] : $*Builtin.NativeObject to $*Builtin.Word
+// CHECK-NEXT: debug_value [[ADDR_CAST]]
+// CHECK-NEXT: [[RETURN_VALUE:%[0-9]+]] = load [[ADDR_CAST]] : $*Builtin.Word
+// CHECK-NEXT: return [[RETURN_VALUE]]
 sil @unchecked_addr_cast_forwarding : $@convention(thin) (@inout Builtin.NativeObject) -> Builtin.Word {
 bb0(%0 : $*Builtin.NativeObject):
   %1 = unchecked_addr_cast %0 : $*Builtin.NativeObject to $*Builtin.RawPointer
@@ -1164,7 +1264,7 @@ bb0(%0 : $AnyObject):
 // CHECK: bb0
 // CHECK-NEXT: unchecked_ref_cast
 // CHECK-NEXT: return
-sil @unchecked_ref_cast_upcast_combine : $@convention(thin) E -> Builtin.NativeObject {
+sil @unchecked_ref_cast_upcast_combine : $@convention(thin) (E) -> Builtin.NativeObject {
 bb0(%0 : $E):
   %1 = upcast %0 : $E to $B
   %2 = unchecked_ref_cast %1 : $B to $Builtin.NativeObject
@@ -1181,7 +1281,7 @@ bb0(%0 : $E):
 // CHECK-NEXT: return
 sil @unchecked_take_enum_data_addr_promotion : $@convention(thin) (@inout FakeOptional<B>) -> B {
 bb0(%0 : $*FakeOptional<B>):
-  %1 = switch_enum_addr %0 : $*FakeOptional<B>, case #FakeOptional.some!enumelt.1: bb1, case #FakeOptional.none!enumelt: bb2
+  switch_enum_addr %0 : $*FakeOptional<B>, case #FakeOptional.some!enumelt.1: bb1, case #FakeOptional.none!enumelt: bb2
 
 bb1:
   %2 = unchecked_take_enum_data_addr %0 : $*FakeOptional<B>, #FakeOptional.some!enumelt.1
@@ -1212,6 +1312,52 @@ bb0(%0 : $*B, %1 : $B, %2 : $Builtin.Int1):
   %6 = tuple()
   return %6 : $()
 }
+
+// Check that convert_function simplifications are not applied in certain cases.
+@objc class MyNSObj { }
+
+class AnotherClass : MyNSObj { }
+
+sil @MyNSObj_self : $@convention(method) (@guaranteed MyNSObj) -> @owned MyNSObj
+
+sil shared [transparent] [serializable] [reabstraction_thunk] @reabstraction_thunk1 : $@convention(thin) (@in (), @owned @callee_owned () -> @owned AnotherClass) -> @out AnotherClass {
+bb0(%0 : $*AnotherClass, %1 : $*(), %2 : $@callee_owned () -> @owned AnotherClass):
+  %3 = apply %2() : $@callee_owned () -> @owned AnotherClass
+  store %3 to %0 : $*AnotherClass
+  %5 = tuple ()
+  return %5 : $()
+}
+
+// @nonobjc curry thunk of MyNSObj.self()
+sil shared [serializable] [thunk] @curry_thunk_for_MyNSObj_self : $@convention(thin) (@owned MyNSObj) -> @owned @callee_owned () -> @owned MyNSObj {
+bb0(%0 : $MyNSObj):
+  // function_ref @nonobjc MyNSObj.self()
+  %1 = function_ref @MyNSObj_self : $@convention(method) (@guaranteed MyNSObj) -> @owned MyNSObj
+  %2 = partial_apply %1(%0) : $@convention(method) (@guaranteed MyNSObj) -> @owned MyNSObj
+  return %2 : $@callee_owned () -> @owned MyNSObj
+}
+
+// Check that convert_function is not eliminated if the result type of the converted function is different from the apply result type.
+// CHECK-LABEL: sil {{.*}} @do_not_peephole_convert_function : $@convention(thin) (@in AnotherClass) -> @out @callee_owned (@in ()) -> @out AnotherClass {
+// CHECK: [[CF:%[0-9]+]] = convert_function
+// CHECK: [[APPLY:%[0-9]+]] = apply
+// CHECK: [[FUN:%[0-9]+]] = function_ref
+// CHECK: [[CF:%[0-9]+]] = partial_apply [[FUN]]([[APPLY]])
+// CHECK: // end sil function 'do_not_peephole_convert_function'
+sil shared [transparent] [reabstraction_thunk] @do_not_peephole_convert_function : $@convention(thin) (@in AnotherClass) -> @out @callee_owned (@in ()) -> @out AnotherClass {
+bb0(%0 : $*@callee_owned (@in ()) -> @out AnotherClass, %1 : $*AnotherClass):
+  // function_ref @nonobjc curry thunk of MyNSObj.self()
+  %2 = function_ref @curry_thunk_for_MyNSObj_self : $@convention(thin) (@owned MyNSObj) -> @owned @callee_owned () -> @owned MyNSObj
+  %3 = convert_function %2 : $@convention(thin) (@owned MyNSObj) -> @owned @callee_owned () -> @owned MyNSObj to $@convention(thin) (@owned AnotherClass) -> @owned @callee_owned () -> @owned AnotherClass
+  %5 = load %1 : $*AnotherClass
+  %6 = apply %3(%5) : $@convention(thin) (@owned AnotherClass) -> @owned @callee_owned () -> @owned AnotherClass
+  // function_ref thunk for @callee_owned () -> (@owned AnotherClass)
+  %7 = function_ref @reabstraction_thunk1 : $@convention(thin) (@in (), @owned @callee_owned () -> @owned AnotherClass) -> @out AnotherClass
+  %8 = partial_apply %7(%6) : $@convention(thin) (@in (), @owned @callee_owned () -> @owned AnotherClass) -> @out AnotherClass
+  store %8 to %0 : $*@callee_owned (@in ()) -> @out AnotherClass
+  %10 = tuple ()
+  return %10 : $()
+} // end sil function 'do_not_peephole_convert_function'
 
 // CHECK-LABEL: sil @upcast_formation : $@convention(thin) (@inout E, E, @inout B) -> B {
 // CHECK: bb0
@@ -1424,8 +1570,8 @@ bb0:
 sil @eliminate_thin_to_thick_apply : $@convention(thin) () -> () {
 bb0:
   %0 = function_ref @eliminate_dead_thin_to_thick_function_fun : $@convention(thin) () -> ()
-  %1 = thin_to_thick_function %0 : $@convention(thin) () -> () to $@callee_owned () -> ()
-  %2 = apply %1() : $@callee_owned () -> ()
+  %1 = thin_to_thick_function %0 : $@convention(thin) () -> () to $@callee_guaranteed () -> ()
+  %2 = apply %1() : $@callee_guaranteed () -> ()
   return %2 : $()
 }
 
@@ -1755,17 +1901,70 @@ sil [readonly] @read_only_in : $@convention(thin) (@in SSS) -> ()
 struct MyError : Error {
 }
 
-sil @unknown : $@convention(thin) () -> ()
 sil [readonly] @readonly_throwing : $@convention(thin) (@owned ZZZ) -> (ZZZ, @error Error)
+
+sil [readonly] @readonly_owned : $@convention(thin) (@owned B) -> @owned B
+sil @returns_param : $@convention(thin) (@owned B) -> @owned B
+
+
+// CHECK-LABEL: sil @delete_readonly_insert_release_after_arc_uses_simple
+// CHECK:      apply
+// CHECK-NEXT: strong_retain
+// CHECK-NEXT: strong_release
+// CHECK-NEXT: return
+sil @delete_readonly_insert_release_after_arc_uses_simple : $@convention(thin) (@owned B) -> @owned B {
+bb0(%0 : $B):
+  %fu = function_ref @returns_param : $@convention(thin) (@owned B) -> @owned B
+  %ru = apply %fu(%0) : $@convention(thin) (@owned B) -> @owned B
+  %f = function_ref @readonly_owned : $@convention(thin) (@owned B) -> @owned B
+  %r = apply %f(%0) : $@convention(thin) (@owned B) -> @owned B
+  strong_retain %ru : $B // This is actually %0
+  strong_release %r : $B
+  return %0 : $B
+}
+
+// CHECK-LABEL: sil @delete_readonly_insert_release_after_arc_uses_multibb
+// CHECK:        apply
+// CHECK-NEXT:   cond_br
+// CHECK:      bb1:
+// CHECK-NEXT:   strong_retain
+// CHECK-NEXT:   strong_release
+// CHECK:      bb2:
+// CHECK-NEXT:   strong_retain
+// CHECK-NEXT:   strong_release
+// CHECK:      bb3:
+// CHECK-NEXT:   return
+sil @delete_readonly_insert_release_after_arc_uses_multibb : $@convention(thin) (@owned B) -> @owned B {
+bb0(%0 : $B):
+  %fu = function_ref @returns_param : $@convention(thin) (@owned B) -> @owned B
+  %ru = apply %fu(%0) : $@convention(thin) (@owned B) -> @owned B
+  %f = function_ref @readonly_owned : $@convention(thin) (@owned B) -> @owned B
+  %r = apply %f(%0) : $@convention(thin) (@owned B) -> @owned B
+  cond_br undef, bb1, bb2
+
+bb1:
+  strong_retain %ru : $B // This is actually %0
+  strong_release %r : $B
+  br bb3
+
+bb2:
+  strong_retain %ru : $B // This is actually %0
+  strong_release %r : $B
+  br bb3
+
+bb3:
+  return %0 : $B
+}
 
 //CHECK-LABEL: sil @test_delete_readonly_try_apply
 //CHECK:      bb0(%0 : $ZZZ):
-//CHECK-NEXT:   strong_release %0
 //CHECK-NEXT:   [[IL:%[0-9]+]] = integer_literal $Builtin.Int1, 0
 //CHECK-NEXT:   cond_br [[IL]], bb1, bb2
 //CHECK:      bb1:
+//CHECK-NEXT:   strong_release %0
 //CHECK-NEXT:   br bb3
 //CHECK:      bb2:
+//CHECK-NEXT:   strong_release %0
 //CHECK-NEXT:   br bb3
 //CHECK:      bb3:
 //CHECK:        return
@@ -1913,34 +2112,6 @@ bb3:
 class XXImpl : XX {
   @objc deinit
   init()
-}
-
-// CHECK-LABEL: sil @remove_release_objc_metatype_to_object
-// CHECK-NOT: strong_release {{%[0-9]+}} : $AnyObject
-sil @remove_release_objc_metatype_to_object : $@convention(thin) () -> () {
-bb0:
-  %0 = metatype $@thick XXImpl.Type                // user: %1
-  %1 = thick_to_objc_metatype %0 : $@thick XXImpl.Type to $@objc_metatype XXImpl.Type // user: %2
-  %2 = objc_metatype_to_object %1 : $@objc_metatype XXImpl.Type to $AnyObject // users: %3, %4
-  debug_value %2 : $AnyObject  // id: %3
-  strong_release %2 : $AnyObject                  // id: %4
-  %5 = tuple ()                                   // user: %6
-  return %5 : $()                                 // id: %6
-}
-
-// CHECK-LABEL: sil @remove_release_objc_existential_metatype_to_object
-// CHECK-NOT: strong_release {{%[0-9]+}} : $AnyObject
-sil @remove_release_objc_existential_metatype_to_object: $@convention(thin) (@owned XX) -> () {
-bb0(%0 : $XX):
-  debug_value %0 : $XX                   // id: %1
-  %2 = existential_metatype $@thick XX.Type, %0 : $XX // user: %3
-  %3 = thick_to_objc_metatype %2 : $@thick XX.Type to $@objc_metatype XX.Type // user: %4
-  %4 = objc_existential_metatype_to_object %3 : $@objc_metatype XX.Type to $AnyObject // users: %5, %6
-  debug_value %4 : $AnyObject, let, name "obj1" // id: %5
-  strong_release %4 : $AnyObject                  // id: %6
-  strong_release %0 : $XX                         // id: %7
-  %8 = tuple ()                                   // user: %9
-  return %8 : $()                                 // id: %9
 }
 
 // CHECK-LABEL: sil @unowned_round_trips : $@convention(thin) (B, @sil_unowned B, AnyObject, @sil_unmanaged AnyObject) -> (B, @sil_unowned B, AnyObject, @sil_unmanaged AnyObject) {
@@ -2158,7 +2329,7 @@ bb0(%0 : $Builtin.Word):
 struct GenContainer<T> {
 }
 
-sil public_external [fragile] @materializeForSetClosure : $@convention(thin) <T> (Builtin.RawPointer, @inout Builtin.UnsafeValueBuffer, @inout GenContainer<T>, @thick GenContainer<T>.Type) -> () {
+sil public_external [serialized] @materializeForSetClosure : $@convention(thin) <T> (Builtin.RawPointer, @inout Builtin.UnsafeValueBuffer, @inout GenContainer<T>, @thick GenContainer<T>.Type) -> () {
 bb0(%0 : $Builtin.RawPointer, %1 : $*Builtin.UnsafeValueBuffer, %2 : $*GenContainer<T>, %3 : $@thick GenContainer<T>.Type):
   unreachable
 }
@@ -2181,10 +2352,8 @@ bb0:
 
 // CHECK-LABEL:   sil @remove_dead_code_after_unreachable
 // CHECK-NEXT:      bb0
-// CHECK-NOT:       integer_literal $Builtin.Int32, -2
 // CHECK-NEXT:      unreachable
-// CHECK-NOT:       integer_literal $Builtin.Int32, -2
-// CHECK-NEXT:      }
+// CHECK-NEXT:      } // end sil function 'remove_dead_code_after_unreachable'
 sil @remove_dead_code_after_unreachable : $@convention(thin) () -> (Int32) {
 bb0:
   unreachable
@@ -2238,36 +2407,6 @@ bb0(%0 : $Builtin.Int64, %1 : $Builtin.RawPointer, %2 : $Builtin.RawPointer):
   %12 = builtin "takeArrayFrontToBack"<Int32>(%4 : $@thick Int32.Type, %10 : $Builtin.RawPointer, %11 : $Builtin.RawPointer, %5 : $Builtin.Word) : $()
   %13 = tuple ()
   return %13 : $()
-}
-
-// Make sure that we handle partial_apply captured arguments correctly.
-sil @sil_combine_partial_apply_callee : $@convention(thin) (@in Builtin.NativeObject, @inout Builtin.NativeObject, Builtin.NativeObject, @owned Builtin.NativeObject, @guaranteed Builtin.NativeObject) -> ()
-
-// CHECK-LABEL: sil @sil_combine_partial_apply_caller : $@convention(thin) (@in Builtin.NativeObject, @inout Builtin.NativeObject, Builtin.NativeObject, @owned Builtin.NativeObject, @guaranteed Builtin.NativeObject) -> () {
-// CHECK: bb0([[ARG1:%.*]] : $*Builtin.NativeObject, [[ARG2:%.*]] : $*Builtin.NativeObject, [[ARG3:%.*]] : $Builtin.NativeObject, [[ARG4:%.*]] : $Builtin.NativeObject, [[ARG5:%.*]] : $Builtin.NativeObject):
-// CHECK-NEXT: strong_retain [[ARG3]]
-// CHECK-NEXT: strong_retain [[ARG4]]
-// CHECK-NEXT: strong_retain [[ARG5]]
-// CHECK-NEXT: strong_release [[ARG3]]
-// CHECK-NEXT: strong_release [[ARG4]]
-// CHECK-NEXT: strong_release [[ARG5]]
-// CHECK-NEXT: strong_release [[ARG4]]
-// CHECK-NEXT: destroy_addr [[ARG1]]
-sil @sil_combine_partial_apply_caller : $@convention(thin) (@in Builtin.NativeObject, @inout Builtin.NativeObject, Builtin.NativeObject, @owned Builtin.NativeObject, @guaranteed Builtin.NativeObject) -> () {
-bb0(%0 : $*Builtin.NativeObject, %1 : $*Builtin.NativeObject, %2 : $Builtin.NativeObject, %3 : $Builtin.NativeObject, %4 : $Builtin.NativeObject):
-  %100 = function_ref @sil_combine_partial_apply_callee : $@convention(thin) (@in Builtin.NativeObject, @inout Builtin.NativeObject, Builtin.NativeObject, @owned Builtin.NativeObject, @guaranteed Builtin.NativeObject) -> ()
-  %101 = alloc_stack $Builtin.NativeObject
-  copy_addr %0 to [initialization] %101 : $*Builtin.NativeObject
-  strong_retain %2 : $Builtin.NativeObject
-  strong_retain %3 : $Builtin.NativeObject
-  strong_retain %4 : $Builtin.NativeObject
-  %102 = partial_apply %100(%101, %1, %2, %3, %4) : $@convention(thin) (@in Builtin.NativeObject, @inout Builtin.NativeObject, Builtin.NativeObject, @owned Builtin.NativeObject, @guaranteed Builtin.NativeObject) -> ()
-  strong_release %102 : $@callee_owned () -> ()
-  strong_release %3 : $Builtin.NativeObject
-  destroy_addr %0 : $*Builtin.NativeObject
-  dealloc_stack %101 : $*Builtin.NativeObject
-  %9999 = tuple()
-  return %9999 : $()
 }
 
 // CHECK-LABEL: sil @cmp_zext_peephole
@@ -2333,6 +2472,20 @@ sil @alloc_ref_dynamic_with_metatype : $() -> () {
   %1 = metatype $@thick B.Type
   %2 = alloc_ref_dynamic %1 : $@thick B.Type, $B
   strong_release %2 : $B
+  %4 = tuple()
+  return %4 : $()
+}
+
+// CHECK: sil @alloc_ref_dynamic_with_metatype_genneric
+// CHECK: metatype
+// CHECK: upcast
+// CHECK: alloc_ref_dynamic
+// CHECK: return
+sil @alloc_ref_dynamic_with_metatype_genneric : $<T where T : B>() -> () {
+  %1 = metatype $@thick T.Type
+  %2 = upcast %1 : $@thick T.Type to $@thick B.Type
+  %3 = alloc_ref_dynamic %2 : $@thick B.Type, $B
+  strong_release %3 : $B
   %4 = tuple()
   return %4 : $()
 }
@@ -2416,6 +2569,20 @@ bb0(%0 : $*B):
   return %2 : $()
 }
 
+// CHECK-LABEL: sil @delete_dead_alloc_ref
+// CHECK: bb0
+// CHECK-NEXT: tuple
+// CHECK-NEXT: return
+sil @delete_dead_alloc_ref : $() -> () {
+bb0:
+  %1 = alloc_ref $B
+  set_deallocating %1 : $B
+  fix_lifetime %1 : $B
+  dealloc_ref %1 : $B
+  %2 = tuple()
+  return %2 : $()
+}
+
 // CHECK-LABEL: sil @delete_dead_alloc_stack2
 // CHECK: bb0
 // CHECK-NEXT: destroy_addr %0
@@ -2468,9 +2635,9 @@ bb0(%0 : $*T):
   %4 = init_existential_addr %3 : $*someProtocol, $T // user: %5
   copy_addr %0 to [initialization] %4 : $*T       // id: %5
   destroy_addr %0 : $*T                           // id: %6
-  %7 = open_existential_addr %3 : $*someProtocol to $*@opened("105977B0-D8EB-11E4-AC00-3C0754644993") someProtocol // users: %8, %9
-  %8 = witness_method $@opened("105977B0-D8EB-11E4-AC00-3C0754644993") someProtocol, #someProtocol.i!getter.1, %7 : $*@opened("105977B0-D8EB-11E4-AC00-3C0754644993") someProtocol : $@convention(witness_method) <τ_0_0 where τ_0_0 : someProtocol> (@in_guaranteed τ_0_0) -> Int // user: %9
-  %9 = apply %8<@opened("105977B0-D8EB-11E4-AC00-3C0754644993") someProtocol>(%7) : $@convention(witness_method) <τ_0_0 where τ_0_0 : someProtocol> (@in_guaranteed τ_0_0) -> Int
+  %7 = open_existential_addr immutable_access %3 : $*someProtocol to $*@opened("105977B0-D8EB-11E4-AC00-3C0754644993") someProtocol // users: %8, %9
+  %8 = witness_method $@opened("105977B0-D8EB-11E4-AC00-3C0754644993") someProtocol, #someProtocol.i!getter.1, %7 : $*@opened("105977B0-D8EB-11E4-AC00-3C0754644993") someProtocol : $@convention(witness_method: someProtocol) <τ_0_0 where τ_0_0 : someProtocol> (@in_guaranteed τ_0_0) -> Int // user: %9
+  %9 = apply %8<@opened("105977B0-D8EB-11E4-AC00-3C0754644993") someProtocol>(%7) : $@convention(witness_method: someProtocol) <τ_0_0 where τ_0_0 : someProtocol> (@in_guaranteed τ_0_0) -> Int
   destroy_addr %3 : $*someProtocol              // id: %13
   dealloc_stack %3 : $*someProtocol // id: %15
   %16 = tuple ()                                  // user: %17
@@ -2667,8 +2834,8 @@ sil @remove_unused_convert_function : $@convention(thin) (@inout B, B, Builtin.I
 bb0(%0 : $*B, %1 : $B, %2 : $Builtin.Int1):
   %3 = function_ref @weird_function : $@convention(thin) (@inout E, E, Builtin.Int1) -> ()
   %4 = convert_function %3 : $@convention(thin) (@inout E, E, Builtin.Int1) -> () to $@convention(thin) (@inout B, B, Builtin.Int1) -> ()
-  %5 = retain_value %4: $@convention(thin) (@inout B, B, Builtin.Int1) -> ()
-  %6 = release_value %4: $@convention(thin) (@inout B, B, Builtin.Int1) -> ()
+  retain_value %4: $@convention(thin) (@inout B, B, Builtin.Int1) -> ()
+  release_value %4: $@convention(thin) (@inout B, B, Builtin.Int1) -> ()
   %7 = tuple()
   return %7 : $()
 }
@@ -2881,8 +3048,8 @@ bb2:
 // CHECK-NEXT: [[TMP:%.*]] = alloc_stack $T
 // CHECK: [[FN:%.*]] = function_ref @generic_callee
 // CHECK-NEXT: copy_addr [[ARG1]] to [initialization] [[TMP]] : $*T
-// CHECK-NEXT: apply [[FN]]<T, T>([[ARG0]], [[TMP]])
 // CHECK-NEXT: destroy_addr [[ARG1]]
+// CHECK-NEXT: apply [[FN]]<T, T>([[ARG0]], [[TMP]])
 // CHECK-NEXT: destroy_addr [[TMP]]
 // CHECK-NEXT: tuple
 // CHECK-NEXT: dealloc_stack [[TMP]]
@@ -2898,16 +3065,16 @@ bb0(%0 : $*T, %1 : $*T):
 
 // CHECK-LABEL: sil @test_existential_partial_apply_apply
 // CHECK: bb0(%0 : $*FakeProtocol):
-// CHECK-NEXT: [[OPEN:%.*]] = open_existential_addr
+// CHECK-NEXT: [[OPEN:%.*]] = open_existential_addr immutable_access
 // CHECK-NEXT: [[FN:%.*]] = witness_method
 // CHECK-NEXT: apply [[FN]]<@opened("5DD6F3D0-808A-11E6-93A0-34363BD08DA0") FakeProtocol>([[OPEN]])
 // CHECK-NEXT: tuple
 // CHECK-NEXT: return
 sil @test_existential_partial_apply_apply : $@convention(thin) (@in FakeProtocol) -> () {
 bb0(%0: $*FakeProtocol):
-  %o = open_existential_addr %0 : $*FakeProtocol to $*@opened("5DD6F3D0-808A-11E6-93A0-34363BD08DA0") FakeProtocol
-  %f1 = witness_method $@opened("5DD6F3D0-808A-11E6-93A0-34363BD08DA0") FakeProtocol, #FakeProtocol.requirement!1, %o : $*@opened("5DD6F3D0-808A-11E6-93A0-34363BD08DA0") FakeProtocol : $@convention(witness_method) <T where T : FakeProtocol> (@in_guaranteed T) -> ()
-  %pa = partial_apply %f1<@opened("5DD6F3D0-808A-11E6-93A0-34363BD08DA0") FakeProtocol>() : $@convention(witness_method) <T where T : FakeProtocol> (@in_guaranteed T) -> ()
+  %o = open_existential_addr immutable_access %0 : $*FakeProtocol to $*@opened("5DD6F3D0-808A-11E6-93A0-34363BD08DA0") FakeProtocol
+  %f1 = witness_method $@opened("5DD6F3D0-808A-11E6-93A0-34363BD08DA0") FakeProtocol, #FakeProtocol.requirement!1, %o : $*@opened("5DD6F3D0-808A-11E6-93A0-34363BD08DA0") FakeProtocol : $@convention(witness_method: FakeProtocol) <T where T : FakeProtocol> (@in_guaranteed T) -> ()
+  %pa = partial_apply %f1<@opened("5DD6F3D0-808A-11E6-93A0-34363BD08DA0") FakeProtocol>() : $@convention(witness_method: FakeProtocol) <T where T : FakeProtocol> (@in_guaranteed T) -> ()
   %a1 = apply %pa(%o) : $@callee_owned (@in_guaranteed @opened("5DD6F3D0-808A-11E6-93A0-34363BD08DA0") FakeProtocol) -> ()
 
   %r = tuple ()
@@ -3026,8 +3193,8 @@ bb0:
   %0 = metatype $@thick ClientSocket.Type
   %1 = init_existential_metatype %0 : $@thick ClientSocket.Type, $@thick Socket.Type
   %2 = open_existential_metatype %1 : $@thick Socket.Type to $@thick (@opened("82105EE0-DCB0-11E5-865D-C8E0EB309913") Socket).Type
-  %3 = witness_method $@opened("82105EE0-DCB0-11E5-865D-C8E0EB309913") Socket, #Socket.newWithConfig!1, %2 : $@thick (@opened("82105EE0-DCB0-11E5-865D-C8E0EB309913") Socket).Type : $@convention(witness_method) <τ_0_0 where τ_0_0 : Socket> (@thick τ_0_0.Type) -> (Builtin.Int32, @error MyErrorType)
-  try_apply %3<@opened("82105EE0-DCB0-11E5-865D-C8E0EB309913") Socket>(%2) : $@convention(witness_method) <τ_0_0 where τ_0_0 : Socket> (@thick τ_0_0.Type) -> (Builtin.Int32, @error MyErrorType), normal bb1, error bb2
+  %3 = witness_method $@opened("82105EE0-DCB0-11E5-865D-C8E0EB309913") Socket, #Socket.newWithConfig!1, %2 : $@thick (@opened("82105EE0-DCB0-11E5-865D-C8E0EB309913") Socket).Type : $@convention(witness_method: Socket) <τ_0_0 where τ_0_0 : Socket> (@thick τ_0_0.Type) -> (Builtin.Int32, @error MyErrorType)
+  try_apply %3<@opened("82105EE0-DCB0-11E5-865D-C8E0EB309913") Socket>(%2) : $@convention(witness_method: Socket) <τ_0_0 where τ_0_0 : Socket> (@thick τ_0_0.Type) -> (Builtin.Int32, @error MyErrorType), normal bb1, error bb2
 
 bb1(%4 : $Builtin.Int32):
   return %4 : $Builtin.Int32
@@ -3048,7 +3215,7 @@ extension PM {
 
 
 public final class VV {
-  @sil_stored final var m: PM { get set }
+  @_hasStorage final var m: PM { get set }
   init()
   deinit
 }
@@ -3059,7 +3226,7 @@ sil @minus : $@convention(method) <Self where Self : PM> (@in_guaranteed Self) -
 
 // CHECK-LABEL: sil @silcombine_dont_change_allocstack_for_opened_archetypes
 // CHECK-NOT: alloc_stack{{.*}}opened
-// CHECK: open_existential_addr {{%[0-9]+}} : $*PM to $*@opened("090C3DB0-1C76-11E6-81C4-B8E856428C60") PM
+// CHECK: open_existential_addr immutable_access {{%[0-9]+}} : $*PM to $*@opened("090C3DB0-1C76-11E6-81C4-B8E856428C60") PM
 // CHECK: return
 sil @silcombine_dont_change_allocstack_for_opened_archetypes : $@convention(thin) (@owned VV) -> () {
 bb0(%0 : $VV):
@@ -3067,12 +3234,11 @@ bb0(%0 : $VV):
   %9 = ref_element_addr %0 : $VV, #VV.m
   %10 = alloc_stack $PM
   copy_addr %9 to [initialization] %10 : $*PM
-  %12 = open_existential_addr %10 : $*PM to $*@opened("090C3DB0-1C76-11E6-81C4-B8E856428C60") PM
+  %12 = open_existential_addr immutable_access %10 : $*PM to $*@opened("090C3DB0-1C76-11E6-81C4-B8E856428C60") PM
   %13 = init_existential_addr %8 : $*PM, $@opened("090C3DB0-1C76-11E6-81C4-B8E856428C60") PM
   %14 = function_ref @plus : $@convention(method) <τ_0_0 where τ_0_0 : PM> (@in_guaranteed τ_0_0) -> @out τ_0_0
   %15 = apply %14<@opened("090C3DB0-1C76-11E6-81C4-B8E856428C60") PM>(%13, %12) : $@convention(method) <τ_0_0 where τ_0_0 : PM> (@in_guaranteed τ_0_0) -> @out τ_0_0
-  destroy_addr %12 : $*@opened("090C3DB0-1C76-11E6-81C4-B8E856428C60") PM
-  deinit_existential_addr %10 : $*PM
+  destroy_addr %10 : $*PM
   dealloc_stack %10 : $*PM
   %20 = function_ref @minus : $@convention(method) <τ_0_0 where τ_0_0 : PM> (@in_guaranteed τ_0_0) -> ()
   %21 = apply %20<@opened("090C3DB0-1C76-11E6-81C4-B8E856428C60") PM>(%13) : $@convention(method) <τ_0_0 where τ_0_0 : PM> (@in_guaranteed τ_0_0) -> ()
@@ -3083,69 +3249,403 @@ bb0(%0 : $VV):
   return %26 : $()
 }
 
-protocol PPP : class {
-  func foo()
+// CHECK-LABEL: sil @remove_unused_alloc_ref
+// CHECK-NEXT: bb0
+// CHECK-NEXT: %0 = tuple ()
+// CHECK-NEXT: return %0 : $()
+sil @remove_unused_alloc_ref : $@convention(thin) () -> () {
+bb0:
+  %1 = alloc_ref $B
+  dealloc_ref %1 : $B
+  %3 = tuple ()
+  return %3 : $()
 }
 
-class BBB: PPP {
-  @inline(never)
-  func foo()
+// CHECK-LABEL: sil @remove_unused_alloc_ref_stack
+// CHECK-NEXT: bb0
+// CHECK-NEXT: %0 = tuple ()
+// CHECK-NEXT: return %0 : $()
+sil @remove_unused_alloc_ref_stack : $@convention(thin) () -> () {
+bb0:
+  %1 = alloc_ref [stack] $B
+  set_deallocating %1 : $B
+  dealloc_ref [stack] %1 : $B
+  %3 = tuple ()
+  return %3 : $()
 }
 
-final class XXX : BBB {
-  @inline(never)
-  override func foo()
+// Int1_const == x -> x == Int1_const
+// CHECK-LABEL: sil @canonicalize_bool_eq_checks
+sil @canonicalize_bool_eq_checks : $@convention(thin) (Builtin.Int1) -> Builtin.Int1 {
+bb0(%0 : $Builtin.Int1):
+  %1 = integer_literal $Builtin.Int1, 0
+  %2 = builtin "cmp_eq_Int1"(%1 : $Builtin.Int1, %0 : $Builtin.Int1) : $Builtin.Int1
+  return %2 : $Builtin.Int1
 }
 
-// Check that sil-combine does not crash on this example and does not generate a wrong
-// upcast.
-// CHECK-LABEL: sil @silcombine_dont_generate_wrong_upcasts_during_devirt
-// CHECK-NOT: upcast
-// CHECK: witness_method $XXX, #PPP.foo!1 : $@convention(witness_method) <τ_0_0 where τ_0_0 : PPP> (@guaranteed τ_0_0) -> ()
-// CHECK-NOT: upcast
+// Int1_const != x -> x != Int1_const
+// CHECK-LABEL: sil @canonicalize_bool_ne_checks
+sil @canonicalize_bool_ne_checks : $@convention(thin) (Builtin.Int1) -> Builtin.Int1 {
+bb0(%0 : $Builtin.Int1):
+  %1 = integer_literal $Builtin.Int1, 0
+  %2 = builtin "cmp_ne_Int1"(%1 : $Builtin.Int1, %0 : $Builtin.Int1) : $Builtin.Int1
+  return %2 : $Builtin.Int1
+}
+
+// cond_br(xor(x, 1)), t_label, f_label -> cond_br x, f_label, t_label
+// CHECK-LABEL: sil @negate_branch_condition_xor1
+// CHECK: bb0
+// CHECK-NEXT: cond_br %0, bb2, bb1
+sil @negate_branch_condition_xor1 : $@convention(thin) (Builtin.Int1) -> Int32 {
+bb0(%0 : $Builtin.Int1):
+  %5 = integer_literal $Builtin.Int1, -1
+  %9 = builtin "xor_Int1"(%0 : $Builtin.Int1, %5 : $Builtin.Int1) : $Builtin.Int1
+  cond_br %9, bb1, bb2                              // id: %10
+
+bb1:                                                // Preds: bb0
+  %1 = integer_literal $Builtin.Int32, 0
+  %2 = struct $Int32 (%1 : $Builtin.Int32)          // user: %12
+  br bb3(%2 : $Int32)                               // id: %12
+
+bb2:                                                // Preds: bb0
+  %3 = integer_literal $Builtin.Int32, 1
+  %4 = struct $Int32 (%3 : $Builtin.Int32)          // user: %12
+  br bb3(%4 : $Int32)                               // id: %15
+
+bb3(%16 : $Int32):                                  // Preds: bb1 bb2
+  return %16 : $Int32                               // id: %17
+}
+
+// cond_br(xor(1, x)), t_label, f_label -> cond_br x, f_label, t_label
+// CHECK-LABEL: sil @negate_branch_condition_xor2
+// CHECK: bb0
+// CHECK-NEXT: cond_br %0, bb2, bb1
+sil @negate_branch_condition_xor2 : $@convention(thin) (Builtin.Int1) -> Int32 {
+bb0(%0 : $Builtin.Int1):
+  %5 = integer_literal $Builtin.Int1, -1
+  %9 = builtin "xor_Int1"(%5 : $Builtin.Int1, %0 : $Builtin.Int1) : $Builtin.Int1
+  cond_br %9, bb1, bb2                              // id: %10
+
+bb1:                                                // Preds: bb0
+  %1 = integer_literal $Builtin.Int32, 0
+  %2 = struct $Int32 (%1 : $Builtin.Int32)          // user: %12
+  br bb3(%2 : $Int32)                               // id: %12
+
+bb2:                                                // Preds: bb0
+  %3 = integer_literal $Builtin.Int32, 1
+  %4 = struct $Int32 (%3 : $Builtin.Int32)          // user: %12
+  br bb3(%4 : $Int32)                               // id: %15
+
+bb3(%16 : $Int32):                                  // Preds: bb1 bb2
+  return %16 : $Int32                               // id: %17
+}
+
+// cond_br(x == 0), t_label, f_label -> cond_br x, f_label, t_label
+// CHECK-LABEL: sil @negate_branch_condition_eq_false
+// CHECK: bb0
+// CHECK-NEXT: cond_br %0, bb2, bb1
+sil @negate_branch_condition_eq_false : $@convention(thin) (Builtin.Int1) -> Int32 {
+bb0(%0 : $Builtin.Int1):
+  %5 = integer_literal $Builtin.Int1, 0
+  %9 = builtin "cmp_eq_Int1"(%0 : $Builtin.Int1, %5 : $Builtin.Int1) : $Builtin.Int1
+  cond_br %9, bb1, bb2                              // id: %10
+
+bb1:                                                // Preds: bb0
+  %1 = integer_literal $Builtin.Int32, 0
+  %2 = struct $Int32 (%1 : $Builtin.Int32)          // user: %12
+  br bb3(%2 : $Int32)                               // id: %12
+
+bb2:                                                // Preds: bb0
+  %3 = integer_literal $Builtin.Int32, 1
+  %4 = struct $Int32 (%3 : $Builtin.Int32)          // user: %12
+  br bb3(%4 : $Int32)                               // id: %15
+
+bb3(%16 : $Int32):                                  // Preds: bb1 bb2
+  return %16 : $Int32                               // id: %17
+}
+
+// cond_br(x != -1), t_label, f_label -> cond_br x, f_label, t_label
+// CHECK-LABEL: sil @negate_branch_condition_ne_true
+// CHECK: bb0
+// CHECK-NEXT: cond_br %0, bb2, bb1
+sil @negate_branch_condition_ne_true : $@convention(thin) (Builtin.Int1) -> Int32 {
+bb0(%0 : $Builtin.Int1):
+  %5 = integer_literal $Builtin.Int1, -1
+  %9 = builtin "cmp_ne_Int1"(%0 : $Builtin.Int1, %5 : $Builtin.Int1) : $Builtin.Int1
+  cond_br %9, bb1, bb2                              // id: %10
+
+bb1:                                                // Preds: bb0
+  %1 = integer_literal $Builtin.Int32, 0
+  %2 = struct $Int32 (%1 : $Builtin.Int32)          // user: %12
+  br bb3(%2 : $Int32)                               // id: %12
+
+bb2:                                                // Preds: bb0
+  %3 = integer_literal $Builtin.Int32, 1
+  %4 = struct $Int32 (%3 : $Builtin.Int32)          // user: %12
+  br bb3(%4 : $Int32)                               // id: %15
+
+bb3(%16 : $Int32):                                  // Preds: bb1 bb2
+  return %16 : $Int32                               // id: %17
+}
+
+// CHECK-LABEL: sil @switch_value_to_cond_br_1
+// CHECK:      bb0({{.*}}):
+// CHECK-NEXT:   cond_br %0, bb1, bb2
+sil @switch_value_to_cond_br_1 : $@convention(thin) (Builtin.Int1) -> Int32 {
+bb0(%0 : $Builtin.Int1):
+  %t1 = integer_literal $Builtin.Int1, -1
+  switch_value %0 : $Builtin.Int1, case %t1: bb1, default bb2
+
+bb1:                                                // Preds: bb0
+  %1 = integer_literal $Builtin.Int32, 0
+  %2 = struct $Int32 (%1 : $Builtin.Int32)          // user: %12
+  br bb3(%2 : $Int32)                               // id: %12
+
+bb2:                                                // Preds: bb0
+  %3 = integer_literal $Builtin.Int32, 1
+  %4 = struct $Int32 (%3 : $Builtin.Int32)          // user: %12
+  br bb3(%4 : $Int32)                               // id: %15
+
+bb3(%16 : $Int32):                                  // Preds: bb1 bb2
+  return %16 : $Int32                               // id: %17
+}
+
+// CHECK-LABEL: sil @switch_value_to_cond_br_2
+// CHECK:      bb0({{.*}}):
+// CHECK-NEXT:   cond_br %0, bb2, bb1
+sil @switch_value_to_cond_br_2 : $@convention(thin) (Builtin.Int1) -> Int32 {
+bb0(%0 : $Builtin.Int1):
+  %f1 = integer_literal $Builtin.Int1, 0
+  switch_value %0 : $Builtin.Int1, case %f1: bb1, default bb2
+
+bb1:                                                // Preds: bb0
+  %1 = integer_literal $Builtin.Int32, 0
+  %2 = struct $Int32 (%1 : $Builtin.Int32)          // user: %12
+  br bb3(%2 : $Int32)                               // id: %12
+
+bb2:                                                // Preds: bb0
+  %3 = integer_literal $Builtin.Int32, 1
+  %4 = struct $Int32 (%3 : $Builtin.Int32)          // user: %12
+  br bb3(%4 : $Int32)                               // id: %15
+
+bb3(%16 : $Int32):                                  // Preds: bb1 bb2
+  return %16 : $Int32                               // id: %17
+}
+
+// CHECK-LABEL: sil @switch_value_to_cond_br_3
+// CHECK:      bb0({{.*}}):
+// CHECK-NEXT:   cond_br %0, bb1, bb2
+sil @switch_value_to_cond_br_3 : $@convention(thin) (Builtin.Int1) -> Int32 {
+bb0(%0 : $Builtin.Int1):
+  %t1 = integer_literal $Builtin.Int1, -1
+  %f1 = integer_literal $Builtin.Int1, 0
+  switch_value %0 : $Builtin.Int1, case %t1: bb1, case %f1: bb2
+
+bb1:                                                // Preds: bb0
+  %1 = integer_literal $Builtin.Int32, 0
+  %2 = struct $Int32 (%1 : $Builtin.Int32)          // user: %12
+  br bb3(%2 : $Int32)                               // id: %12
+
+bb2:                                                // Preds: bb0
+  %3 = integer_literal $Builtin.Int32, 1
+  %4 = struct $Int32 (%3 : $Builtin.Int32)          // user: %12
+  br bb3(%4 : $Int32)                               // id: %15
+
+bb3(%16 : $Int32):                                  // Preds: bb1 bb2
+  return %16 : $Int32                               // id: %17
+}
+
+protocol Prot0 : class {
+  static func newWithConfig() throws -> Builtin.Int32
+}
+
+
+protocol Prot1 : Prot0 {
+  @_nonoverride static func newWithConfig() throws -> Builtin.Int32
+}
+
+protocol Prot2 : Prot1 {
+  static func newWithConfig() throws -> Builtin.Int32
+}
+
+sil @getMetaType : $@convention(thin) () -> @thick Prot2.Type
+
+// CHECK-LABEL: meta_existential
+// CHECK:bb0:
+// CHECK:  [[APPLY:%.*]] = apply {{%.*}}() : $@convention(thin) () -> @thick Prot2.Type
+// CHECK:  [[OE:%.*]] = open_existential_metatype [[APPLY]] : $@thick Prot2.Type to $@thick (@opened("690DA5F6-B5EA-11E7-B144-685B3593C496") Prot1).Type
+// CHECK:  [[WM:%.*]] = witness_method $@opened("690DA5F6-B5EA-11E7-B144-685B3593C496") Prot1, #Prot1.newWithConfig!1 : <Self where Self : Prot1> (Self.Type) -> () throws -> Builtin.Int32, [[OE]] : $@thick (@opened("690DA5F6-B5EA-11E7-B144-685B3593C496") Prot1).Type : $@convention(witness_method: Prot1) <τ_0_0 where τ_0_0 : Prot1> (@thick τ_0_0.Type) -> (Builtin.Int32, @error MyErrorType)
+// CHECK:  try_apply [[WM]]<@opened("690DA5F6-B5EA-11E7-B144-685B3593C496") Prot1>([[OE]]) : $@convention(witness_method: Prot1) <τ_0_0 where τ_0_0 : Prot1> (@thick τ_0_0.Type) -> (Builtin.Int32, @error MyErrorType)
+sil @meta_existential : $@convention(thin) () -> (Builtin.Int32, @error MyErrorType) {
+bb0:
+  %fref = function_ref @getMetaType : $@convention(thin) () -> @thick Prot2.Type
+  %apply = apply %fref() : $@convention(thin) () -> @thick Prot2.Type
+  %open = open_existential_metatype %apply : $@thick Prot2.Type to $@thick (@opened("690DA5F6-B5EA-11E7-B144-685B3593C496") Prot1).Type
+  %1 = init_existential_metatype %open : $@thick (@opened("690DA5F6-B5EA-11E7-B144-685B3593C496") Prot1).Type, $@thick Prot1.Type
+  %2 = open_existential_metatype %1 : $@thick Prot1.Type to $@thick (@opened("92105EE0-DCB0-11E5-865D-C8E0EB309913") Prot1).Type
+  %3 = witness_method $@opened("92105EE0-DCB0-11E5-865D-C8E0EB309913") Prot1, #Prot1.newWithConfig!1, %2 : $@thick (@opened("92105EE0-DCB0-11E5-865D-C8E0EB309913") Prot1).Type : $@convention(witness_method: Prot1) <τ_0_0 where τ_0_0 : Prot1> (@thick τ_0_0.Type) -> (Builtin.Int32, @error MyErrorType)
+  try_apply %3<@opened("92105EE0-DCB0-11E5-865D-C8E0EB309913") Prot1>(%2) : $@convention(witness_method: Prot1) <τ_0_0 where τ_0_0 : Prot1> (@thick τ_0_0.Type) -> (Builtin.Int32, @error MyErrorType), normal bb1, error bb2
+
+bb1(%4 : $Builtin.Int32):
+  return %4 : $Builtin.Int32
+
+bb2(%5 : $MyErrorType):
+  throw %5 : $MyErrorType
+}
+
+// CHECK-LABEL: sil @mark_dependence_base
+// CHECK: bb0(
+// CHECK-NOT: init_existential_ref
+// CHECK-NOT: enum
+// CHECK-NEXT: mark_dependence
+// CHECK-NEXT: load
 // CHECK: return
-sil @silcombine_dont_generate_wrong_upcasts_during_devirt: $@convention(thin) (@owned BBB) -> () {
-bb0(%0 : $BBB):
-  strong_retain %0 : $BBB
-  %3 = init_existential_ref %0 : $BBB : $BBB, $PPP
-  %5 = open_existential_ref %3 : $PPP to $@opened("0AC9A62E-926E-11E6-8BF5-685B35C48C83") PPP
-  %6 = witness_method $XXX, #PPP.foo!1, %5 : $@opened("0AC9A62E-926E-11E6-8BF5-685B35C48C83") PPP : $@convention(witness_method) <τ_0_0 where τ_0_0 : PPP> (@guaranteed τ_0_0) -> ()
-  %7 = apply %6<@opened("0AC9A62E-926E-11E6-8BF5-685B35C48C83") PPP>(%5) : $@convention(witness_method) <τ_0_0 where τ_0_0 : PPP> (@guaranteed τ_0_0) -> ()
-  %8 = apply %6<@opened("0AC9A62E-926E-11E6-8BF5-685B35C48C83") PPP>(%5) : $@convention(witness_method) <τ_0_0 where τ_0_0 : PPP> (@guaranteed τ_0_0) -> ()
-  strong_release %3 : $PPP
-  %9 = tuple ()
-  strong_release %0 : $BBB
-  %11 = tuple ()
-  return %11 : $()
+sil @mark_dependence_base : $@convention(thin) (@inout Builtin.Int64, @owned B) -> Builtin.Int64 {
+bb0(%0 : $*Builtin.Int64, %1 : $B):
+  %x = init_existential_ref %1 : $B : $B, $AnyObject
+  %2 = enum $Optional<AnyObject>, #Optional.some!enumelt.1, %x : $AnyObject
+  %3 = mark_dependence %0 : $*Builtin.Int64 on %2 : $Optional<AnyObject>
+  %4 = load %3 : $*Builtin.Int64
+  return %4 : $Builtin.Int64
 }
 
-// Check that both applies can be devirtualized by means of propagating the concrete
-// type of the existential into witness_method and apply instructions.
-// CHECK-LABEL: sil @silcombine_devirt_both_applies_of_witness_method
+protocol _NSArrayCore {}
+
+// CHECK-LABEL: sil @mark_dependence_base2
+// CHECK: bb0(
 // CHECK-NOT: open_existential_ref
-// CHECK-NOT: witness_method
-// CHECK: [[FR1:%.*]] = function_ref @_TTWC4nix23XXXS_3PPPS_FS1_3foofT_T_
-// CHECK: apply [[FR1]](%0)
-// CHECK: [[FR2:%.*]] = function_ref @_TTWC4nix23XXXS_3PPPS_FS1_3foofT_T_
-// CHECK: apply [[FR2]](%0)
+// CHECK-NOT: enum
+// CHECK-NEXT: mark_dependence
+// CHECK-NEXT: load
 // CHECK: return
-sil @silcombine_devirt_both_applies_of_witness_method : $@convention(thin) (@owned XXX) -> () {
-bb0(%0 : $XXX):
-  strong_retain %0 : $XXX
-  %3 = init_existential_ref %0 : $XXX : $XXX, $PPP
-  %5 = open_existential_ref %3 : $PPP to $@opened("0AC9A62E-926E-11E6-8BF5-685B35C48C83") PPP
-  %6 = witness_method $@opened("0AC9A62E-926E-11E6-8BF5-685B35C48C83") PPP, #PPP.foo!1, %5 : $@opened("0AC9A62E-926E-11E6-8BF5-685B35C48C83") PPP : $@convention(witness_method) <τ_0_0 where τ_0_0 : PPP> (@guaranteed τ_0_0) -> ()
-  %7 = apply %6<@opened("0AC9A62E-926E-11E6-8BF5-685B35C48C83") PPP>(%5) : $@convention(witness_method) <τ_0_0 where τ_0_0 : PPP> (@guaranteed τ_0_0) -> ()
-  %8 = apply %6<@opened("0AC9A62E-926E-11E6-8BF5-685B35C48C83") PPP>(%5) : $@convention(witness_method) <τ_0_0 where τ_0_0 : PPP> (@guaranteed τ_0_0) -> ()
-  strong_release %3 : $PPP
-  %9 = tuple ()
-  strong_release %0 : $XXX
-  %11 = tuple ()
-  return %11 : $()
+sil @mark_dependence_base2 : $@convention(thin) (@inout Builtin.Int64, @owned B) -> Builtin.Int64 {
+bb0(%0 : $*Builtin.Int64, %1 : $B):
+  %2 = init_existential_ref %1 : $B : $B, $AnyObject
+  %3 = open_existential_ref %2 : $AnyObject to $@opened("B674783A-EF08-11E7-97D6-8C85900CB088") _NSArrayCore
+  %5 = mark_dependence %0 : $*Builtin.Int64 on %3 : $@opened("B674783A-EF08-11E7-97D6-8C85900CB088") _NSArrayCore
+
+  %4 = load %5 : $*Builtin.Int64
+  return %4 : $Builtin.Int64
 }
 
-sil @_TTWC4nix23XXXS_3PPPS_FS1_3foofT_T_ : $@convention(witness_method) (@guaranteed XXX) -> ()
-
-sil_witness_table XXX: PPP module nix2 {
-  method #PPP.foo!1: @_TTWC4nix23XXXS_3PPPS_FS1_3foofT_T_	// protocol witness for PPP.foo() -> () in conformance XXX
+// Test to see if we can constant fold a classify_bridge_object on a Swift class
+// to false.
+// CHECK-LABEL: sil @test_classify_fold
+// CHECK-NOT: classify_bridge_object
+// CHECK: integer_literal $Builtin.Int1, 0
+// CHECK-NEXT: return
+sil @test_classify_fold : $@convention(thin) (@owned _ContiguousArrayStorage<B>) -> Builtin.Int1 {
+bb0(%0 : $_ContiguousArrayStorage<B>):
+  %1 = unchecked_ref_cast %0 : $_ContiguousArrayStorage<B> to $Builtin.BridgeObject
+  %2 = classify_bridge_object %1 : $Builtin.BridgeObject
+  %3 = tuple_extract %2 : $(Builtin.Int1, Builtin.Int1), 0
+  return %3 : $Builtin.Int1
 }
+
+// CHECK-LABEL: sil @bridge_cast_noop_fold
+// CHECK: bb0(%0
+// CHECK-NEXT: %1 = upcast %0
+// CHECK-NEXT: return %1
+sil @bridge_cast_noop_fold : $@convention(thin) (@owned _ContiguousArrayStorage<B>) -> __ContiguousArrayStorageBase {
+bb0(%0 : $_ContiguousArrayStorage<B>):
+  %1 = unchecked_ref_cast %0 : $_ContiguousArrayStorage<B> to $Builtin.BridgeObject
+  %2 = bridge_object_to_ref %1 : $Builtin.BridgeObject to $__ContiguousArrayStorageBase
+  return %2 : $__ContiguousArrayStorageBase
+}
+
+sil @returnInt : $@convention(thin) () -> Builtin.Int32
+
+// CHECK-LABEL: sil @optimize_convert_escape_to_noescape
+// CHECK: [[FN:%.*]] = function_ref @returnInt
+// CHECK: apply [[FN]]()
+sil @optimize_convert_escape_to_noescape : $@convention(thin) () -> Builtin.Int32 {
+bb0:
+  %0 = function_ref @returnInt : $@convention(thin) () -> Builtin.Int32
+  %1 = thin_to_thick_function %0 : $@convention(thin) () -> Builtin.Int32 to $@callee_guaranteed () -> Builtin.Int32
+  %2 = convert_escape_to_noescape %1 : $@callee_guaranteed () -> Builtin.Int32 to $@noescape @callee_guaranteed () -> Builtin.Int32
+  %4 = apply %2() : $@noescape @callee_guaranteed () -> Builtin.Int32
+  return %4 : $Builtin.Int32
+}
+
+// CHECK-LABEL: sil @optimize_arc_with_value_to_bridge_object
+// CHECK:      bb0(%0 : $Builtin.Int64):
+// CHECK-NEXT: struct $UInt64
+// CHECK-NEXT: value_to_bridge_object
+// CHECK-NEXT: return
+sil @optimize_arc_with_value_to_bridge_object : $@convention(thin) (Builtin.Int64) -> Builtin.BridgeObject {
+bb0(%0 : $Builtin.Int64):
+  %1 = struct $UInt64 (%0 : $Builtin.Int64)
+  %2 = value_to_bridge_object %1 : $UInt64
+  strong_retain %2 : $Builtin.BridgeObject
+  return %2 : $Builtin.BridgeObject
+}
+
+// CHECK-LABEL: sil @optimize_stringObject_bit_operations
+// CHECK:      bb0:
+// CHECK-NEXT:   %0 = integer_literal $Builtin.Int64, 4611686018427387904
+// CHECK-NEXT:   return %0
+sil @optimize_stringObject_bit_operations : $@convention(thin) () -> Builtin.Int64 {
+bb0:
+  %2 = string_literal utf8 "thequickbrownfoxjumpsoverthelazydogusingasmanycharacteraspossible123456789"
+  %5 = builtin "ptrtoint_Word"(%2 : $Builtin.RawPointer) : $Builtin.Word
+  %6 = builtin "zextOrBitCast_Word_Int64"(%5 : $Builtin.Word) : $Builtin.Int64
+  %9 = integer_literal $Builtin.Int64, 13835058055282163712
+  %10 = builtin "stringObjectOr_Int64"(%6 : $Builtin.Int64, %9 : $Builtin.Int64) : $Builtin.Int64
+  %11 = struct $UInt64 (%10 : $Builtin.Int64)
+  %12 = value_to_bridge_object %11 : $UInt64
+  %33 = unchecked_trivial_bit_cast %12 : $Builtin.BridgeObject to $UInt64
+  %34 = integer_literal $Builtin.Int64, 6917529027641081856
+  %35 = struct_extract %33 : $UInt64, #UInt64._value
+  %36 = builtin "and_Int64"(%35 : $Builtin.Int64, %34 : $Builtin.Int64) : $Builtin.Int64
+  return %36 : $Builtin.Int64
+}
+
+// CHECK-LABEL: sil @dont_optimize_stringObject_bit_operations1
+// CHECK:   builtin "stringObjectOr_Int64"
+// CHECK:   builtin "and_Int64"
+sil @dont_optimize_stringObject_bit_operations1 : $@convention(thin) (Builtin.RawPointer) -> Builtin.Int64 {
+bb0(%2 : $Builtin.RawPointer):
+  %5 = builtin "ptrtoint_Word"(%2 : $Builtin.RawPointer) : $Builtin.Word
+  %6 = builtin "zextOrBitCast_Word_Int64"(%5 : $Builtin.Word) : $Builtin.Int64
+  %9 = integer_literal $Builtin.Int64, -9223372036854775808
+  %10 = builtin "stringObjectOr_Int64"(%6 : $Builtin.Int64, %9 : $Builtin.Int64) : $Builtin.Int64
+  %11 = struct $UInt64 (%10 : $Builtin.Int64)
+  %12 = value_to_bridge_object %11 : $UInt64
+  %33 = unchecked_trivial_bit_cast %12 : $Builtin.BridgeObject to $UInt64
+  %34 = integer_literal $Builtin.Int64, 4611686018427387904
+  %35 = struct_extract %33 : $UInt64, #UInt64._value
+  %36 = builtin "and_Int64"(%35 : $Builtin.Int64, %34 : $Builtin.Int64) : $Builtin.Int64
+  return %36 : $Builtin.Int64
+}
+
+// CHECK-LABEL: sil @dont_optimize_stringObject_bit_operations2
+// CHECK:   builtin "stringObjectOr_Int64"
+// CHECK:   builtin "and_Int64"
+sil @dont_optimize_stringObject_bit_operations2 : $@convention(thin) () -> Builtin.Int64 {
+bb0:
+  %2 = string_literal utf8 "thequickbrownfoxjumpsoverthelazydogusingasmanycharacteraspossible123456789"
+  %5 = builtin "ptrtoint_Word"(%2 : $Builtin.RawPointer) : $Builtin.Word
+  %6 = builtin "zextOrBitCast_Word_Int64"(%5 : $Builtin.Word) : $Builtin.Int64
+  %9 = integer_literal $Builtin.Int64, 13835058055282163712
+  %10 = builtin "stringObjectOr_Int64"(%6 : $Builtin.Int64, %9 : $Builtin.Int64) : $Builtin.Int64
+  %11 = struct $UInt64 (%10 : $Builtin.Int64)
+  %12 = value_to_bridge_object %11 : $UInt64
+  %33 = unchecked_trivial_bit_cast %12 : $Builtin.BridgeObject to $UInt64
+  %34 = integer_literal $Builtin.Int64, 1152921504606846975
+  %35 = struct_extract %33 : $UInt64, #UInt64._value
+  %36 = builtin "and_Int64"(%35 : $Builtin.Int64, %34 : $Builtin.Int64) : $Builtin.Int64
+  return %36 : $Builtin.Int64
+}
+
+// CHECK-LABEL: sil @conversion_to_and_from_bridge_object
+// CHECK:      bb0(%0 : $Builtin.Int64):
+// CHECK-NEXT:   return %0
+sil @conversion_to_and_from_bridge_object : $@convention(thin) (Builtin.Int64) -> (Builtin.Int64) {
+bb0(%0 : $Builtin.Int64):
+  %1 = struct $UInt64 (%0 : $Builtin.Int64)
+  %2 = value_to_bridge_object %1 : $UInt64
+  %3 = bridge_object_to_word %2 : $Builtin.BridgeObject to $Builtin.Word
+  %4 = builtin "zextOrBitCast_Word_Int64"(%3 : $Builtin.Word) : $Builtin.Int64
+  return %4 : $Builtin.Int64
+}
+

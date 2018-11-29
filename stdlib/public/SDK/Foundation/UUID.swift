@@ -2,19 +2,20 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
 @_exported import Foundation // Clang module
 import Darwin.uuid
+import _SwiftCoreFoundationOverlayShims
 
 /// Represents UUID strings, which can be used to uniquely identify types, interfaces, and other items.
-@available(OSX 10.8, iOS 6.0, *)
+@available(macOS 10.8, iOS 6.0, *)
 public struct UUID : ReferenceConvertible, Hashable, Equatable, CustomStringConvertible {
     public typealias ReferenceType = NSUUID
 
@@ -23,14 +24,18 @@ public struct UUID : ReferenceConvertible, Hashable, Equatable, CustomStringConv
     /* Create a new UUID with RFC 4122 version 4 random bytes */
     public init() {
         withUnsafeMutablePointer(to: &uuid) {
-            uuid_generate_random(unsafeBitCast($0, to: UnsafeMutablePointer<UInt8>.self))
+            $0.withMemoryRebound(to: UInt8.self, capacity: 16) {
+                uuid_generate_random($0)
+            }
         }
     }
     
-    fileprivate init(reference: NSUUID) {
+    fileprivate init(reference: __shared NSUUID) {
         var bytes: uuid_t = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
         withUnsafeMutablePointer(to: &bytes) {
-            reference.getBytes(unsafeBitCast($0, to: UnsafeMutablePointer<UInt8>.self))
+            $0.withMemoryRebound(to: UInt8.self, capacity: 16) {
+                reference.getBytes($0)
+            }
         }
         uuid = bytes
     }
@@ -38,9 +43,11 @@ public struct UUID : ReferenceConvertible, Hashable, Equatable, CustomStringConv
     /// Create a UUID from a string such as "E621E1F8-C36C-495A-93FC-0C247A3E6E5F".
     /// 
     /// Returns nil for invalid strings.
-    public init?(uuidString string: String) {
+    public init?(uuidString string: __shared String) {
         let res = withUnsafeMutablePointer(to: &uuid) {
-            return uuid_parse(string, unsafeBitCast($0, to: UnsafeMutablePointer<UInt8>.self))
+            $0.withMemoryRebound(to: UInt8.self, capacity: 16) {
+                return uuid_parse(string, $0)
+            }
         }
         if res != 0 {
             return nil
@@ -55,19 +62,23 @@ public struct UUID : ReferenceConvertible, Hashable, Equatable, CustomStringConv
     /// Returns a string created from the UUID, such as "E621E1F8-C36C-495A-93FC-0C247A3E6E5F"
     public var uuidString: String {
         var bytes: uuid_string_t = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-        var localValue = uuid
-        return withUnsafeMutablePointer(to: &localValue) { val in
-            withUnsafeMutablePointer(to: &bytes) { str in
-                uuid_unparse(unsafeBitCast(val, to: UnsafePointer<UInt8>.self), unsafeBitCast(str, to: UnsafeMutablePointer<Int8>.self))
-                return String(cString: unsafeBitCast(str, to: UnsafePointer<CChar>.self), encoding: .utf8)!
+        return withUnsafePointer(to: uuid) {
+            $0.withMemoryRebound(to: UInt8.self, capacity: 16) { val in
+                withUnsafeMutablePointer(to: &bytes) {
+                    $0.withMemoryRebound(to: Int8.self, capacity: 37) { str in
+                        uuid_unparse(val, str)
+                        return String(cString: UnsafePointer(str), encoding: .utf8)!
+                    }
+                }
             }
         }
     }
     
     public var hashValue: Int {
-        var localValue = uuid
-        return withUnsafeMutablePointer(to: &localValue) {
-            return Int(bitPattern: CFHashBytes(unsafeBitCast($0, to: UnsafeMutablePointer<UInt8>.self), CFIndex(MemoryLayout<uuid_t>.size)))
+        return withUnsafePointer(to: uuid) {
+              $0.withMemoryRebound(to: UInt8.self, capacity: 16) {
+                  return Int(bitPattern: CFHashBytes(UnsafeMutablePointer(mutating: $0), CFIndex(MemoryLayout<uuid_t>.size)))
+              }
         }
     }
     
@@ -82,9 +93,10 @@ public struct UUID : ReferenceConvertible, Hashable, Equatable, CustomStringConv
     // MARK: - Bridging Support
     
     fileprivate var reference: NSUUID {
-        var bytes = uuid
-        return withUnsafePointer(to: &bytes) {
-            return NSUUID(uuidBytes: unsafeBitCast($0, to: UnsafePointer<UInt8>.self))
+        return withUnsafePointer(to: uuid) {
+            $0.withMemoryRebound(to: UInt8.self, capacity: 16) {
+                return NSUUID(uuidBytes: $0)
+            }
         }
     }
 
@@ -133,6 +145,7 @@ extension UUID : _ObjectiveCBridgeable {
         return true
     }
 
+    @_effects(readonly)
     public static func _unconditionallyBridgeFromObjectiveC(_ source: NSUUID?) -> UUID {
         var result: UUID?
         _forceBridgeFromObjectiveC(source!, result: &result)
@@ -148,3 +161,21 @@ extension NSUUID : _HasCustomAnyHashableRepresentation {
     }
 }
 
+extension UUID : Codable {
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let uuidString = try container.decode(String.self)
+
+        guard let uuid = UUID(uuidString: uuidString) else {
+            throw DecodingError.dataCorrupted(DecodingError.Context(codingPath: decoder.codingPath,
+                                                                    debugDescription: "Attempted to decode UUID from invalid UUID string."))
+        }
+
+        self = uuid
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(self.uuidString)
+    }
+}

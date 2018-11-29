@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -22,6 +22,88 @@ comparableOperators = [
 ]
 
 }%
+
+/// Returns a Boolean value indicating whether the corresponding components of
+/// two tuples are equal.
+///
+/// All arity zero tuples are equal.
+///
+/// - Parameters:
+///   - lhs: An empty tuple.
+///   - rhs: An empty tuple.
+@inlinable // trivial-implementation
+public func ==(lhs: (), rhs: ()) -> Bool {
+  return true
+}
+
+/// Returns a Boolean value indicating whether any corresponding components of
+/// the two tuples are not equal.
+///
+/// All arity zero tuples are equal.
+///
+/// - Parameters:
+///   - lhs: An empty tuple.
+///   - rhs: An empty tuple.
+@inlinable // trivial-implementation
+public func !=(lhs: (), rhs: ()) -> Bool {
+    return false
+}
+
+/// Returns a Boolean value indicating whether the first tuple is ordered
+/// before the second in a lexicographical ordering.
+///
+/// An arity zero tuple is never strictly before another arity zero tuple in a
+/// lexicographical ordering.
+///
+/// - Parameters:
+///   - lhs: An empty tuple.
+///   - rhs: An empty tuple.
+@inlinable // trivial-implementation
+public func <(lhs: (), rhs: ()) -> Bool {
+    return false
+}
+
+/// Returns a Boolean value indicating whether the first tuple is ordered
+/// before or the same as the second in a lexicographical ordering.
+///
+/// An arity zero tuple is always before or the same as another arity zero tuple
+/// in a lexicographical ordering.
+///
+/// - Parameters:
+///   - lhs: An empty tuple.
+///   - rhs: An empty tuple.
+@inlinable // trivial-implementation
+public func <=(lhs: (), rhs: ()) -> Bool {
+    return true
+}
+
+/// Returns a Boolean value indicating whether the first tuple is ordered
+/// after the second in a lexicographical ordering.
+///
+/// An arity zero tuple is never strictly after another arity zero tuple in a
+/// lexicographical ordering.
+///
+/// - Parameters:
+///   - lhs: An empty tuple.
+///   - rhs: An empty tuple.
+@inlinable // trivial-implementation
+public func >(lhs: (), rhs: ()) -> Bool {
+    return false
+}
+
+/// Returns a Boolean value indicating whether the first tuple is ordered
+/// after or the same as the second in a lexicographical ordering.
+///
+/// An arity zero tuple is always after or the same as another arity zero tuple
+/// in a lexicographical ordering.
+///
+/// - Parameters:
+///   - lhs: An empty tuple.
+///   - rhs: An empty tuple.
+@inlinable // trivial-implementation
+public func >=(lhs: (), rhs: ()) -> Bool {
+    return true
+}
 
 % for arity in range(2,7):
 %   typeParams = [chr(ord("A") + i) for i in range(arity)]
@@ -50,6 +132,7 @@ comparableOperators = [
 /// - Parameters:
 ///   - lhs: A tuple of `Equatable` elements.
 ///   - rhs: Another tuple of elements of the same type as `lhs`.
+@inlinable // trivial-implementation
 public func == <${equatableTypeParams}>(lhs: ${tupleT}, rhs: ${tupleT}) -> Bool {
   guard lhs.0 == rhs.0 else { return false }
   /*tail*/ return (
@@ -78,6 +161,7 @@ public func == <${equatableTypeParams}>(lhs: ${tupleT}, rhs: ${tupleT}) -> Bool 
 /// - Parameters:
 ///   - lhs: A tuple of `Equatable` elements.
 ///   - rhs: Another tuple of elements of the same type as `lhs`.
+@inlinable // trivial-implementation
 public func != <${equatableTypeParams}>(lhs: ${tupleT}, rhs: ${tupleT}) -> Bool {
   guard lhs.0 == rhs.0 else { return true }
   /*tail*/ return (
@@ -100,6 +184,7 @@ public func != <${equatableTypeParams}>(lhs: ${tupleT}, rhs: ${tupleT}) -> Bool 
 /// - Parameters:
 ///   - lhs: A tuple of `Comparable` elements.
 ///   - rhs: Another tuple of elements of the same type as `lhs`.
+@inlinable // trivial-implementation
 public func ${op} <${comparableTypeParams}>(lhs: ${tupleT}, rhs: ${tupleT}) -> Bool {
   if lhs.0 != rhs.0 { return lhs.0 ${op} rhs.0 }
   /*tail*/ return (
@@ -110,3 +195,7 @@ public func ${op} <${comparableTypeParams}>(lhs: ${tupleT}, rhs: ${tupleT}) -> B
 }
 %   end
 % end
+
+// ${'Local Variables'}:
+// eval: (read-only-mode 1)
+// End:

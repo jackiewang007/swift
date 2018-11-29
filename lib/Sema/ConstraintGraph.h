@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -22,6 +22,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Compiler.h"
 #include <functional>
@@ -104,7 +105,7 @@ private:
   /// directly. If the adjacency becomes empty afterward, it will be
   /// removed.
   void modifyAdjacency(TypeVariableType *typeVar,
-                       std::function<void(Adjacency& adj)> modify);
+                       llvm::function_ref<void(Adjacency &adj)> modify);
 
   /// Add an adjacency to the list of adjacencies.
   void addAdjacency(TypeVariableType *typeVar);
@@ -208,13 +209,25 @@ public:
   /// Bind the given type variable to the given fixed type.
   void bindTypeVariable(TypeVariableType *typeVar, Type fixedType);
 
+  /// Describes which constraints \c gatherConstraints should gather.
+  enum class GatheringKind {
+    /// Gather constraints associated with all of the variables within the
+    /// same equivalence class as the given type variable.
+    EquivalenceClass,
+    /// Gather all constraints that mention this type variable or type variables
+    /// that it is equivalent to.
+    AllMentions,
+  };
+
   /// Gather the set of constraints that involve the given type variable,
   /// i.e., those constraints that will be affected when the type variable
   /// gets merged or bound to a fixed type.
-  ///
-  /// The resulting set of constraints may contain duplicates.
-  void gatherConstraints(TypeVariableType *typeVar,
-                         SmallVectorImpl<Constraint *> &constraints);
+  void
+  gatherConstraints(TypeVariableType *typeVar,
+                    llvm::SetVector<Constraint *> &constraints,
+                    GatheringKind kind,
+                    llvm::function_ref<bool(Constraint *)> acceptConstraint =
+                        [](Constraint *constraint) { return true; });
 
   /// Retrieve the type variables that correspond to nodes in the graph.
   ///
@@ -226,17 +239,46 @@ public:
 
   /// Compute the connected components of the graph.
   ///
-  /// \param typeVars The type variables that occur within the
-  /// connected components. If a non-empty vector is passed in, the algorithm
-  /// will only consider type variables reachable from the initial set.
+  /// \param typeVars The type variables that should be included in the
+  /// set of connected components that are returned.
   ///
   /// \param components Receives the component numbers for each type variable
   /// in \c typeVars.
   ///
-  /// \returns the number of connected components in the graph.
+  /// \returns the number of connected components in the graph, which includes
+  /// one component for each of the constraints produced by
+  /// \c getOrphanedConstraints().
   unsigned computeConnectedComponents(
              SmallVectorImpl<TypeVariableType *> &typeVars,
              SmallVectorImpl<unsigned> &components);
+
+  /// Retrieve the set of "orphaned" constraints, which are known to the
+  /// constraint graph but have no type variables to anchor them.
+  ArrayRef<Constraint *> getOrphanedConstraints() const {
+    return OrphanedConstraints;
+  }
+
+  /// Replace the orphaned constraints with the constraints in the given list,
+  /// returning the old set of orphaned constraints.
+  SmallVector<Constraint *, 4> takeOrphanedConstraints() {
+    auto result = std::move(OrphanedConstraints);
+    OrphanedConstraints.clear();
+    return result;
+  }
+
+  /// Set the orphaned constraints.
+  void setOrphanedConstraints(SmallVector<Constraint *, 4> &&newConstraints) {
+    OrphanedConstraints = std::move(newConstraints);
+  }
+
+  /// Set the list of orphaned constraints to a single constraint.
+  ///
+  /// If \c orphaned is null, just clear out the list.
+  void setOrphanedConstraint(Constraint *orphaned) {
+    OrphanedConstraints.clear();
+    if (orphaned)
+      OrphanedConstraints.push_back(orphaned);
+  }
 
   /// Print the graph.
   void print(llvm::raw_ostream &out);
@@ -288,6 +330,13 @@ private:
 
   /// The type variables in this graph, in stable order.
   SmallVector<TypeVariableType *, 4> TypeVariables;
+
+  /// Constraints that are "orphaned" because they contain no type variables.
+  SmallVector<Constraint *, 4> OrphanedConstraints;
+
+  /// Increment the number of constraints considered per attempt
+  /// to contract constrant graph edges.
+  void incrementConstraintsPerContractionCounter();
 
   /// The kind of change made to the graph.
   enum class ChangeKind {
@@ -371,7 +420,7 @@ private:
   friend class ConstraintGraphScope;
 };
 
-} // end namespace swift::constraints
+} // end namespace constraints
 
 } // end namespace swift
 

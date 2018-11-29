@@ -1,17 +1,4 @@
 include(CMakeParseArguments)
-
-# Use ${cmake_2_8_12_KEYWORD} instead of KEYWORD in target_link_libraries().
-# These variables are used by LLVM's CMake code.
-set(cmake_2_8_12_INTERFACE INTERFACE)
-set(cmake_2_8_12_PRIVATE PRIVATE)
-
-# Backwards compatible USES_TERMINAL, cargo culted from llvm's cmake configs.
-if(CMAKE_VERSION VERSION_LESS 3.1.20141117)
-  set(cmake_3_2_USES_TERMINAL)
-else()
-  set(cmake_3_2_USES_TERMINAL USES_TERMINAL)
-endif()
-
 include(SwiftXcodeSupport)
 
 macro(swift_common_standalone_build_config_llvm product is_cross_compiling)
@@ -37,7 +24,7 @@ macro(swift_common_standalone_build_config_llvm product is_cross_compiling)
   # Then we import LLVMConfig. This is going to override whatever cached value
   # we have for LLVM_ENABLE_ASSERTIONS.
   find_package(LLVM REQUIRED CONFIG
-    HINTS "${PATH_TO_LLVM_BUILD}" NO_DEFAULT_PATH)
+    HINTS "${PATH_TO_LLVM_BUILD}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
 
   # If we did not have a cached value for LLVM_ENABLE_ASSERTIONS, set
   # LLVM_ENABLE_ASSERTIONS_saved to be the ENABLE_ASSERTIONS value from LLVM so
@@ -81,9 +68,9 @@ macro(swift_common_standalone_build_config_llvm product is_cross_compiling)
     set(${product}_NATIVE_LLVM_TOOLS_PATH "${LLVM_TOOLS_BINARY_DIR}")
   endif()
 
-  find_program(SWIFT_TABLEGEN_EXE "llvm-tblgen" "${${product}_NATIVE_LLVM_TOOLS_PATH}"
-    NO_DEFAULT_PATH)
-  if ("${SWIFT_TABLEGEN_EXE}" STREQUAL "SWIFT_TABLEGEN_EXE-NOTFOUND")
+  find_program(LLVM_TABLEGEN_EXE "llvm-tblgen" "${${product}_NATIVE_LLVM_TOOLS_PATH}"
+    NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
+  if ("${LLVM_TABLEGEN_EXE}" STREQUAL "LLVM_TABLEGEN_EXE-NOTFOUND")
     message(FATAL_ERROR "Failed to find tablegen in ${${product}_NATIVE_LLVM_TOOLS_PATH}")
   endif()
 
@@ -91,10 +78,19 @@ macro(swift_common_standalone_build_config_llvm product is_cross_compiling)
   include(AddSwiftTableGen) # This imports TableGen from LLVM.
   include(HandleLLVMOptions)
 
-  # HACK: this ugly tweaking is to prevent the propagation of the flag from LLVM
-  # into swift.  The use of this flag pollutes all targets, and we are not able
-  # to remove it on a per-target basis which breaks cross-compilation.
+  # HACK: Not all targets support -z,defs as a linker flag. 
+  #
+  # Normally, LLVM would only add it as an option for known ELF targets;
+  # however, due to the custom scheme Swift uses for cross-compilation, the 
+  # CMAKE_SHARED_LINKER_FLAGS are determined based on the host system and 
+  # then applied to all targets. This causes issues in cross-compiling to
+  # Windows from a Linux host.
+  # 
+  # To work around this, we unconditionally remove the flag here and then
+  # selectively add it to the per-target link flags; this is currently done in
+  # add_swift_host_library and add_swift_target_library within AddSwift.cmake.
   string(REGEX REPLACE "-Wl,-z,defs" "" CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS}")
+  string(REGEX REPLACE "-Wl,-z,nodelete" "" CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS}")
 
   set(PACKAGE_VERSION "${LLVM_PACKAGE_VERSION}")
   string(REGEX REPLACE "([0-9]+)\\.[0-9]+(\\.[0-9]+)?" "\\1" PACKAGE_VERSION_MAJOR
@@ -153,7 +149,7 @@ macro(swift_common_standalone_build_config_clang product is_cross_compiling)
 
   # Then include Clang.
   find_package(Clang REQUIRED CONFIG
-    HINTS "${PATH_TO_CLANG_BUILD}" NO_DEFAULT_PATH)
+    HINTS "${PATH_TO_CLANG_BUILD}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
 
   if(NOT EXISTS "${PATH_TO_CLANG_SOURCE}/include/clang/AST/Decl.h")
     message(FATAL_ERROR "Please set ${product}_PATH_TO_CLANG_SOURCE to the root directory of Clang's source code.")
@@ -196,6 +192,9 @@ macro(swift_common_standalone_build_config_cmark product)
   set(CMARK_BUILD_INCLUDE_DIR "${PATH_TO_CMARK_BUILD}/src")
   include_directories("${CMARK_MAIN_INCLUDE_DIR}"
                       "${CMARK_BUILD_INCLUDE_DIR}")
+
+  include(${${product}_PATH_TO_CMARK_BUILD}/src/CMarkExports.cmake)
+  add_definitions(-DCMARK_STATIC_DEFINE)
 endmacro()
 
 # Common cmake project config for standalone builds.
@@ -211,6 +210,9 @@ macro(swift_common_standalone_build_config product is_cross_compiling)
   swift_common_standalone_build_config_llvm(${product} ${is_cross_compiling})
   swift_common_standalone_build_config_clang(${product} ${is_cross_compiling})
   swift_common_standalone_build_config_cmark(${product})
+
+  # Enable groups for IDE generators (Xcode and MSVC).
+  set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 endmacro()
 
 # Common cmake project config for unified builds.
@@ -229,7 +231,6 @@ macro(swift_common_unified_build_config product)
   set(${product}_NATIVE_LLVM_TOOLS_PATH "${CMAKE_BINARY_DIR}/bin")
   set(${product}_NATIVE_CLANG_TOOLS_PATH "${CMAKE_BINARY_DIR}/bin")
   set(LLVM_PACKAGE_VERSION ${PACKAGE_VERSION})
-  set(SWIFT_TABLEGEN_EXE llvm-tblgen)
   set(LLVM_CMAKE_DIR "${CMAKE_SOURCE_DIR}/cmake/modules")
 
   # If cmark was checked out into tools/cmark, expect to build it as
@@ -267,6 +268,15 @@ endmacro()
 # Common cmake project config for additional warnings.
 #
 macro(swift_common_cxx_warnings)
+  # Make unhandled switch cases be an error in assert builds
+  if(DEFINED LLVM_ENABLE_ASSERTIONS)
+    check_cxx_compiler_flag("-Werror=switch" CXX_SUPPORTS_WERROR_SWITCH_FLAG)
+    append_if(CXX_SUPPORTS_WERROR_SWITCH_FLAG "-Werror=switch" CMAKE_CXX_FLAGS)
+
+    check_cxx_compiler_flag("/we4062" CXX_SUPPORTS_WE4062)
+    append_if(CXX_SUPPORTS_WE4062 "/we4062" CMAKE_CXX_FLAGS)
+  endif()
+
   check_cxx_compiler_flag("-Werror -Wdocumentation" CXX_SUPPORTS_DOCUMENTATION_FLAG)
   append_if(CXX_SUPPORTS_DOCUMENTATION_FLAG "-Wdocumentation" CMAKE_CXX_FLAGS)
 
@@ -284,6 +294,17 @@ macro(swift_common_cxx_warnings)
   # Check for '-fapplication-extension'.  On OS X/iOS we wish to link all
   # dynamic libraries with this flag.
   check_cxx_compiler_flag("-fapplication-extension" CXX_SUPPORTS_FAPPLICATION_EXTENSION)
+
+  # Disable C4068: unknown pragma. This means that MSVC doesn't report hundreds of warnings across
+  # the repository for IDE features such as #pragma mark "Title".
+  if("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /wd4068")
+    check_cxx_compiler_flag("/permissive-" CXX_SUPPORTS_PERMISSIVE_FLAG)
+    append_if(CXX_SUPPORTS_PERMISSIVE_FLAG "/permissive-" CMAKE_CXX_FLAGS)
+  endif()
+
+  # Disallow calls to objc_msgSend() with no function pointer cast.
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DOBJC_OLD_DISPATCH_PROTOTYPES=0")
 endmacro()
 
 # Like 'llvm_config()', but uses libraries from the selected build
@@ -304,7 +325,7 @@ function(swift_common_llvm_config target)
     else()
       # HACK: Otherwise (for example, for executables), use a plain signature,
       # because LLVM CMake does that already.
-      target_link_libraries("${target}" ${libnames})
+      target_link_libraries("${target}" PRIVATE ${libnames})
     endif()
   else()
     # If Swift was not built standalone, dispatch to 'llvm_config()'.

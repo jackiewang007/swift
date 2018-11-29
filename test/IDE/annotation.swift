@@ -85,9 +85,9 @@ class SubCls : MyCls, Prot {
 func genFn<T : Prot where T.Blarg : Prot2>(_ p : T) -> Int {}
 
 func test(_ x: Int) {
-  // CHECK: <Func@[[@LINE-3]]:6>genFn</Func>(<Ctor@[[@LINE-11]]:28-Class@[[@LINE-11]]:7>SubCls</Ctor>())
+  // CHECK: <Func@[[@LINE-3]]:6>genFn</Func>(<Class@[[@LINE-11]]:7>SubCls</Class>())
   genFn(SubCls())
-  // CHECK: "This is string \(<Func@[[@LINE-5]]:6>genFn</Func>({(<Param>a</Param>:<iStruct@>Int</iStruct>) in <Ctor@[[@LINE-13]]:28-Class@[[@LINE-13]]:7>SubCls</Ctor>()}(<Param@[[@LINE-3]]:13>x</Param>))) interpolation"
+  // CHECK: "This is string \(<Func@[[@LINE-5]]:6>genFn</Func>({(<Param>a</Param>:<iStruct@>Int</iStruct>) in <Class@[[@LINE-13]]:7>SubCls</Class>()}(<Param@[[@LINE-3]]:13>x</Param>))) interpolation"
   "This is string \(genFn({(a:Int) in SubCls()}(x))) interpolation"
 }
 
@@ -169,8 +169,6 @@ extension Array : P5 {}
 // CHECK: extension <iStruct@>Array</iStruct> : <Protocol{{.*}}>P5</Protocol> {}
 extension Optional : P5 {}
 // CHECK: extension <iEnum@>Optional</iEnum> : <Protocol{{.*}}>P5</Protocol> {}
-extension ImplicitlyUnwrappedOptional : P5 {}
-// CHECK: extension <iEnum@>ImplicitlyUnwrappedOptional</iEnum> : <Protocol{{.*}}>P5</Protocol> {}
 
 class C6 {
   func meth() {
@@ -225,7 +223,7 @@ class Observers {
 }
 
 class C9 {}
-// CHECK: func <Func>test6</Func>(_ <Param>o</Param>: <iProtocol@>AnyObject</iProtocol>) {
+// CHECK: func <Func>test6</Func>(_ <Param>o</Param>: <iTypeAlias@>AnyObject</iTypeAlias>) {
 func test6(_ o: AnyObject) {
   // CHECK: let <Var>x</Var> = <Param@[[@LINE-1]]:14>o</Param> as! <Class@[[@LINE-3]]:7>C9</Class>
   let x = o as! C9
@@ -261,7 +259,7 @@ func test7(int x: Int, andThis y: Float) {}
 test7(int: 0, andThis: 0)
 
 func test8<T : Prot2>(_ x: T) {}
-// CHECK: func <Func>test8</Func><<GenericTypeParam>T</GenericTypeParam> : <Protocol@71:10>Prot2</Protocol>>(_ <Param>x</Param>: <GenericTypeParam@263:12>T</GenericTypeParam>) {}{{$}}
+// CHECK: func <Func>test8</Func><<GenericTypeParam>T</GenericTypeParam> : <Protocol@71:10>Prot2</Protocol>>(_ <Param>x</Param>: <GenericTypeParam@261:12>T</GenericTypeParam>) {}{{$}}
 
 class C11 {
   // CHECK: var <Var>a</Var>: <iStruct@>Int</iStruct> = { var <Var>tmp</Var> = 0; return <Var@[[@LINE+1]]:22>tmp</Var> }()

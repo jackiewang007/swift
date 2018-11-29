@@ -1,4 +1,4 @@
-// RUN: %target-parse-verify-swift
+// RUN: %target-typecheck-verify-swift
 
 infix operator %%%
 infix operator %%%%
@@ -62,7 +62,7 @@ prefix func +// this should be a comment, not an operator
 prefix func -/* this also should be a comment, not an operator */
 (arg: Int) -> Int { return arg }
 
-func +*/ () {}   // expected-error {{expected identifier in function declaration}} expected-error {{unexpected end of block comment}} expected-error {{braced block of statements is an unused closure}} expected-error{{begin with a closure}} expected-note{{discard the result}} {{13-13=_ = }} expected-error{{expression resolves to an unused function}}
+func +*/ () {}   // expected-error {{expected identifier in function declaration}} expected-error {{unexpected end of block comment}} expected-error {{closure expression is unused}} expected-error{{top-level statement cannot begin with a closure expression}} expected-note{{did you mean to use a 'do' statement?}} {{13-13=do }}
 func errors() {
   */    // expected-error {{unexpected end of block comment}}
   
@@ -142,6 +142,9 @@ func test_14705150() {
 
 }
 
+postfix operator ++
+prefix operator ++
+
 prefix postfix func ++(x: Int) {} // expected-error {{'postfix' contradicts previous modifier 'prefix'}} {{8-16=}}
 postfix prefix func ++(x: Float) {} // expected-error {{'prefix' contradicts previous modifier 'postfix'}} {{9-16=}}
 postfix prefix infix func ++(x: Double) {} // expected-error {{'prefix' contradicts previous modifier 'postfix'}} {{9-16=}} expected-error {{'infix' contradicts previous modifier 'postfix'}} {{16-22=}}
@@ -190,13 +193,13 @@ _ = n☃⃠☃⃠n     // expected-error {{ambiguous missing whitespace between 
 // expected-note @-1 {{could be binary '☃⃠' and prefix '☃⃠'}} {{12-12= }} {{18-18= }}
 // expected-note @-2 {{could be postfix '☃⃠' and binary '☃⃠'}} {{6-6= }} {{12-12= }}
 
-_ = n☃⃠☃⃠ // expected-error {{unary operators may not be juxtaposed; parenthesize inner expression}}
-_ = ~!n  // expected-error {{unary operators may not be juxtaposed; parenthesize inner expression}}
-_ = -+n  // expected-error {{unary operators may not be juxtaposed; parenthesize inner expression}}
-_ = -++n // expected-error {{unary operators may not be juxtaposed; parenthesize inner expression}}
+_ = n☃⃠☃⃠ // expected-error {{unary operators must not be juxtaposed; parenthesize inner expression}}
+_ = ~!n  // expected-error {{unary operators must not be juxtaposed; parenthesize inner expression}}
+_ = -+n  // expected-error {{unary operators must not be juxtaposed; parenthesize inner expression}}
+_ = -++n // expected-error {{unary operators must not be juxtaposed; parenthesize inner expression}}
 
 // <rdar://problem/16230507> Cannot use a negative constant as the second operator of ... operator
-_ = 3...-5  // expected-error {{missing whitespace between '...' and '-' operators}}
+_ = 3...-5  // expected-error {{ambiguous missing whitespace between unary and binary operators}} expected-note {{could be postfix '...' and binary '-'}} expected-note {{could be binary '...' and prefix '-'}}
 
 
 protocol P0 {
@@ -204,7 +207,7 @@ protocol P0 {
 }
 
 protocol P1 {
-  func %%%(lhs: Self, rhs: Self) -> Self // expected-warning{{operator '%%%' declared in protocol must be 'static'}}{{3-3=static }}
+  func %%%(lhs: Self, rhs: Self) -> Self // expected-error{{operator '%%%' declared in protocol must be 'static'}}{{3-3=static }}
 }
 
 struct S0 {
@@ -228,7 +231,7 @@ class C0 {
 }
 
 class C1 {
-  final func %%%(lhs: C1, rhs: C1) -> C1 { return lhs }
+  final func %%%(lhs: C1, rhs: C1) -> C1 { return lhs } // expected-error{{operator '%%%' declared in type 'C1' must be 'static'}}{{3-3=static }}
 }
 
 final class C2 {
@@ -352,6 +355,45 @@ class C6 {
   static func == (lhs: C6, rhs: C6) -> Bool { return false }
 
   func test1(x: C6) {
-    if x == x && x = x { } // expected-error{{cannot assign to value: '&&' returns immutable value}}
+    // FIXME: Better would be: use of '=' in a boolean context, did you mean '=='?
+    if x == x && x = x { } // expected-error{{cannot convert value of type 'C6' to expected argument type 'Bool'}}
   }
+}
+
+prefix operator ∫
+
+prefix func ∫(arg: (Int, Int)) {}
+
+func testPrefixOperatorOnTuple() {
+
+  let foo = (1, 2)
+  _ = ∫foo
+  _ = (∫)foo
+  // expected-error@-1 {{consecutive statements on a line must be separated by ';'}}
+  // expected-warning@-2 {{expression of type '(Int, Int)' is unused}}
+  _ = (∫)(foo)
+  _ = ∫(1, 2)
+  _ = (∫)(1, 2) // expected-error {{operator function '∫' expects a single parameter of type '(Int, Int)'}}
+  _ = (∫)((1, 2))
+}
+
+postfix operator §
+
+postfix func §<T, U>(arg: (T, (U, U), T)) {} // expected-note {{in call to operator '§'}}
+
+func testPostfixOperatorOnTuple<A, B>(a: A, b: B) {
+
+  let foo = (a, (b, b), a)
+  _ = foo§
+
+  // FIX-ME: "...could not be inferred" is irrelevant
+  _ = (§)foo
+  // expected-error@-1 {{consecutive statements on a line must be separated by ';'}}
+  // expected-error@-2 {{generic parameter 'T' could not be inferred}}
+  // expected-warning@-3 {{expression of type '(A, (B, B), A)' is unused}}
+  _ = (§)(foo)
+  _ = (a, (b, b), a)§
+  _ = (§)(a, (b, b), a) // expected-error {{operator function '§' expects a single parameter of type '(T, (U, U), T)'}}
+  _ = (§)((a, (b, b), a))
+  _ = (a, ((), (b, (a, a), b)§), a)§
 }

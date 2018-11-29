@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -29,7 +29,7 @@ namespace swift { extern "C" {
 ///     <prefix>: <message>: file <file>, line <line>\n
 ///
 /// The message may be omitted by passing messageLength=0.
-SWIFT_RUNTIME_STDLIB_INTERFACE
+SWIFT_RUNTIME_STDLIB_API
 void _swift_stdlib_reportFatalErrorInFile(
     const unsigned char *prefix, int prefixLength,
     const unsigned char *message, int messageLength,
@@ -40,7 +40,7 @@ void _swift_stdlib_reportFatalErrorInFile(
 /// Report a fatal error to system console, stderr, and crash logs.
 ///
 ///     <prefix>: <message>\n
-SWIFT_RUNTIME_STDLIB_INTERFACE
+SWIFT_RUNTIME_STDLIB_API
 void _swift_stdlib_reportFatalError(
     const unsigned char *prefix, int prefixLength,
     const unsigned char *message, int messageLength,
@@ -50,7 +50,7 @@ void _swift_stdlib_reportFatalError(
 ///
 ///     <file>: <line>: <column>: fatal error: use of unimplemented
 ///     initializer '<initName>' for class '<className>'
-SWIFT_RUNTIME_STDLIB_INTERFACE
+SWIFT_RUNTIME_STDLIB_API
 void _swift_stdlib_reportUnimplementedInitializerInFile(
     const unsigned char *className, int classNameLength,
     const unsigned char *initName, int initNameLength,
@@ -62,7 +62,7 @@ void _swift_stdlib_reportUnimplementedInitializerInFile(
 ///
 ///     fatal error: use of unimplemented initializer '<initName>'
 ///     for class 'className'
-SWIFT_RUNTIME_STDLIB_INTERFACE
+SWIFT_RUNTIME_STDLIB_API
 void _swift_stdlib_reportUnimplementedInitializer(
     const unsigned char *className, int classNameLength,
     const unsigned char *initName, int initNameLength,

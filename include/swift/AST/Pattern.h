@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -20,67 +20,81 @@
 #include "swift/Basic/SourceLoc.h"
 #include "swift/Basic/type_traits.h"
 #include "swift/AST/Decl.h"
-#include "swift/AST/Expr.h"
 #include "swift/Basic/LLVM.h"
 #include "swift/AST/Type.h"
 #include "swift/AST/Types.h"
 #include "swift/AST/TypeLoc.h"
+#include "swift/AST/TypeAlignments.h"
+#include "swift/Basic/InlineBitfield.h"
 #include "swift/Basic/OptionSet.h"
 #include "llvm/Support/TrailingObjects.h"
 
 namespace swift {
   class ASTContext;
+  class Expr;
+  enum class CheckedCastKind : unsigned;
 
 /// PatternKind - The classification of different kinds of
 /// value-matching pattern.
 enum class PatternKind : uint8_t {
 #define PATTERN(ID, PARENT) ID,
+#define LAST_PATTERN(ID) Last_Pattern = ID,
 #include "PatternNodes.def"
 };
+enum : unsigned { NumPatternKindBits =
+  countBitsUsed(static_cast<unsigned>(PatternKind::Last_Pattern)) };
 
 /// Diagnostic printing of PatternKinds.
 llvm::raw_ostream &operator<<(llvm::raw_ostream &OS, PatternKind kind);
   
 /// Pattern - Base class for all patterns in Swift.
 class alignas(8) Pattern {
-  class PatternBitfields {
-    friend class Pattern;
-    unsigned Kind : 8;
-    unsigned isImplicit : 1;
-  };
-  enum { NumPatternBits = 9 };
-  enum { NumBitsAllocated = 32 };
-
-  class TuplePatternBitfields {
-    friend class TuplePattern;
-    unsigned : NumPatternBits;
-    unsigned NumElements : NumBitsAllocated - NumPatternBits;
-  };
-
-  class TypedPatternBitfields {
-    friend class TypedPattern;
-    unsigned : NumPatternBits;
-    unsigned IsPropagatedType : 1;
-  };
-
 protected:
-  union {
-    PatternBitfields PatternBits;
-    TuplePatternBitfields TuplePatternBits;
-    TypedPatternBitfields TypedPatternBits;
-  };
+  union { uint64_t OpaqueBits;
+
+  SWIFT_INLINE_BITFIELD_BASE(Pattern, bitmax(NumPatternKindBits,8)+1+1,
+    Kind : bitmax(NumPatternKindBits,8),
+    isImplicit : 1,
+    hasInterfaceType : 1
+  );
+
+  SWIFT_INLINE_BITFIELD_FULL(TuplePattern, Pattern, 32,
+    : NumPadBits,
+    NumElements : 32
+  );
+
+  SWIFT_INLINE_BITFIELD(TypedPattern, Pattern, 1,
+    IsPropagatedType : 1
+  );
+
+  SWIFT_INLINE_BITFIELD(BoolPattern, Pattern, 1,
+    Value : 1
+  );
+
+  SWIFT_INLINE_BITFIELD(VarPattern, Pattern, 1,
+    /// True if this is a let pattern, false if a var pattern.
+    IsLet : 1
+  );
+
+  } Bits;
 
   Pattern(PatternKind kind) {
-    PatternBits.Kind = unsigned(kind);
-    PatternBits.isImplicit = false;
+    Bits.OpaqueBits = 0;
+    Bits.Pattern.Kind = unsigned(kind);
+    Bits.Pattern.isImplicit = false;
+    Bits.Pattern.hasInterfaceType = false;
   }
 
 private:
   /// The checked type of the pattern.
-  Type Ty;
+  ///
+  /// if \c Bits.Pattern.hasInterfaceType, this stores the interface type of the
+  /// pattern, which will be lazily resolved to the contextual type using
+  /// the environment in \c ASTContext::DelayedPatternContexts.
+  mutable Type Ty;
 
 public:
-  PatternKind getKind() const { return PatternKind(PatternBits.Kind); }
+  PatternKind getKind() const { return PatternKind(Bits.Pattern.Kind); }
 
   /// \brief Retrieve the name of the given pattern kind.
   ///
@@ -91,8 +105,8 @@ public:
 
   /// A pattern is implicit if it is compiler-generated and there
   /// exists no source code for it.
-  bool isImplicit() const { return PatternBits.isImplicit; }
-  void setImplicit() { PatternBits.isImplicit = true; }
+  bool isImplicit() const { return Bits.Pattern.isImplicit; }
+  void setImplicit() { Bits.Pattern.isImplicit = true; }
 
   /// Find the smallest subpattern which obeys the property that matching it is
   /// equivalent to matching this pattern.
@@ -108,11 +122,28 @@ public:
 
   /// If this pattern has been type-checked, return the type it
   /// matches.
-  Type getType() const { assert(hasType()); return Ty; }
+  Type getType() const;
 
   /// Set the type of this pattern, given that it was previously not
   /// type-checked.
-  void setType(Type ty) { Ty = ty; }
+  void setType(Type ty) {
+    assert(!ty || !ty->hasTypeVariable());
+    Ty = ty;
+  }
+
+  /// Retrieve the delayed interface type of this pattern, if it has one.
+  ///
+  /// Note: this is used for delayed deserialization logic.
+  Type getDelayedInterfaceType() const {
+    if (Bits.Pattern.hasInterfaceType) return Ty;
+    return nullptr;
+  }
+
+  /// Set the type of this pattern as an interface type whose resolution to
+  /// a context type will be performed lazily.
+  ///
+  /// \param dc The context in which the type will be resolved.
+  void setDelayedInterfaceType(Type interfaceTy, DeclContext *dc);
 
   /// Overwrite the type of this pattern.
   void overwriteType(Type ty) { assert(hasType()); Ty = ty; }
@@ -135,21 +166,22 @@ public:
 
   /// \brief apply the specified function to all variables referenced in this
   /// pattern.
-  void forEachVariable(const std::function<void(VarDecl*)> &f) const;
+  void forEachVariable(llvm::function_ref<void(VarDecl *)> f) const;
 
   /// \brief apply the specified function to all pattern nodes recursively in
   /// this pattern.  This is a pre-order traversal.
-  void forEachNode(const std::function<void(Pattern*)> &f);
+  void forEachNode(llvm::function_ref<void(Pattern *)> f);
 
-  void forEachNode(const std::function<void(const Pattern*)> &f) const {
-    const std::function<void(Pattern*)> &f2 = f;
+  void forEachNode(llvm::function_ref<void(const Pattern *)> f) const {
+    llvm::function_ref<void(Pattern *)> f2 = f;
     const_cast<Pattern *>(this)->forEachNode(f2);
   }
 
   /// Return true if this pattern (or a subpattern) is refutable.
   bool isRefutablePattern() const;
-  
-  
+
+  bool isNeverDefaultInitializable() const;
+
   /// \brief Mark all vardecls in this pattern as having non-pattern initial
   /// values bound into them.
   void markHasNonPatternBindingInit() {
@@ -257,12 +289,12 @@ class TuplePattern final : public Pattern,
     private llvm::TrailingObjects<TuplePattern, TuplePatternElt> {
   friend TrailingObjects;
   SourceLoc LPLoc, RPLoc;
-  // TuplePatternBits.NumElements
+  // Bits.TuplePattern.NumElements
 
   TuplePattern(SourceLoc lp, unsigned numElements, SourceLoc rp,
                bool implicit)
       : Pattern(PatternKind::Tuple), LPLoc(lp), RPLoc(rp) {
-    TuplePatternBits.NumElements = numElements;
+    Bits.TuplePattern.NumElements = numElements;
     assert(lp.isValid() == rp.isValid());
     if (implicit)
       setImplicit();
@@ -280,7 +312,7 @@ public:
                                Optional<bool> implicit = None);
 
   unsigned getNumElements() const {
-    return TuplePatternBits.NumElements;
+    return Bits.TuplePattern.NumElements;
   }
 
   MutableArrayRef<TuplePatternElt> getElements() {
@@ -351,14 +383,25 @@ public:
 /// dynamic type match.
 class TypedPattern : public Pattern {
   Pattern *SubPattern;
-  TypeLoc PatType;
+  TypeRepr *PatTypeRepr;
 
 public:
-  TypedPattern(Pattern *pattern, TypeLoc tl, Optional<bool> implicit = None)
-    : Pattern(PatternKind::Typed), SubPattern(pattern), PatType(tl) {
-    if (implicit.hasValue() ? *implicit : !tl.hasLocation())
-      setImplicit();
-    TypedPatternBits.IsPropagatedType = false;
+  /// Creates a new TypedPattern which annotates the provided sub-pattern with
+  /// the provided TypeRepr. If 'implicit' is true, the pattern will be
+  /// set to implicit. If false, it will not. If 'implicit' is not provided,
+  /// then the pattern will be set to 'implicit' if there is a provided TypeRepr
+  /// which has a valid SourceRange.
+  TypedPattern(Pattern *pattern, TypeRepr *tr, Optional<bool> implicit = None);
+
+  /// Creates an implicit typed pattern annotating the provided sub-pattern
+  /// with a given type.
+  static TypedPattern *
+  createImplicit(ASTContext &ctx, Pattern *pattern, Type type) {
+    auto tp = new (ctx) TypedPattern(pattern, /*typeRepr*/nullptr,
+                                     /*implicit*/true);
+    if (!type.isNull())
+      tp->setType(type);
+    return tp;
   }
 
   /// True if the type in this \c TypedPattern was propagated from a different
@@ -370,25 +413,20 @@ public:
   /// \endcode
   /// 'a' and 'c' will have this bit set to true.
   bool isPropagatedType() const {
-    return TypedPatternBits.IsPropagatedType;
+    return Bits.TypedPattern.IsPropagatedType;
   }
   void setPropagatedType() {
-    TypedPatternBits.IsPropagatedType = true;
+    Bits.TypedPattern.IsPropagatedType = true;
   }
 
   Pattern *getSubPattern() { return SubPattern; }
   const Pattern *getSubPattern() const { return SubPattern; }
   void setSubPattern(Pattern *p) { SubPattern = p; }
 
-  TypeLoc &getTypeLoc() { return PatType; }
-  TypeLoc getTypeLoc() const { return PatType; }
+  TypeRepr *getTypeRepr() const { return PatTypeRepr; }
 
-  SourceLoc getLoc() const {
-    if (SubPattern->isImplicit())
-      return PatType.getSourceRange().Start;
-
-    return SubPattern->getLoc();
-  }
+  TypeLoc getTypeLoc() const;
+  SourceLoc getLoc() const;
   SourceRange getSourceRange() const;
 
   static bool classof(const Pattern *P) {
@@ -415,7 +453,7 @@ class IsPattern : public Pattern {
 public:
   IsPattern(SourceLoc IsLoc, TypeLoc CastTy,
              Pattern *SubPattern,
-             CheckedCastKind Kind = CheckedCastKind::Unresolved,
+             CheckedCastKind Kind,
              Optional<bool> implicit = None)
     : Pattern(PatternKind::Is),
       IsLoc(IsLoc),
@@ -460,7 +498,7 @@ class EnumElementPattern : public Pattern {
   SourceLoc DotLoc;
   SourceLoc NameLoc;
   Identifier Name;
-  EnumElementDecl *ElementDecl;
+  PointerUnion<EnumElementDecl *, Expr*> ElementDeclOrUnresolvedOriginalExpr;
   Pattern /*nullable*/ *SubPattern;
   
 public:
@@ -469,9 +507,24 @@ public:
                      Pattern *SubPattern, Optional<bool> Implicit = None)
     : Pattern(PatternKind::EnumElement),
       ParentType(ParentType), DotLoc(DotLoc), NameLoc(NameLoc), Name(Name),
-      ElementDecl(Element), SubPattern(SubPattern) {
+      ElementDeclOrUnresolvedOriginalExpr(Element),
+      SubPattern(SubPattern) {
     if (Implicit.hasValue() && *Implicit)
       setImplicit();
+  }
+  
+  /// Create an unresolved EnumElementPattern for a `.foo` pattern relying on
+  /// contextual type.
+  EnumElementPattern(SourceLoc DotLoc,
+                     SourceLoc NameLoc,
+                     Identifier Name,
+                     Pattern *SubPattern,
+                     Expr *UnresolvedOriginalExpr)
+    : Pattern(PatternKind::EnumElement),
+      ParentType(), DotLoc(DotLoc), NameLoc(NameLoc), Name(Name),
+      ElementDeclOrUnresolvedOriginalExpr(UnresolvedOriginalExpr),
+      SubPattern(SubPattern) {
+    
   }
 
   bool hasSubPattern() const { return SubPattern; }
@@ -492,8 +545,19 @@ public:
   
   Identifier getName() const { return Name; }
   
-  EnumElementDecl *getElementDecl() const { return ElementDecl; }
-  void setElementDecl(EnumElementDecl *d) { ElementDecl = d; }
+  EnumElementDecl *getElementDecl() const {
+    return ElementDeclOrUnresolvedOriginalExpr.dyn_cast<EnumElementDecl*>();
+  }
+  void setElementDecl(EnumElementDecl *d) {
+    ElementDeclOrUnresolvedOriginalExpr = d;
+  }
+  
+  Expr *getUnresolvedOriginalExpr() const {
+    return ElementDeclOrUnresolvedOriginalExpr.get<Expr*>();
+  }
+  bool hasUnresolvedOriginalExpr() const {
+    return ElementDeclOrUnresolvedOriginalExpr.is<Expr*>();
+  }
   
   SourceLoc getNameLoc() const { return NameLoc; }
   SourceLoc getLoc() const { return NameLoc; }
@@ -503,7 +567,10 @@ public:
                                     : NameLoc;
   }
   SourceLoc getEndLoc() const {
-    return SubPattern ? SubPattern->getSourceRange().End : NameLoc;
+    if (SubPattern && SubPattern->getSourceRange().isValid()) {
+      return SubPattern->getSourceRange().End;
+    }
+    return NameLoc;
   }
   SourceRange getSourceRange() const { return {getStartLoc(), getEndLoc()}; }
   
@@ -520,15 +587,15 @@ public:
 /// matched against the associated value for the case.
 class BoolPattern : public Pattern {
   SourceLoc NameLoc;
-  bool Value;
 
 public:
   BoolPattern(SourceLoc NameLoc, bool Value)
-    : Pattern(PatternKind::Bool), NameLoc(NameLoc), Value(Value) {
+      : Pattern(PatternKind::Bool), NameLoc(NameLoc) {
+    Bits.BoolPattern.Value = Value;
   }
 
-  bool getValue() const { return Value; }
-  void setValue(bool v) { Value = v; }
+  bool getValue() const { return Bits.BoolPattern.Value; }
+  void setValue(bool v) { Bits.BoolPattern.Value = v; }
 
   SourceLoc getNameLoc() const { return NameLoc; }
   SourceLoc getLoc() const { return NameLoc; }
@@ -597,13 +664,7 @@ class ExprPattern : public Pattern {
 public:
   /// Construct an ExprPattern.
   ExprPattern(Expr *e, bool isResolved, Expr *matchExpr, VarDecl *matchVar,
-              Optional<bool> implicit = None)
-    : Pattern(PatternKind::Expr), SubExprAndIsResolved(e, isResolved),
-      MatchExpr(matchExpr), MatchVar(matchVar) {
-    assert(!matchExpr || e->isImplicit() == matchExpr->isImplicit());
-    if (implicit.hasValue() ? *implicit : e->isImplicit())
-      setImplicit();
-  }
+              Optional<bool> implicit = None);
   
   /// Construct an unresolved ExprPattern.
   ExprPattern(Expr *e)
@@ -630,8 +691,8 @@ public:
     MatchVar = v;
   }
   
-  SourceLoc getLoc() const { return getSubExpr()->getLoc(); }
-  SourceRange getSourceRange() const { return getSubExpr()->getSourceRange(); }
+  SourceLoc getLoc() const;
+  SourceRange getSourceRange() const;
   
   /// True if pattern resolution has been applied to the subexpression.
   bool isResolved() const { return SubExprAndIsResolved.getInt(); }
@@ -648,17 +709,17 @@ public:
 /// parsed as expressions referencing existing entities.
 class VarPattern : public Pattern {
   SourceLoc VarLoc;
-  bool IsLet;  // True if this is a let pattern, false if a var pattern.
   Pattern *SubPattern;
 public:
   VarPattern(SourceLoc loc, bool isLet, Pattern *sub,
              Optional<bool> implicit = None)
-    : Pattern(PatternKind::Var), VarLoc(loc), IsLet(isLet), SubPattern(sub) {
+      : Pattern(PatternKind::Var), VarLoc(loc), SubPattern(sub) {
+    Bits.VarPattern.IsLet = isLet;
     if (implicit.hasValue() ? *implicit : !loc.isValid())
       setImplicit();
   }
 
-  bool isLet() const { return IsLet; }
+  bool isLet() const { return Bits.VarPattern.IsLet; }
   
   SourceLoc getLoc() const { return VarLoc; }
   SourceRange getSourceRange() const {

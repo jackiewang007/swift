@@ -1,4 +1,4 @@
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: %empty-directory(%t)
 // RUN: %build-clang-importer-objc-overlays
 
 // RUN: %target-swift-frontend %clang-importer-sdk-nosource -I %t %s -emit-ir
@@ -10,13 +10,13 @@
 
 import AppKit
 class MyView: NSView {
-    func drawRect() {
-        var x = self.superview
-        var l = self.layer
-        self.layer = CALayer()
-        self.nextKeyView = nil
-        subviews = []
-    }    
+  func drawRect() {
+    var x = self.superview
+    var l = self.layer
+    self.layer = CALayer()
+    self.nextKeyView = nil
+    subviews = []
+  }    
 }
 var m = MyView()
 m.drawRect()

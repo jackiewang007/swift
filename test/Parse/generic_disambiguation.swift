@@ -1,4 +1,4 @@
-// RUN: %target-parse-verify-swift
+// RUN: %target-typecheck-verify-swift
 
 struct A<B> { // expected-note{{generic type 'A' declared here}}
   init(x:Int) {}
@@ -26,9 +26,11 @@ var a, b, c, d : Int
 _ = a < b
 _ = (a < b, c > d)
 // Parses as generic because of lparen after '>'
-(a < b, c > (d)) // expected-error{{use of undeclared type 'b'}}
+(a < b, c > (d)) // expected-error{{cannot specialize a non-generic definition}}
+// expected-note@-1 {{while parsing this '<' as a type parameter bracket}}
 // Parses as generic because of lparen after '>'
-(a<b, c>(d)) // expected-error{{use of undeclared type 'b'}} 
+(a<b, c>(d)) // expected-error{{cannot specialize a non-generic definition}}
+// expected-note@-1 {{while parsing this '<' as a type parameter bracket}}
 _ = a>(b)
 _ = a > (b)
 
@@ -45,6 +47,8 @@ A<(a:Int, b:UnicodeScalar)>.c()
 A<Runcible & Fungible>.c()
 A<@convention(c) () -> Int32>.c()
 A<(@autoclosure @escaping () -> Int, Int) -> Void>.c()
+_ = [@convention(block) ()  -> Int]().count
+_ = [String: (@escaping (A<B>) -> Int) -> Void]().keys
 
 A<B>(x: 0) // expected-warning{{unused}}
 

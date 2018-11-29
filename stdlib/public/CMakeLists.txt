@@ -1,5 +1,3 @@
-# C++ code in the runtime and standard library should generally avoid
-# introducing static constructors or destructors.
 set(SWIFT_RUNTIME_CXX_FLAGS)
 set(SWIFT_RUNTIME_LINK_FLAGS)
 set(SWIFT_RUNTIME_SWIFT_COMPILE_FLAGS)
@@ -15,6 +13,12 @@ if(SWIFT_RUNTIME_USE_SANITIZERS)
   endif()
 endif()
 
+list(APPEND SWIFT_RUNTIME_SWIFT_COMPILE_FLAGS "-Xfrontend" "-verify-syntax-tree")
+
+# Build the runtime with -Wall to catch, e.g., uninitialized variables
+# warnings.
+list(APPEND SWIFT_RUNTIME_CXX_FLAGS "-Wall")
+
 set(SWIFT_RUNTIME_CORE_CXX_FLAGS "${SWIFT_RUNTIME_CXX_FLAGS}")
 set(SWIFT_RUNTIME_CORE_LINK_FLAGS "${SWIFT_RUNTIME_LINK_FLAGS}")
 
@@ -22,11 +26,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "CYGWIN")
   list(APPEND SWIFT_RUNTIME_CORE_CXX_FLAGS "-mcmodel=large")
 endif()
 
+# C++ code in the runtime and standard library should generally avoid
+# introducing static constructors or destructors.
 check_cxx_compiler_flag("-Werror -Wglobal-constructors" CXX_SUPPORTS_GLOBAL_CONSTRUCTORS_WARNING)
 if(CXX_SUPPORTS_GLOBAL_CONSTRUCTORS_WARNING)
   list(APPEND SWIFT_RUNTIME_CORE_CXX_FLAGS "-Wglobal-constructors")
 endif()
 
+# C++ code in the runtime and standard library should generally avoid
+# introducing static constructors or destructors.
 check_cxx_compiler_flag("-Wexit-time-destructors" CXX_SUPPORTS_EXIT_TIME_DESTRUCTORS_WARNING)
 if(CXX_SUPPORTS_EXIT_TIME_DESTRUCTORS_WARNING)
   list(APPEND SWIFT_RUNTIME_CORE_CXX_FLAGS "-Wexit-time-destructors")
@@ -39,10 +47,11 @@ if(CXX_SUPPORTS_DEFAULT_HIDDEN_VISIBILITY)
   list(APPEND SWIFT_RUNTIME_CORE_CXX_FLAGS "-fvisibility=hidden")
 endif()
 
+add_subdirectory(SwiftShims)
+
 if(SWIFT_BUILD_STDLIB)
   # These must be kept in dependency order so that any referenced targets
   # exist at the time we look for them in add_swift_*.
-  add_subdirectory(SwiftShims)
   add_subdirectory(runtime)
   add_subdirectory(stubs)
   add_subdirectory(core)

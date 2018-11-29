@@ -1,4 +1,4 @@
-// RUN: %target-parse-verify-swift %clang-importer-sdk
+// RUN: %target-typecheck-verify-swift %clang-importer-sdk
 
 import ctypes
 
@@ -9,6 +9,7 @@ func checkEquatablePattern(_ c: Color) {
     case red: return
     case green: return
     case blue: return
+    default: return
   }
 }
 
@@ -204,7 +205,7 @@ func testFunctionPointers() {
     = getFunctionPointer2()
 
   useFunctionPointer2(anotherFP)
-  anotherFP = fp // expected-error {{cannot assign value of type 'fptr?' to type '@convention(c) (CInt, CLong, UnsafeMutableRawPointer?) -> Void'}}
+  anotherFP = fp // expected-error {{cannot assign value of type 'fptr?' (aka 'Optional<@convention(c) (Int32) -> Int32>') to type '@convention(c) (CInt, CLong, UnsafeMutableRawPointer?) -> Void' (aka '@convention(c) (Int32, Int, Optional<UnsafeMutableRawPointer>) -> ()')}}
 }
 
 func testStructDefaultInit() {
@@ -216,9 +217,9 @@ func testStructDefaultInit() {
 
 func testArrays() {
   nonnullArrayParameters([], [], [])
-  nonnullArrayParameters(nil, [], []) // expected-error {{nil is not compatible with expected argument type 'UnsafePointer<Int8>'}}
-  nonnullArrayParameters([], nil, []) // expected-error {{nil is not compatible with expected argument type 'UnsafePointer<UnsafeMutableRawPointer?>'}}
-  nonnullArrayParameters([], [], nil) // expected-error {{nil is not compatible with expected argument type 'UnsafePointer<Int32>'}}
+  nonnullArrayParameters(nil, [], []) // expected-error {{'nil' is not compatible with expected argument type 'UnsafePointer<Int8>'}}
+  nonnullArrayParameters([], nil, []) // expected-error {{'nil' is not compatible with expected argument type 'UnsafePointer<UnsafeMutableRawPointer?>'}}
+  nonnullArrayParameters([], [], nil) // expected-error {{'nil' is not compatible with expected argument type 'UnsafePointer<Int32>'}}
 
   nullableArrayParameters([], [], [])
   nullableArrayParameters(nil, nil, nil)
@@ -226,12 +227,18 @@ func testArrays() {
   // It would also be nice to warn here about the arrays being too short, but
   // that's probably beyond us for a while.
   staticBoundsArray([])
-  staticBoundsArray(nil) // no-error
+  staticBoundsArray(nil) // expected-error {{'nil' is not compatible with expected argument type 'UnsafePointer<Int8>'}}
 }
 
 func testVaList() {
   withVaList([]) {
     hasVaList($0) // okay
   }
-  hasVaList(nil) // expected-error {{nil is not compatible with expected argument type 'CVaListPointer'}}
+  hasVaList(nil) // expected-error {{'nil' is not compatible with expected argument type 'CVaListPointer'}}
+}
+
+func testNestedForwardDeclaredStructs() {
+  // Check that we still have a memberwise initializer despite the forward-
+  // declared nested type. rdar://problem/30449400
+  _ = StructWithForwardDeclaredStruct(ptr: nil)
 }

@@ -1,6 +1,4 @@
-// RUN: %target-parse-verify-swift
-
-// XFAIL: linux
+// RUN: %target-typecheck-verify-swift
 
 // FIXME: Should go into the standard library.
 public extension _ObjectiveCBridgeable {

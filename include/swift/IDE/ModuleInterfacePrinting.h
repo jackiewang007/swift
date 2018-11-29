@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -40,7 +40,7 @@ enum class ModuleTraversal : unsigned {
 };
 
 /// Options used to describe the traversal of a module for printing.
-typedef OptionSet<ModuleTraversal> ModuleTraversalOptions;
+using ModuleTraversalOptions = OptionSet<ModuleTraversal>;
 
 ArrayRef<StringRef> collectModuleGroups(ModuleDecl *M,
                                         std::vector<StringRef> &Scratch);
@@ -60,7 +60,7 @@ void printModuleInterface(ModuleDecl *M, Optional<StringRef> Group,
                           const bool PrintSynthesizedExtensions);
 
 // FIXME: this API should go away when Swift can represent Clang submodules as
-// 'swift::Module *' objects.
+// 'swift::ModuleDecl *' objects.
 void printSubmoduleInterface(ModuleDecl *M, ArrayRef<StringRef> FullModuleName,
                              ArrayRef<StringRef> GroupNames,
                              ModuleTraversalOptions TraversalOptions,
@@ -82,4 +82,3 @@ void printSwiftSourceInterface(SourceFile &File, ASTPrinter &Printer,
 } // namespace swift
 
 #endif // SWIFT_IDE_MODULE_INTERFACE_PRINTING_H
-

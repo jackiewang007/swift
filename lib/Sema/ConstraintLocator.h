@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2018 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -59,14 +59,10 @@ public:
     ApplyFunction,
     /// Matching an argument to a parameter.
     ApplyArgToParam,
-    /// \brief An archetype being opened.
+    /// \brief A generic parameter being opened.
     ///
-    /// Also contains the archetype itself.
-    Archetype,
-    /// An associated type reference.
-    ///
-    /// Contains the associated type itself.
-    AssociatedType,
+    /// Also contains the generic parameter type itself.
+    GenericParameter,
     /// \brief The argument type of a function.
     FunctionArgument,
     /// \brief The result type of a function.
@@ -75,6 +71,8 @@ public:
     TupleElement,
     /// \brief A tuple element referenced by name.
     NamedTupleElement,
+    /// \brief An optional payload.
+    OptionalPayload,
     /// \brief A generic argument.
     /// FIXME: Add support for named generic arguments?
     GenericArgument,
@@ -87,16 +85,13 @@ public:
     MemberRefBase,
     /// \brief The lookup for a subscript member.
     SubscriptMember,
-    /// \brief The index of a subscript expression.
-    SubscriptIndex,
-    /// \brief The result of a subscript expression.
-    SubscriptResult,
-    /// \brief An argument to string interpolation.
-    InterpolationArgument,
     /// \brief The lookup for a constructor member.
     ConstructorMember,
-    /// \brief Rvalue adjustment.
-    RvalueAdjustment,
+    /// \brief An implicit @lvalue-to-inout conversion; only valid for operator
+    /// arguments.
+    LValueConversion,
+    /// \brief RValue adjustment.
+    RValueAdjustment,
     /// \brief The result of a closure.
     ClosureResult,
     /// \brief The parent of a nested type.
@@ -107,12 +102,9 @@ public:
     SequenceIteratorProtocol,
     /// \brief The element type of a generator.
     GeneratorElementType,
-    /// \brief The element of an array type.
-    ArrayElementType,
-    /// \brief The scalar type of a tuple type.
-    ScalarToTuple,
-    /// \brief The load of an lvalue.
-    Load,
+    /// \brief An argument passed in an autoclosure parameter
+    /// position, which must match the autoclosure return type.
+    AutoclosureResult,
     /// The requirement that we're matching during protocol conformance
     /// checking.
     Requirement,
@@ -121,6 +113,18 @@ public:
     /// This is referring to a type produced by opening a generic type at the
     /// base of the locator.
     OpenedGeneric,
+    /// A component of a key path.
+    KeyPathComponent,
+    /// The Nth conditional requirement in the parent locator's conformance.
+    ConditionalRequirement,
+    /// A single requirement placed on the type parameters.
+    TypeParameterRequirement,
+    /// \brief Locator for a binding from an IUO disjunction choice.
+    ImplicitlyUnwrappedDisjunctionChoice,
+    /// \brief A result of an expression involving dynamic lookup.
+    DynamicLookupResult,
+    /// \brief The desired contextual type passed in to the constraint system.
+    ContextualType,
   };
 
   /// \brief Determine the number of numeric values used for the given path
@@ -129,40 +133,44 @@ public:
     switch (kind) {
     case ApplyArgument:
     case ApplyFunction:
-    case Archetype:
-    case AssociatedType:
+    case GenericParameter:
     case FunctionArgument:
     case FunctionResult:
+    case OptionalPayload:
     case Member:
     case MemberRefBase:
     case UnresolvedMember:
-    case SubscriptIndex:
     case SubscriptMember:
-    case SubscriptResult:
     case ConstructorMember:
-    case RvalueAdjustment:
+    case LValueConversion:
+    case RValueAdjustment:
     case ClosureResult:
     case ParentType:
     case InstanceType:
     case SequenceIteratorProtocol:
     case GeneratorElementType:
-    case ArrayElementType:
-    case ScalarToTuple:
-    case Load:
+    case AutoclosureResult:
     case Requirement:
     case Witness:
     case OpenedGeneric:
+    case ImplicitlyUnwrappedDisjunctionChoice:
+    case DynamicLookupResult:
+    case ContextualType:
       return 0;
 
     case GenericArgument:
-    case InterpolationArgument:
     case NamedTupleElement:
     case TupleElement:
+    case KeyPathComponent:
+    case ConditionalRequirement:
       return 1;
 
+    case TypeParameterRequirement:
     case ApplyArgToParam:
       return 2;
     }
+
+    llvm_unreachable("Unhandled PathElementKind in switch.");
   }
 
   /// Flags for efficiently recording certain information about a path.
@@ -184,47 +192,48 @@ public:
     case ApplyArgToParam:
     case SequenceIteratorProtocol:
     case GeneratorElementType:
-    case ArrayElementType:
     case ClosureResult:
     case ConstructorMember:
     case InstanceType:
-    case Load:
+    case AutoclosureResult:
+    case OptionalPayload:
     case Member:
     case MemberRefBase:
     case UnresolvedMember:
     case ParentType:
-    case RvalueAdjustment:
-    case ScalarToTuple:
-    case SubscriptIndex:
+    case LValueConversion:
+    case RValueAdjustment:
     case SubscriptMember:
-    case SubscriptResult:
     case OpenedGeneric:
-    case Archetype:
-    case AssociatedType:
+    case GenericParameter:
     case GenericArgument:
-    case InterpolationArgument:
     case NamedTupleElement:
     case TupleElement:
     case Requirement:
     case Witness:
+    case KeyPathComponent:
+    case ConditionalRequirement:
+    case TypeParameterRequirement:
+    case ImplicitlyUnwrappedDisjunctionChoice:
+    case DynamicLookupResult:
+    case ContextualType:
       return 0;
 
     case FunctionArgument:
     case FunctionResult:
       return IsFunctionConversion;
     }
-    llvm_unreachable("bad path element kind");
+
+    llvm_unreachable("Unhandled PathElementKind in switch.");
   }
 
-  template<unsigned N> struct incomplete;
-  
   /// \brief One element in the path of a locator, which can include both
   /// a kind (PathElementKind) and a value used to describe specific
   /// kinds further (e.g., the position of a tuple element).
   class PathElement {
     /// \brief Describes the kind of data stored here.
     enum StoredKind : unsigned char {
-      StoredArchetype,
+      StoredGenericParameter,
       StoredRequirement,
       StoredWitness,
       StoredKindAndValue
@@ -282,13 +291,13 @@ public:
              "Path element requires value");
     }
 
-    PathElement(ArchetypeType *archetype)
-      : storage((reinterpret_cast<uintptr_t>(archetype) >> 2)),
-        storedKind(StoredArchetype)
+    PathElement(GenericTypeParamType *type)
+      : storage((reinterpret_cast<uintptr_t>(type) >> 2)),
+        storedKind(StoredGenericParameter)
     {
-      static_assert(alignof(ArchetypeType) >= 4,
+      static_assert(alignof(GenericTypeParamType) >= 4,
                     "archetypes insufficiently aligned");
-      assert(getArchetype() == archetype);
+      assert(getGenericParameter() == type);
     }
 
     PathElement(PathElementKind kind, ValueDecl *decl)
@@ -299,13 +308,6 @@ public:
              "Not a witness element");
       assert(((kind == Requirement && getRequirement() == decl) ||
               (kind == Witness && getWitness() == decl)));
-    }
-
-    PathElement(AssociatedTypeDecl *decl)
-      : storage((reinterpret_cast<uintptr_t>(decl) >> 2)),
-        storedKind(StoredRequirement)
-    {
-      assert(getAssociatedType() == decl);
     }
 
     /// \brief Retrieve a path element for a tuple element referred to by
@@ -320,7 +322,7 @@ public:
       return PathElement(NamedTupleElement, position);
     }
 
-    /// Retrieve a patch element for an argument/parameter comparison in a
+    /// Retrieve a path element for an argument/parameter comparison in a
     /// function application.
     static PathElement getApplyArgToParam(unsigned argIdx, unsigned paramIdx) {
       return PathElement(ApplyArgToParam, argIdx, paramIdx);
@@ -331,22 +333,31 @@ public:
     static PathElement getGenericArgument(unsigned position) {
       return PathElement(GenericArgument, position);
     }
+    
+    /// Get a path element for a key path component.
+    static PathElement getKeyPathComponent(unsigned position) {
+      return PathElement(KeyPathComponent, position);
+    }
 
-    /// \brief Retrieve a path element for an argument to string
-    /// interpolation.
-    static PathElement getInterpolationArgument(unsigned position) {
-      return PathElement(InterpolationArgument, position);
+    /// Get a path element for a conditional requirement.
+    static PathElement getConditionalRequirementComponent(unsigned index) {
+      return PathElement(ConditionalRequirement, index);
+    }
+
+    static PathElement getTypeRequirementComponent(unsigned index,
+                                                   RequirementKind kind) {
+      return PathElement(TypeParameterRequirement, index,
+                         static_cast<unsigned>(kind));
     }
 
     /// \brief Retrieve the kind of path element.
     PathElementKind getKind() const {
       switch (static_cast<StoredKind>(storedKind)) {
-      case StoredArchetype:
-        return Archetype;
+      case StoredGenericParameter:
+        return GenericParameter;
 
       case StoredRequirement:
-        return isa<AssociatedTypeDecl>(getRequirement()) ? AssociatedType
-                                                         : Requirement;
+        return Requirement;
 
       case StoredWitness:
         return Witness;
@@ -354,6 +365,8 @@ public:
       case StoredKindAndValue:
         return decodeStorage(storage).first;
       }
+
+      llvm_unreachable("Unhandled StoredKind in switch.");
     }
 
     /// \brief Retrieve the value associated with this path element,
@@ -387,10 +400,12 @@ public:
       return reinterpret_cast<ValueDecl *>(storage << 2);
     }
 
-    /// \brief Retrieve the actual archetype for an archetype path element.
-    ArchetypeType *getArchetype() const {
-      assert(getKind() == Archetype && "Not an archetype path element");
-      return reinterpret_cast<ArchetypeType *>(storage << 2);
+    /// \brief Retrieve the actual archetype for a generic parameter path
+    /// element.
+    GenericTypeParamType *getGenericParameter() const {
+      assert(getKind() == GenericParameter &&
+             "Not a generic parameter path element");
+      return reinterpret_cast<GenericTypeParamType *>(storage << 2);
     }
 
     /// Retrieve the declaration for a requirement path element.
@@ -398,12 +413,6 @@ public:
       assert((static_cast<StoredKind>(storedKind) == StoredRequirement) &&
              "Is not a requirement");
       return reinterpret_cast<ValueDecl *>(storage << 2);
-    }
-
-    /// Retrieve the declaration for an associated type path element.
-    AssociatedTypeDecl *getAssociatedType() const {
-      assert(getKind() == AssociatedType && "Is not an associated type");
-      return reinterpret_cast<AssociatedTypeDecl *>(storage << 2);
     }
 
     /// \brief Return the summary flags for this particular element.
@@ -499,7 +508,7 @@ private:
   friend class ConstraintSystem;
 };
 
-typedef ConstraintLocator::PathElement LocatorPathElt;
+using LocatorPathElt = ConstraintLocator::PathElement;
 
 /// \brief A simple stack-only builder object that constructs a
 /// constraint locator without allocating memory.
@@ -566,6 +575,17 @@ public:
     return nullptr;
   }
 
+  /// Get anchor expression associated with this locator builder.
+  Expr *getAnchor() const {
+    for (auto prev = this; prev;
+         prev = prev->previous.dyn_cast<ConstraintLocatorBuilder *>()) {
+      if (auto *locator = prev->previous.dyn_cast<ConstraintLocator *>())
+        return locator->getAnchor();
+    }
+
+    return nullptr;
+  }
+
   /// \brief Retrieve the components of the complete locator, which includes
   /// the anchor expression and the path.
   Expr *getLocatorParts(SmallVectorImpl<LocatorPathElt> &path) const {
@@ -615,6 +635,7 @@ public:
   }
 };
 
-} } // end namespace swift::constraints
+} // end namespace constraints
+} // end namespace swift
 
 #endif // LLVM_SWIFT_SEMA_CONSTRAINTLOCATOR_H

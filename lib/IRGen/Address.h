@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -20,6 +20,7 @@
 #include "IRGen.h"
 #include "llvm/IR/Value.h"
 #include "llvm/IR/Argument.h"
+#include "llvm/IR/Function.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/ADT/ilist.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -99,6 +100,34 @@ public:
   Alignment getAlignment() const { return Addr.getAlignment(); }
   Address getAddress() const { return Addr; }
   Address getContainer() const { return Container; }
+
+  bool isValid() const { return Addr.isValid(); }
+};
+
+/// An address on the stack together with an optional stack pointer reset
+/// location.
+class StackAddress {
+  /// The address of an object of type T.
+  Address Addr;
+
+  /// In a normal function, the result of llvm.stacksave or null.
+  /// In a coroutine, the result of llvm.coro.alloca.alloc.
+  llvm::Value *ExtraInfo;
+
+public:
+  StackAddress() : ExtraInfo(nullptr) {}
+  StackAddress(Address address, llvm::Value *extraInfo = nullptr)
+    : Addr(address), ExtraInfo(extraInfo) {}
+
+  /// Return a StackAddress with the address changed in some superficial way.
+  StackAddress withAddress(Address addr) const {
+    return StackAddress(addr, ExtraInfo);
+  }
+
+  llvm::Value *getAddressPointer() const { return Addr.getAddress(); }
+  Alignment getAlignment() const { return Addr.getAlignment(); }
+  Address getAddress() const { return Addr; }
+  llvm::Value *getExtraInfo() const { return ExtraInfo; }
 
   bool isValid() const { return Addr.isValid(); }
 };

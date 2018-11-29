@@ -1,4 +1,4 @@
-// RUN: %target-parse-verify-swift
+// RUN: %target-typecheck-verify-swift
 
 // The first function argument does not have a label; the others do.
 func f1(_ a: Int, b: Int) { }
@@ -30,7 +30,7 @@ protocol P {
 class PX : P {
   func g1(_ x: Int) { } // okay
   func g2(_ x: Int, other: Int) { } // okay
-  func g3(_ x: Int, y: Int, third: Int) { } // expected-error{{method 'g3(_:y:third:)' has different argument names from those required by protocol 'P' ('g3(_:other:third:)')}} {{21-21=other }}
+  func g3(_ x: Int, y: Int, third: Int) { } // expected-error{{method 'g3(_:y:third:)' has different argument labels from those required by protocol 'P' ('g3(_:other:third:)')}} {{21-21=other }}
 
   class func g4(_ x: Int) { }
 }
@@ -57,11 +57,11 @@ struct Subscripts1 {
 }
 
 struct Subscripts2 {
-  subscript (i: Int) -> Int { // expected-note{{'subscript' previously declared here}}
+  subscript (i: Int) -> Int { // expected-note{{'subscript(_:)' previously declared here}}
     get { return i }
   }
 
-  subscript (j: Int) -> Int { // expected-error{{invalid redeclaration of 'subscript'}}
+  subscript (j: Int) -> Int { // expected-error{{invalid redeclaration of 'subscript(_:)'}}
     get { return j }
   }
 }

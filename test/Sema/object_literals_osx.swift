@@ -1,8 +1,8 @@
-// RUN: %target-parse-verify-swift
+// RUN: %target-typecheck-verify-swift
 // REQUIRES: OS=macosx
 
 struct S: _ExpressibleByColorLiteral {
-  init(colorLiteralRed: Float, green: Float, blue: Float, alpha: Float) {}
+  init(_colorLiteralRed: Float, green: Float, blue: Float, alpha: Float) {}
 }
 
 let y: S = #colorLiteral(red: 1, green: 0, blue: 0, alpha: 1)

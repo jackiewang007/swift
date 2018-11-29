@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -24,14 +24,14 @@ namespace llvm {
 
 namespace swift {
 
-class SILArgument;
+class SILPhiArgument;
 class SILBasicBlock;
 class SILType;
 class SILUndef;
 
 /// Independent utility that canonicalizes BB arguments by reusing structurally
 /// equivalent arguments and replacing the original arguments with casts.
-SILInstruction *replaceBBArgWithCast(SILArgument *Arg);
+SILValue replaceBBArgWithCast(SILPhiArgument *Arg);
 
 /// This class updates SSA for a set of SIL instructions defined in multiple
 /// blocks.
@@ -39,8 +39,8 @@ class SILSSAUpdater {
   friend class llvm::SSAUpdaterTraits<SILSSAUpdater>;
 
   // A map of basic block to available phi value.
-  // using AvailableValsTy = llvm::DenseMap<SILBasicBlock *, SILValue>;
-  void *AV;
+  using AvailableValsTy = llvm::DenseMap<SILBasicBlock *, SILValue>;
+  std::unique_ptr<AvailableValsTy> AV;
 
   SILType ValType;
 
@@ -49,7 +49,9 @@ class SILSSAUpdater {
   std::unique_ptr<SILUndef, void(*)(SILUndef *)> PHISentinel;
 
   // If not null updated with inserted 'phi' nodes (SILArgument).
-  SmallVectorImpl<SILArgument *> *InsertedPHIs;
+  SmallVectorImpl<SILPhiArgument *> *InsertedPHIs;
+
+  SILModule &M;
 
   // Not copyable.
   void operator=(const SILSSAUpdater &) = delete;
@@ -57,7 +59,8 @@ class SILSSAUpdater {
 
 public:
   explicit SILSSAUpdater(
-      SmallVectorImpl<SILArgument *> *InsertedPHIs = nullptr);
+      SILModule &M,
+      SmallVectorImpl<SILPhiArgument *> *InsertedPHIs = nullptr);
   ~SILSSAUpdater();
 
   /// \brief Initialize for a use of a value of type.

@@ -8,7 +8,7 @@ public struct MyRange<Bound : ForwardIndex> {
 }
 
 public protocol ForwardIndex : Equatable {
-  associatedtype Distance : SignedNumber
+  associatedtype Distance : SignedNumeric
   func successor() -> Self
 }
 
@@ -158,11 +158,11 @@ public class TypeIndexed<Value> : Resettable {
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -389,15 +389,16 @@ public struct LoggingCollection<Base_ : MyCollection> : LoggingCollectionType {
 }
 
 public func expectCustomizable<
-  T : Wrapper where
-  T : LoggingType,
-  T.Base : Wrapper, T.Base : LoggingType,
-  T.Log == T.Base.Log
+  T : Wrapper
 >(_: T, _ counters: TypeIndexed<Int>,
   stackTrace: SourceLocStack? = nil,
   file: String = #file, line: UInt = #line,
   collectMoreInfo: (()->String)? = nil
-) {
+)
+  where
+    T : LoggingType,
+    T.Base : Wrapper, T.Base : LoggingType,
+    T.Log == T.Base.Log {
   expectNotEqual(
     0, counters[T.self], collectMoreInfo?() ?? "",
     stackTrace: stackTrace ?? SourceLocStack(), file: file, line: line)
@@ -408,15 +409,16 @@ public func expectCustomizable<
 }
 
 public func expectNotCustomizable<
-  T : Wrapper where
-  T : LoggingType,
-  T.Base : Wrapper, T.Base : LoggingType,
-  T.Log == T.Base.Log
+  T : Wrapper
 >(_: T, _ counters: TypeIndexed<Int>,
   stackTrace: SourceLocStack? = nil,
   file: String = #file, line: UInt = #line,
   collectMoreInfo: (()->String)? = nil
-) {
+)
+  where
+    T : LoggingType,
+    T.Base : Wrapper, T.Base : LoggingType,
+    T.Log == T.Base.Log {
   expectNotEqual(
     0, counters[T.self], collectMoreInfo?() ?? "",
     stackTrace: stackTrace ?? SourceLocStack(), file: file, line: line)

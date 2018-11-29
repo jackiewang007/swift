@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 //
@@ -35,12 +35,23 @@ class VarargsInfo {
   SILValue BaseAddress;
   AbstractionPattern BasePattern;
   const TypeLowering &BaseTL;
+  bool IsExpansionPeephole = false;
 public:
   VarargsInfo(ManagedValue array, CleanupHandle abortCleanup,
               SILValue baseAddress, const TypeLowering &baseTL,
-              AbstractionPattern basePattern)
+              AbstractionPattern basePattern, bool isExpansionPeephole)
     : Array(array), AbortCleanup(abortCleanup),
-      BaseAddress(baseAddress), BasePattern(basePattern), BaseTL(baseTL) {}
+      BaseAddress(baseAddress), BasePattern(basePattern), BaseTL(baseTL),
+      IsExpansionPeephole(isExpansionPeephole) {}
+
+  void setExpansion(unsigned index, ManagedValue expansion) {
+    assert(IsExpansionPeephole);
+    assert(index == 0 && "non-initial index for peephole?");
+    assert(!Array && "array already filled");
+    Array = expansion;
+  }
+
+  bool isExpansionPeephole() const { return IsExpansionPeephole; }
 
   /// Return the array value.  emitEndVarargs() is really the only
   /// function that should be accessing this directly.
@@ -62,12 +73,13 @@ public:
 };
 
 /// Begin a varargs emission sequence.
-VarargsInfo emitBeginVarargs(SILGenFunction &gen, SILLocation loc,
+VarargsInfo emitBeginVarargs(SILGenFunction &SGF, SILLocation loc,
                              CanType baseTy, CanType arrayTy,
-                             unsigned numElements);
+                             unsigned numElements,
+                             ArrayRef<unsigned> expansions);
 
 /// Successfully end a varargs emission sequence.
-ManagedValue emitEndVarargs(SILGenFunction &gen, SILLocation loc,
+ManagedValue emitEndVarargs(SILGenFunction &SGF, SILLocation loc,
                             VarargsInfo &&varargs); 
 
 } // end namespace Lowering

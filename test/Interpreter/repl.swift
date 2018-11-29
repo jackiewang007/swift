@@ -4,7 +4,7 @@
 
 :print_decl String
 // CHECK: struct String
-// CHECK: extension String : _ExpressibleByStringInterpolation
+// CHECK: extension String : StringProtocol
 
 false // CHECK: Bool = false
 (1,2) // CHECK: (Int, Int) = (1, 2)
@@ -41,7 +41,7 @@ String(4.0)  // CHECK: String = "4.0"
 
 123 .
 hashValue
-// CHECK: Int = 123{{$}}
+// CHECK: Int = {{-?[0-9]+$}}
 
 // Check that we handle unmatched parentheses in REPL.
 1+1)
@@ -148,7 +148,7 @@ for c in "foobar".unicodeScalars { print(c) }
 // CHECK-NEXT: r
 
 var vec = Array<String>()
-// CHECK: vec : Array<String> = []
+// CHECK: vec : [String] = []
 
 // Error recovery
 var a : [int]
@@ -157,17 +157,17 @@ var b = a.slice[3..<5]
 
 struct Inner<T> {}
 struct Outer<T> { var inner : Inner<T> }
-Outer<Int>(inner: Inner()) // CHECK: Outer<Int> = REPL.Outer
+Outer<Int>(inner: Inner()) // CHECK: Outer<Int> = REPL_{{.+}}.Outer
 
 struct ContainsSlice { var slice : [Int] }
-ContainsSlice(slice: [1, 2, 3]) // CHECK: ContainsSlice = REPL.ContainsSlice
+ContainsSlice(slice: [1, 2, 3]) // CHECK: ContainsSlice = REPL_{{.+}}.ContainsSlice
 
 struct ContainsGenericSlice<T> { var slice : [T] }
-ContainsGenericSlice(slice: [1, 2, 3]) // CHECK: ContainsGenericSlice<Int> = REPL.ContainsGenericSlice
-ContainsGenericSlice(slice: [(1, 2), (3, 4)]) // CHECK: ContainsGenericSlice<(Int, Int)> = REPL.ContainsGenericSlice
+ContainsGenericSlice(slice: [1, 2, 3]) // CHECK: ContainsGenericSlice<Int> = REPL_{{.+}}.ContainsGenericSlice
+ContainsGenericSlice(slice: [(1, 2), (3, 4)]) // CHECK: ContainsGenericSlice<(Int, Int)> = REPL_{{.+}}.ContainsGenericSlice
 
 struct ContainsContainsSlice { var containsSlice : ContainsSlice }
-ContainsContainsSlice(containsSlice: ContainsSlice(slice: [1, 2, 3])) // CHECK: ContainsContainsSlice = REPL.ContainsContainsSlice
+ContainsContainsSlice(containsSlice: ContainsSlice(slice: [1, 2, 3])) // CHECK: ContainsContainsSlice = REPL_{{.+}}.ContainsContainsSlice
 
 protocol Proto {
   func foo()

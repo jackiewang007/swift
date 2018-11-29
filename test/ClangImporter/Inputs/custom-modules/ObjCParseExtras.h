@@ -26,6 +26,20 @@ __attribute__((objc_root_class))
 + (void)classRef:(id)obj doSomething:(SEL)selector;
 @end
 
+@interface PropertyAndMethodCollisionInOneClass
+- (void)object;
++ (void)classRef;
+@property (getter=getObject) id object;
+@property (class,getter=getClassRef) id classRef;
+@end
+
+@interface PropertyAndMethodReverseCollisionInOneClass
+@property (getter=getObject) id object;
+@property (class,getter=getClassRef) id classRef;
+- (void)object;
++ (void)classRef;
+@end
+
 @protocol PropertyProto
 @property id protoProp;
 @property(readonly) id protoPropRO;
@@ -93,9 +107,13 @@ __weak id globalWeakVar;
 - (id)getObjectFromVarArgs:(id)first, ...;
 @end
 
-@interface ExtraSelectors
+@interface StrangeSelectors
 - (void)foo:(int)a bar:(int)b :(int)c;
 + (void)cStyle:(int)a, int b, int c;
++ (StrangeSelectors *):(int)x; // factory-method-like
++ (StrangeSelectors *):(int)x b:(int)y __attribute__((swift_name("init(a:b:)")));
+- (void):(int)x;
+- (void):(int)x :(int)y __attribute__((swift_name("empty(_:_:)")));
 @end
 
 @interface DeprecatedFactoryMethod
@@ -136,6 +154,19 @@ __weak id globalWeakVar;
 - (instancetype)initWithInt:(NSInteger)value __attribute__((objc_designated_initializer));
 @end
 
+@interface DesignatedInitWithClassExtension : DesignatedInitRoot
+- (instancetype)initWithInt:(NSInteger)value __attribute__((objc_designated_initializer));
+- (instancetype)initWithConvenienceInt:(NSInteger)value;
+@end
+@interface DesignatedInitWithClassExtension ()
+- (instancetype)initWithFloat:(float)value __attribute__((objc_designated_initializer));
+@end
+
+@interface DesignatedInitWithClassExtensionInAnotherModule : DesignatedInitRoot
+- (instancetype)initWithInt:(NSInteger)value __attribute__((objc_designated_initializer));
+- (instancetype)initWithConvenienceInt:(NSInteger)value;
+@end
+
 
 @protocol ExplicitSetterProto
 @property (readonly) id foo;
@@ -168,3 +199,45 @@ typedef SomeCell <NSCopying> *CopyableSomeCell;
 - (nullable instancetype)initWithValue:(NSInteger)val error:(NSError **)error;
 + (BOOL)processValueAndReturnError:(NSError **)error;
 @end
+
+@interface CallbackBase : NSObject
+- (void)performWithHandler:(void(^ _Nonnull)(void))handler;
+- (void)performWithOptHandler:(void(^ _Nullable)(void))handler;
+- (void)performWithNonescapingHandler:(void(__attribute__((noescape)) ^ _Nonnull)(void))handler;
+- (void)performWithOptNonescapingHandler:(void(__attribute__((noescape)) ^ _Nullable)(void))handler;
+@end
+
+@interface SelectorSplittingAccessors : NSObject
+// Note the custom setter name here; this is important.
+@property (setter=takeFooForBar:) BOOL fooForBar;
+@end
+
+@interface InstancetypeAccessor : NSObject
+@property (class, readonly) InstancetypeAccessor *prop;
++ (instancetype)prop;
+@end
+
+typedef NSArray<NSString *> *NSStringArray;
+
+@interface BridgedTypedefs : NSObject
+@property (readonly,nonnull) NSArray<NSStringArray> *arrayOfArrayOfStrings;
+@end
+
+typedef NSString * _Nonnull (*FPTypedef)(NSString * _Nonnull);
+extern FPTypedef _Nonnull getFP(void);
+
+
+#if !__has_feature(objc_arc_fields)
+# error "Your Clang is not new enough"
+#endif
+struct NonTrivialToCopy {
+  __strong id field;
+};
+
+struct NonTrivialToCopyWrapper {
+  struct NonTrivialToCopy inner;
+};
+
+struct TrivialToCopy {
+  __unsafe_unretained id field;
+};

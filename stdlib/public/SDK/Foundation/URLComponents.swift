@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -28,7 +28,7 @@ public struct URLComponents : ReferenceConvertible, Hashable, Equatable, _Mutabl
     /// Initialize with the components of a URL.
     ///
     /// If resolvingAgainstBaseURL is `true` and url is a relative URL, the components of url.absoluteURL are used. If the url string from the URL is malformed, nil is returned.
-    public init?(url: URL, resolvingAgainstBaseURL resolve: Bool) {
+    public init?(url: __shared URL, resolvingAgainstBaseURL resolve: Bool) {
         guard let result = NSURLComponents(url: url, resolvingAgainstBaseURL: resolve) else { return nil }
         _handle = _MutableHandle(adoptingReference: result)
     }
@@ -36,7 +36,7 @@ public struct URLComponents : ReferenceConvertible, Hashable, Equatable, _Mutabl
     /// Initialize with a URL string.
     ///
     /// If the URLString is malformed, nil is returned.
-    public init?(string: String) {
+    public init?(string: __shared String) {
         guard let result = NSURLComponents(string: string) else { return nil }
         _handle = _MutableHandle(adoptingReference: result)
     }
@@ -56,7 +56,7 @@ public struct URLComponents : ReferenceConvertible, Hashable, Equatable, _Mutabl
     }
     
     // Returns a URL string created from the NSURLComponents. If the NSURLComponents has an authority component (user, password, host or port) and a path component, then the path must either begin with "/" or be an empty string. If the NSURLComponents does not have an authority component (user, password, host or port) and has a path component, the path component must not start with "//". If those requirements are not met, nil is returned.
-    @available(OSX 10.10, iOS 8.0, *)
+    @available(macOS 10.10, iOS 8.0, *)
     public var string: String? {
         return _handle.map { $0.string }
     }
@@ -190,12 +190,12 @@ public struct URLComponents : ReferenceConvertible, Hashable, Equatable, _Mutabl
         set { _applyMutation { $0.percentEncodedFragment = newValue } }
     }
     
-    @available(OSX 10.11, iOS 9.0, *)
+    @available(macOS 10.11, iOS 9.0, *)
     private func _toStringRange(_ r : NSRange) -> Range<String.Index>? {
         guard r.location != NSNotFound else { return nil }
         
-        let utf16Start = String.UTF16View.Index(_offset: r.location)
-        let utf16End = String.UTF16View.Index(_offset: r.location + r.length)
+        let utf16Start = String.UTF16View.Index(encodedOffset: r.location)
+        let utf16End = String.UTF16View.Index(encodedOffset: r.location + r.length)
 
         guard let s = self.string else { return nil }
         guard let start = String.Index(utf16Start, within: s) else { return nil }
@@ -208,7 +208,7 @@ public struct URLComponents : ReferenceConvertible, Hashable, Equatable, _Mutabl
     ///
     /// If the component does not exist, nil is returned.
     /// - note: Zero length components are legal. For example, the URL string "scheme://:@/?#" has a zero length user, password, host, query and fragment; the URL strings "scheme:" and "" both have a zero length path.
-    @available(OSX 10.11, iOS 9.0, *)
+    @available(macOS 10.11, iOS 9.0, *)
     public var rangeOfScheme: Range<String.Index>? {
         return _toStringRange(_handle.map { $0.rangeOfScheme })
     }
@@ -217,63 +217,63 @@ public struct URLComponents : ReferenceConvertible, Hashable, Equatable, _Mutabl
     ///
     /// If the component does not exist, nil is returned.
     /// - note: Zero length components are legal. For example, the URL string "scheme://:@/?#" has a zero length user, password, host, query and fragment; the URL strings "scheme:" and "" both have a zero length path.
-    @available(OSX 10.11, iOS 9.0, *)
+    @available(macOS 10.11, iOS 9.0, *)
     public var rangeOfUser: Range<String.Index>? {
-        return _toStringRange(_handle.map { $0.rangeOfUser})
+        return _toStringRange(_handle.map { $0.rangeOfUser })
     }
     
     /// Returns the character range of the password in the string returned by `var string`.
     ///
     /// If the component does not exist, nil is returned.
     /// - note: Zero length components are legal. For example, the URL string "scheme://:@/?#" has a zero length user, password, host, query and fragment; the URL strings "scheme:" and "" both have a zero length path.
-    @available(OSX 10.11, iOS 9.0, *)
+    @available(macOS 10.11, iOS 9.0, *)
     public var rangeOfPassword: Range<String.Index>? {
-        return _toStringRange(_handle.map { $0.rangeOfPassword})
+        return _toStringRange(_handle.map { $0.rangeOfPassword })
     }
     
     /// Returns the character range of the host in the string returned by `var string`.
     ///
     /// If the component does not exist, nil is returned.
     /// - note: Zero length components are legal. For example, the URL string "scheme://:@/?#" has a zero length user, password, host, query and fragment; the URL strings "scheme:" and "" both have a zero length path.
-    @available(OSX 10.11, iOS 9.0, *)
+    @available(macOS 10.11, iOS 9.0, *)
     public var rangeOfHost: Range<String.Index>? {
-        return _toStringRange(_handle.map { $0.rangeOfHost})
+        return _toStringRange(_handle.map { $0.rangeOfHost })
     }
     
     /// Returns the character range of the port in the string returned by `var string`.
     ///
     /// If the component does not exist, nil is returned.
     /// - note: Zero length components are legal. For example, the URL string "scheme://:@/?#" has a zero length user, password, host, query and fragment; the URL strings "scheme:" and "" both have a zero length path.
-    @available(OSX 10.11, iOS 9.0, *)
+    @available(macOS 10.11, iOS 9.0, *)
     public var rangeOfPort: Range<String.Index>? {
-        return _toStringRange(_handle.map { $0.rangeOfPort})
+        return _toStringRange(_handle.map { $0.rangeOfPort })
     }
     
     /// Returns the character range of the path in the string returned by `var string`.
     ///
     /// If the component does not exist, nil is returned.
     /// - note: Zero length components are legal. For example, the URL string "scheme://:@/?#" has a zero length user, password, host, query and fragment; the URL strings "scheme:" and "" both have a zero length path.
-    @available(OSX 10.11, iOS 9.0, *)
+    @available(macOS 10.11, iOS 9.0, *)
     public var rangeOfPath: Range<String.Index>? {
-        return _toStringRange(_handle.map { $0.rangeOfPath})
+        return _toStringRange(_handle.map { $0.rangeOfPath })
     }
     
     /// Returns the character range of the query in the string returned by `var string`.
     ///
     /// If the component does not exist, nil is returned.
     /// - note: Zero length components are legal. For example, the URL string "scheme://:@/?#" has a zero length user, password, host, query and fragment; the URL strings "scheme:" and "" both have a zero length path.
-    @available(OSX 10.11, iOS 9.0, *)
+    @available(macOS 10.11, iOS 9.0, *)
     public var rangeOfQuery: Range<String.Index>? {
-        return _toStringRange(_handle.map { $0.rangeOfQuery})
+        return _toStringRange(_handle.map { $0.rangeOfQuery })
     }
     
     /// Returns the character range of the fragment in the string returned by `var string`.
     ///
     /// If the component does not exist, nil is returned.
     /// - note: Zero length components are legal. For example, the URL string "scheme://:@/?#" has a zero length user, password, host, query and fragment; the URL strings "scheme:" and "" both have a zero length path.
-    @available(OSX 10.11, iOS 9.0, *)
+    @available(macOS 10.11, iOS 9.0, *)
     public var rangeOfFragment: Range<String.Index>? {
-        return _toStringRange(_handle.map { $0.rangeOfFragment})
+        return _toStringRange(_handle.map { $0.rangeOfFragment })
     }
 
     /// Returns an array of query items for this `URLComponents`, in the order in which they appear in the original query string.
@@ -285,19 +285,28 @@ public struct URLComponents : ReferenceConvertible, Hashable, Equatable, _Mutabl
     /// The setter combines an array containing any number of `URLQueryItem`s, each of which represents a single key-value pair, into a query string and sets the `URLComponents` query property. Passing an empty array sets the query component of the `URLComponents` to an empty string. Passing nil removes the query component of the `URLComponents`.
     ///
     /// - note: If a name-value pair in a query is empty (i.e. the query string starts with '&', ends with '&', or has "&&" within it), you get a `URLQueryItem` with a zero-length name and a nil value. If a query's name-value pair has nothing before the equals sign, you get a zero-length name. If a query's name-value pair has nothing after the equals sign, you get a zero-length value. If a query's name-value pair has no equals sign, the query name-value pair string is the name and you get a nil value.
-    @available(OSX 10.10, iOS 8.0, *)
+    @available(macOS 10.10, iOS 8.0, *)
     public var queryItems: [URLQueryItem]? {
-        get { return _handle.map { $0.queryItems?.map { return $0 as URLQueryItem } } }
-        set { _applyMutation { $0.queryItems = newValue?.map { $0 } } }
+        get { return _handle.map { $0.queryItems } }
+        set { _applyMutation { $0.queryItems = newValue } }
     }
     
+    /// Returns an array of query items for this `URLComponents`, in the order in which they appear in the original query string. Any percent-encoding in a query item name or value is retained
+    ///
+    /// The setter combines an array containing any number of `URLQueryItem`s, each of which represents a single key-value pair, into a query string and sets the `URLComponents` query property. This property assumes the query item names and values are already correctly percent-encoded, and that the query item names do not contain the query item delimiter characters '&' and '='. Attempting to set an incorrectly percent-encoded query item or a query item name with the query item delimiter characters '&' and '=' will cause a `fatalError`.
+    @available(macOS 10.13, iOS 11.0, tvOS 11.0, watchOS 4.0, *)
+    public var percentEncodedQueryItems: [URLQueryItem]? {
+        get { return _handle.map { $0.percentEncodedQueryItems } }
+        set { _applyMutation { $0.percentEncodedQueryItems = newValue } }
+    }
+	
     public var hashValue: Int {
         return _handle.map { $0.hash }
     }
     
     // MARK: - Bridging
     
-    fileprivate init(reference: NSURLComponents) {
+    fileprivate init(reference: __shared NSURLComponents) {
         _handle = _MutableHandle(reference: reference)
     }
     
@@ -333,7 +342,7 @@ extension URLComponents : CustomStringConvertible, CustomDebugStringConvertible,
         if let p = self.port { c.append((label: "port", value: p)) }
         
         c.append((label: "path", value: self.path))
-        if #available(OSX 10.10, iOS 8.0, *) {
+        if #available(macOS 10.10, iOS 8.0, *) {
             if let qi = self.queryItems { c.append((label: "queryItems", value: qi)) }
         }
         if let f = self.fragment { c.append((label: "fragment", value: f)) }
@@ -363,10 +372,10 @@ extension URLComponents : _ObjectiveCBridgeable {
         return true
     }
 
+    @_effects(readonly)
     public static func _unconditionallyBridgeFromObjectiveC(_ source: NSURLComponents?) -> URLComponents {
-        var result: URLComponents?
-        _forceBridgeFromObjectiveC(source!, result: &result)
-        return result!
+        guard let src = source else { return URLComponents() }
+        return URLComponents(reference: src)
     }
 }
 
@@ -380,17 +389,17 @@ extension NSURLComponents : _HasCustomAnyHashableRepresentation {
 
 
 /// A single name-value pair, for use with `URLComponents`.
-@available(OSX 10.10, iOS 8.0, *)
+@available(macOS 10.10, iOS 8.0, *)
 public struct URLQueryItem : ReferenceConvertible, Hashable, Equatable {
     public typealias ReferenceType = NSURLQueryItem
     
     fileprivate var _queryItem : NSURLQueryItem
     
-    public init(name: String, value: String?) {
+    public init(name: __shared String, value: __shared String?) {
         _queryItem = NSURLQueryItem(name: name, value: value)
     }
     
-    fileprivate init(reference: NSURLQueryItem) { _queryItem = reference.copy() as! NSURLQueryItem }
+    fileprivate init(reference: __shared NSURLQueryItem) { _queryItem = reference.copy() as! NSURLQueryItem }
     fileprivate var reference : NSURLQueryItem { return _queryItem }
     
     public var name : String {
@@ -405,13 +414,13 @@ public struct URLQueryItem : ReferenceConvertible, Hashable, Equatable {
     
     public var hashValue: Int { return _queryItem.hash }
 
-    @available(OSX 10.10, iOS 8.0, *)
+    @available(macOS 10.10, iOS 8.0, *)
     public static func ==(lhs: URLQueryItem, rhs: URLQueryItem) -> Bool {
         return lhs._queryItem.isEqual(rhs as NSURLQueryItem)
     }
 }
 
-@available(OSX 10.10, iOS 8.0, *)
+@available(macOS 10.10, iOS 8.0, *)
 extension URLQueryItem : CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
     
     public var description: String {
@@ -427,14 +436,15 @@ extension URLQueryItem : CustomStringConvertible, CustomDebugStringConvertible, 
     }
 
     public var customMirror: Mirror {
-        var c: [(label: String?, value: Any)] = []
-        c.append((label: "name", value: name))
-        c.append((label: "value", value: value))
+        let c: [(label: String?, value: Any)] = [
+          ("name", name),
+          ("value", value as Any),
+        ]
         return Mirror(self, children: c, displayStyle: Mirror.DisplayStyle.struct)
     }
 }
 
-@available(OSX 10.10, iOS 8.0, *)
+@available(macOS 10.10, iOS 8.0, *)
 extension URLQueryItem : _ObjectiveCBridgeable {
     public static func _getObjectiveCType() -> Any.Type {
         return NSURLQueryItem.self
@@ -456,6 +466,7 @@ extension URLQueryItem : _ObjectiveCBridgeable {
         return true
     }
 
+    @_effects(readonly)
     public static func _unconditionallyBridgeFromObjectiveC(_ source: NSURLQueryItem?) -> URLQueryItem {
         var result: URLQueryItem?
         _forceBridgeFromObjectiveC(source!, result: &result)
@@ -463,11 +474,50 @@ extension URLQueryItem : _ObjectiveCBridgeable {
     }
 }
 
-@available(OSX 10.10, iOS 8.0, *)
+@available(macOS 10.10, iOS 8.0, *)
 extension NSURLQueryItem : _HasCustomAnyHashableRepresentation {
     // Must be @nonobjc to avoid infinite recursion during bridging.
     @nonobjc
     public func _toCustomAnyHashable() -> AnyHashable? {
         return AnyHashable(self as URLQueryItem)
+    }
+}
+
+extension URLComponents : Codable {
+    private enum CodingKeys : Int, CodingKey {
+        case scheme
+        case user
+        case password
+        case host
+        case port
+        case path
+        case query
+        case fragment
+    }
+
+    public init(from decoder: Decoder) throws {
+        self.init()
+
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.scheme = try container.decodeIfPresent(String.self, forKey: .scheme)
+        self.user = try container.decodeIfPresent(String.self, forKey: .user)
+        self.password = try container.decodeIfPresent(String.self, forKey: .password)
+        self.host = try container.decodeIfPresent(String.self, forKey: .host)
+        self.port = try container.decodeIfPresent(Int.self, forKey: .port)
+        self.path = try container.decode(String.self, forKey: .path)
+        self.query = try container.decodeIfPresent(String.self, forKey: .query)
+        self.fragment = try container.decodeIfPresent(String.self, forKey: .fragment)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(self.scheme, forKey: .scheme)
+        try container.encodeIfPresent(self.user, forKey: .user)
+        try container.encodeIfPresent(self.password, forKey: .password)
+        try container.encodeIfPresent(self.host, forKey: .host)
+        try container.encodeIfPresent(self.port, forKey: .port)
+        try container.encode(self.path, forKey: .path)
+        try container.encodeIfPresent(self.query, forKey: .query)
+        try container.encodeIfPresent(self.fragment, forKey: .fragment)
     }
 }

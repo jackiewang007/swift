@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -27,11 +27,13 @@ public:
 /// \brief Returns the offset (in bytes) to the start of \p LineIndex
 size_t getOffsetOfLine(unsigned LineIndex, StringRef Text);
 
-/// \brief Returns the offset to the first Non-WhiteSpace Character
-size_t getOffsetOfTrimmedLine(unsigned LineIndex, StringRef Text);
+/// \brief Returns the offset to the first Character. If \p Trim is true, the
+///    first character is Non-WhiteSpace.
+size_t getOffsetOfLine(unsigned LineIndex, StringRef Text, bool Trim);
 
-/// \brief Returns the Text on \p LineIndex, excluding Leading WS
-StringRef getTrimmedTextForLine(unsigned LineIndex, StringRef Text);
+/// \brief Returns the Text on \p LineIndex, excluding Leading WS if \p Trim is
+///   true.
+StringRef getTextForLine(unsigned LineIndex, StringRef Text, bool Trim);
 
 /// \brief Returns the number of spaces at the beginning of \p LineIndex
 /// or if indenting is done by Tabs, the number of Tabs * TabWidthp

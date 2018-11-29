@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -19,7 +19,7 @@ import SwiftShims
 /// Unicode [replacement characters][rc].
 ///
 /// [rc]:
-/// http://en.wikipedia.org/wiki/Specials_(Unicode_block)#Replacement_character
+/// https://unicode.org/glossary/#replacement_character
 ///
 /// - Parameter strippingNewline: If `true`, newline characters and character
 ///   combinations are stripped from the result; otherwise, newline characters
@@ -32,7 +32,7 @@ public func readLine(strippingNewline: Bool = true) -> String? {
   if readBytes == -1 {
     return nil
   }
-  _sanityCheck(readBytes >= 0,
+  _internalInvariant(readBytes >= 0,
     "unexpected return value from swift_stdlib_readLine_stdin")
   if readBytes == 0 {
     return ""
@@ -64,15 +64,8 @@ public func readLine(strippingNewline: Bool = true) -> String? {
       }
     }
   }
-  let result = String._fromCodeUnitSequenceWithRepair(UTF8.self,
-    input: UnsafeMutableBufferPointer(
-      start: linePtr,
-      count: readBytes)).0
+  let result = String._fromUTF8Repairing(
+    UnsafeBufferPointer(start: linePtr, count: readBytes)).0
   _swift_stdlib_free(linePtr)
   return result
-}
-
-@available(*, unavailable, renamed: "readLine(strippingNewline:)")
-public func readLine(stripNewline: Bool = true) -> String? {
-  Builtin.unreachable()
 }

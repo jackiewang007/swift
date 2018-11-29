@@ -2,11 +2,11 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
-// See http://swift.org/LICENSE.txt for license information
-// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -34,6 +34,8 @@ struct Node {
   unsigned NameLength;
   unsigned BodyOffset;
   unsigned BodyLength;
+  unsigned DocOffset;
+  unsigned DocLength;
   std::string DisplayName;
   std::string TypeName;
   std::string RuntimeName;
@@ -51,12 +53,12 @@ struct Node {
   SmallVector<Element, 4> elements;
   SmallVector<unsigned, 4> childIndices;
 };
-}
+} // end anonymous namespace
 
 struct DocStructureArrayBuilder::Implementation {
   typedef CompactArrayBuilder<StringRef> InheritedTypesBuilder;
   SmallVector<char, 256> inheritedTypesBuffer;
-  typedef CompactArrayBuilder<UIdent> AttrsBuilder;
+  typedef CompactArrayBuilder<UIdent, unsigned, unsigned> AttrsBuilder;
   SmallVector<char, 256> attrsBuffer;
   typedef CompactArrayBuilder<UIdent, unsigned, unsigned> ElementsBuilder;
   SmallVector<char, 256> elementsBuffer;
@@ -72,6 +74,8 @@ struct DocStructureArrayBuilder::Implementation {
                       unsigned,            // NameLength
                       unsigned,            // BodyOffset
                       unsigned,            // BodyLength
+                      unsigned,            // DocOffset
+                      unsigned,            // DocLength
                       Optional<StringRef>, // DisplayName
                       Optional<StringRef>, // TypeName
                       Optional<StringRef>, // RuntimeName
@@ -87,7 +91,7 @@ struct DocStructureArrayBuilder::Implementation {
   SmallVector<unsigned, 16> topIndices;
 
   unsigned addInheritedTypes(ArrayRef<StringRef> inheritedTypes);
-  unsigned addAttrs(ArrayRef<UIdent> attrs);
+  unsigned addAttrs(ArrayRef<std::tuple<UIdent, unsigned, unsigned>> attrs);
   unsigned addElements(ArrayRef<Node::Element> elements);
   unsigned addChildren(ArrayRef<unsigned> offsets);
 
@@ -118,13 +122,17 @@ unsigned DocStructureArrayBuilder::Implementation::addInheritedTypes(
 }
 
 unsigned
-DocStructureArrayBuilder::Implementation::addAttrs(ArrayRef<UIdent> attrs) {
+DocStructureArrayBuilder::Implementation::addAttrs(ArrayRef<std::tuple<UIdent, unsigned, unsigned>> attrs) {
   if (attrs.empty())
     return 0;
 
   AttrsBuilder builder;
-  for (UIdent uid : attrs)
-    builder.addEntry(uid);
+  for (auto attr : attrs) {
+    UIdent uid;
+    unsigned offset, length;
+    std::tie(uid, offset, length) = attr;
+    builder.addEntry(uid, offset, length);
+  }
 
   unsigned offset = attrsBuffer.size();
   builder.appendTo(attrsBuffer);
@@ -167,9 +175,11 @@ void DocStructureArrayBuilder::beginSubStructure(
     unsigned Offset, unsigned Length, SourceKit::UIdent Kind,
     SourceKit::UIdent AccessLevel, SourceKit::UIdent SetterAccessLevel,
     unsigned NameOffset, unsigned NameLength, unsigned BodyOffset,
-    unsigned BodyLength, StringRef DisplayName, StringRef TypeName,
+    unsigned BodyLength, unsigned DocOffset, unsigned DocLength,
+    StringRef DisplayName, StringRef TypeName,
     StringRef RuntimeName, StringRef SelectorName,
-    ArrayRef<StringRef> InheritedTypes, ArrayRef<UIdent> Attrs) {
+    ArrayRef<StringRef> InheritedTypes,
+    ArrayRef<std::tuple<UIdent, unsigned, unsigned>> Attrs) {
 
   Node node = {
       Offset,
@@ -181,6 +191,8 @@ void DocStructureArrayBuilder::beginSubStructure(
       NameLength,
       BodyOffset,
       BodyLength,
+      DocOffset,
+      DocLength,
       DisplayName,
       TypeName,
       RuntimeName,
@@ -216,10 +228,10 @@ void DocStructureArrayBuilder::endSubStructure() {
   impl.structureBuilder.addEntry(
       node.Offset, node.Length, node.Kind, node.AccessLevel,
       node.SetterAccessLevel, node.NameOffset, node.NameLength, node.BodyOffset,
-      node.BodyLength, str(node.DisplayName), str(node.TypeName),
-      str(node.RuntimeName), str(node.SelectorName), node.InheritedTypesOffset,
-      node.AttrsOffset, impl.addElements(node.elements),
-      impl.addChildren(node.childIndices));
+      node.BodyLength, node.DocOffset, node.DocLength, str(node.DisplayName),
+      str(node.TypeName), str(node.RuntimeName), str(node.SelectorName),
+      node.InheritedTypesOffset, node.AttrsOffset,
+      impl.addElements(node.elements), impl.addChildren(node.childIndices));
 }
 
 std::unique_ptr<llvm::MemoryBuffer> DocStructureArrayBuilder::createBuffer() {
@@ -237,11 +249,11 @@ std::unique_ptr<llvm::MemoryBuffer> DocStructureArrayBuilder::createBuffer() {
   // * offset of top structure array (relative to structure array section) (1)
   size_t headerSize = sizeof(uint64_t) * 6;
 
-  auto result = llvm::MemoryBuffer::getNewUninitMemBuffer(
+  auto result = llvm::WritableMemoryBuffer::getNewUninitMemBuffer(
       inheritedTypesBufferSize + attrsBufferSize + elementsBufferSize +
       structureArrayBufferSize + structureBufferSize + headerSize);
 
-  char *start = const_cast<char *>(result->getBufferStart());
+  char *start = result->getBufferStart();
   char *headerPtr = start;
   char *ptr = start + headerSize;
 
@@ -265,7 +277,7 @@ std::unique_ptr<llvm::MemoryBuffer> DocStructureArrayBuilder::createBuffer() {
   assert(headerPtr == start + (headerSize - sizeof(topOffset)));
   memcpy(headerPtr, &topOffset, sizeof(topOffset));
 
-  return result;
+  return std::move(result);
 }
 
 namespace {
@@ -280,6 +292,8 @@ struct OutNode {
   unsigned NameLength;
   unsigned BodyOffset;
   unsigned BodyLength;
+  unsigned DocOffset;
+  unsigned DocLength;
   const char *DisplayName;
   const char *TypeName;
   const char *RuntimeName;
@@ -331,6 +345,8 @@ private:
                              unsigned,         // NameLength
                              unsigned,         // BodyOffset
                              unsigned,         // BodyLength
+                             unsigned,         // DocOffset
+                             unsigned,         // DocLength
                              const char *,     // DisplayName
                              const char *,     // TypeName
                              const char *,     // RuntimeName
@@ -342,7 +358,7 @@ private:
                              >
       StructureReader;
 };
-}
+} // end anonymous namespace
 
 DocStructureArrayReader::DocStructureArrayReader(void *buffer)
     : buffer(buffer) {}
@@ -353,8 +369,9 @@ OutNode DocStructureArrayReader::readStructure(size_t index) {
   reader.readEntries(
       index, result.Offset, result.Length, result.Kind, result.AccessLevel,
       result.SetterAccessLevel, result.NameOffset, result.NameLength,
-      result.BodyOffset, result.BodyLength, result.DisplayName, result.TypeName,
-      result.RuntimeName, result.SelectorName, result.InheritedTypesOffset,
+      result.BodyOffset, result.BodyLength, result.DocOffset, result.DocLength,
+      result.DisplayName, result.TypeName, result.RuntimeName,
+      result.SelectorName, result.InheritedTypesOffset,
       result.AttrsOffset, result.ElementsOffset, result.ChildIndicesOffset);
   return result;
 }
@@ -392,7 +409,8 @@ struct ElementReader {
 
   static bool
   dictionary_apply(void *buffer, size_t index,
-                   sourcekitd_variant_dictionary_applier_t applier) {
+                   llvm::function_ref<bool(sourcekitd_uid_t,
+                                           sourcekitd_variant_t)> applier) {
 
     CompactArrayReaderTy reader(buffer);
     sourcekitd_uid_t kind;
@@ -411,7 +429,8 @@ struct InheritedTypeReader {
 
   static bool
   dictionary_apply(void *buffer, size_t index,
-                   sourcekitd_variant_dictionary_applier_t applier) {
+                   llvm::function_ref<bool(sourcekitd_uid_t,
+                                           sourcekitd_variant_t)> applier) {
 
     CompactArrayReaderTy reader(buffer);
     const char *value = nullptr;
@@ -423,16 +442,22 @@ struct InheritedTypeReader {
 };
 
 struct AttributesReader {
-  typedef CompactArrayReader<sourcekitd_uid_t> CompactArrayReaderTy;
+  typedef CompactArrayReader<sourcekitd_uid_t, unsigned, unsigned> CompactArrayReaderTy;
 
   static bool
   dictionary_apply(void *buffer, size_t index,
-                   sourcekitd_variant_dictionary_applier_t applier) {
+                   llvm::function_ref<bool(sourcekitd_uid_t,
+                                           sourcekitd_variant_t)> applier) {
 
     CompactArrayReaderTy reader(buffer);
     sourcekitd_uid_t value;
-    reader.readEntries(index, value);
+    unsigned offset;
+    unsigned length;
+    reader.readEntries(index, value, offset, length);
+
     APPLY(KeyAttribute, UID, value);
+    APPLY(KeyOffset, Int, offset);
+    APPLY(KeyLength, Int, length);
     return true;
   }
 };
@@ -440,7 +465,8 @@ struct AttributesReader {
 struct DocStructureReader {
   static bool
   dictionary_apply(void *buffer, size_t index,
-                   sourcekitd_variant_dictionary_applier_t applier) {
+                   llvm::function_ref<bool(sourcekitd_uid_t,
+                                           sourcekitd_variant_t)> applier) {
     auto reader = DocStructureArrayReader(buffer);
     auto node = reader.readStructure(index);
 
@@ -448,14 +474,18 @@ struct DocStructureReader {
     APPLY(KeyLength, Int, node.Length);
     APPLY(KeyKind, UID, node.Kind);
     if (node.AccessLevel)
-      APPLY(KeyAccessibility, UID, node.AccessLevel);
+      APPLY(KeyAccessLevel, UID, node.AccessLevel);
     if (node.SetterAccessLevel)
-      APPLY(KeySetterAccessibility, UID, node.SetterAccessLevel);
+      APPLY(KeySetterAccessLevel, UID, node.SetterAccessLevel);
     APPLY(KeyNameOffset, Int, node.NameOffset);
     APPLY(KeyNameLength, Int, node.NameLength);
     if (node.BodyOffset || node.BodyLength) {
       APPLY(KeyBodyOffset, Int, node.BodyOffset);
       APPLY(KeyBodyLength, Int, node.BodyLength);
+    }
+    if (node.DocOffset || node.DocLength) {
+      APPLY(KeyDocOffset, Int, node.DocOffset);
+      APPLY(KeyDocLength, Int, node.DocLength);
     }
     if (node.DisplayName)
       APPLY(KeyName, String, node.DisplayName);
@@ -549,7 +579,9 @@ VariantFunctions DocStructureArrayFuncs::funcs = {
     nullptr /*AnnotArray_string_get_length*/,
     nullptr /*AnnotArray_string_get_ptr*/,
     nullptr /*AnnotArray_int64_get_value*/,
-    nullptr /*AnnotArray_uid_get_value*/
+    nullptr /*AnnotArray_uid_get_value*/,
+    nullptr /*Annot_data_get_size*/,
+    nullptr /*Annot_data_get_ptr*/,
 };
 
 VariantFunctions *sourcekitd::getVariantFunctionsForDocStructureElementArray() {
